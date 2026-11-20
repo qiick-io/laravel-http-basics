@@ -45,6 +45,24 @@ per-route after throttle / auth / scope / cost. Products wire
 `ExceptionErrorCodeAugmenter` through their own bootstrap (no Foundation types in
 this package).
 
+### Request id (landed)
+
+```php
+use Qiick\HttpBasics\RequestId\AssignRequestIdMiddleware;
+use Qiick\HttpBasics\RequestId\RequestIdPropagator;
+
+// bootstrap/app.php — outermost global middleware
+$middleware->append(AssignRequestIdMiddleware::class);
+
+// Outbound (only when http-basics.request_id.outbound.allowed_hosts is set)
+app(RequestIdPropagator::class)->applyTo($pending, $url);
+```
+
+| Config / env | Default | Meaning |
+| --- | --- | --- |
+| `HTTP_BASICS_REQUEST_ID_ACCEPT_FROM` | `trusted_proxy` | Keep inbound id only behind TrustProxies (`any` / `never` also valid). |
+| `HTTP_BASICS_OUTBOUND_HOSTS` | empty | Comma-separated hosts; empty = never propagate; `*` = all hosts. |
+
 ## Threat model (short)
 
 | Topic | Contract |

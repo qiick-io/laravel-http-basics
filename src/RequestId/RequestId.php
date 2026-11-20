@@ -1,0 +1,56 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Qiick\HttpBasics\RequestId;
+
+/**
+ * @api Validated request correlation id.
+ */
+final readonly class RequestId
+{
+    public const string HEADER = 'X-Request-Id';
+
+    /** Externa app/Http/Middleware/AssignRequestIdMiddleware.php:27 */
+    public const string PATTERN = '/\A[A-Za-z0-9\-_.:]{8,128}\z/D';
+
+    public function __construct(
+        public string $value,
+        public RequestIdSource $source,
+    ) {}
+
+    /**
+     * @param  list<string|null>  $headerValues  Exactly one matching value; duplicates → null.
+     */
+    public static function tryFromHeaderValues(array $headerValues): ?self
+    {
+        $candidates = [];
+
+        foreach ($headerValues as $value) {
+            if (! is_string($value)) {
+                continue;
+            }
+
+            if (preg_match(self::PATTERN, $value) !== 1) {
+                return null;
+            }
+
+            $candidates[] = $value;
+        }
+
+        if (count($candidates) !== 1) {
+            return null;
+        }
+
+        // Source filled by the resolver once accept policy is applied.
+        return new self($candidates[0], RequestIdSource::Client);
+    }
+
+    /**
+     * @return array{X-Request-Id: string}
+     */
+    public function outboundHeaders(): array
+    {
+        return [self::HEADER => $this->value];
+    }
+}

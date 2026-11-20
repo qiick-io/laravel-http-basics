@@ -8,19 +8,9 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 CLASSES=(
-  # Populated by feature PRs, e.g.:
-  # 'Qiick\HttpBasics\RequestId\RequestId'
-  # 'Qiick\HttpBasics\RequestId\RequestIdResolver'
-  # 'Qiick\HttpBasics\RequestId\RequestIdPropagator'
-  # 'Qiick\HttpBasics\Locale\LocaleNegotiator'
-  # 'Qiick\HttpBasics\Security\SecurityHeaderBuilder'
-  # 'Qiick\HttpBasics\Idempotency\Fingerprinter'
-  # 'Qiick\HttpBasics\Idempotency\AnonymousBucketResolver'
-  # 'Qiick\HttpBasics\Idempotency\CacheIdempotencyStore'
-  # 'Qiick\HttpBasics\Idempotency\DatabaseIdempotencyStore'
-  # 'Qiick\HttpBasics\Idempotency\HandleIdempotencyMiddleware'
-  # 'Qiick\HttpBasics\Idempotency\IdempotencyRejection'
-  # 'Qiick\HttpBasics\Errors\ErrorCodeAugmentor'
+  'Qiick\HttpBasics\RequestId\RequestId'
+  'Qiick\HttpBasics\RequestId\RequestIdResolver'
+  'Qiick\HttpBasics\RequestId\RequestIdPropagator'
 )
 
 MIN="${MUTATE_MIN:-95}"
