@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Security headers: `SecurityHeaderBuilder`, `SetSecurityHeadersMiddleware`,
+  `SecurityHeadersPolicy`, `CspMode`, `CspPolicyBuilder` /
+  `ViteFriendlyCspPolicyBuilder`, and `assertSecurityHeaders`. Never clobbers
+  existing CSP/HSTS/XFO/Referrer/Permissions/nosniff; machine doors get baseline
+  only; HSTS only when `max_age>0` and the request is secure; CSP `report-uri`
+  is appended to the built/override string before set.
 - Locale negotiation: `LocaleNegotiator`, `SetLocaleMiddleware`,
   `MachineDoorClassifier`, `SupportedLocales` / `DefaultLocaleResolver` seams,
   and testing helpers (`ArraySupportedLocales`, `FixedDefaultLocaleResolver`,

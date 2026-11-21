@@ -21,6 +21,11 @@ use Qiick\HttpBasics\RequestId\RequestIdAcceptFrom;
 use Qiick\HttpBasics\RequestId\RequestIdPropagator;
 use Qiick\HttpBasics\RequestId\RequestIdResolver;
 use Qiick\HttpBasics\RequestId\UuidIdGenerator;
+use Qiick\HttpBasics\Security\CspMode;
+use Qiick\HttpBasics\Security\CspPolicyBuilder;
+use Qiick\HttpBasics\Security\SecurityHeaderBuilder;
+use Qiick\HttpBasics\Security\SecurityHeadersPolicy;
+use Qiick\HttpBasics\Security\ViteFriendlyCspPolicyBuilder;
 
 /**
  * Registers the package in a Laravel app. Auto-discovered through
@@ -156,6 +161,78 @@ final class HttpBasicsServiceProvider extends ServiceProvider
                 is_int($maxHeaderBytes) ? $maxHeaderBytes : 1024,
                 is_int($maxLanguages) ? $maxLanguages : 20,
             );
+        });
+
+        $this->app->singleton(CspPolicyBuilder::class, ViteFriendlyCspPolicyBuilder::class);
+
+        $this->app->singleton(SecurityHeadersPolicy::class, function (Application $app): SecurityHeadersPolicy {
+            $config = $this->config($app);
+
+            $cspModeRaw = $config->get('http-basics.security.csp.mode', 'enforce');
+            if (! is_string($cspModeRaw)) {
+                throw new \InvalidArgumentException(
+                    'http-basics.security.csp.mode must be enforce, report-only, off, or both.',
+                );
+            }
+
+            $cspMode = CspMode::tryFrom($cspModeRaw);
+            if ($cspMode === null) {
+                throw new \InvalidArgumentException(
+                    'http-basics.security.csp.mode must be enforce, report-only, off, or both.',
+                );
+            }
+
+            $patterns = $config->get('http-basics.locale.machine_doors', ['api/*', 'mcp', 'mcp/*']);
+            if (! is_array($patterns)) {
+                $patterns = [];
+            }
+
+            /** @var list<string> $machineDoorPatterns */
+            $machineDoorPatterns = array_values(array_filter(
+                $patterns,
+                static fn (mixed $pattern): bool => is_string($pattern) && $pattern !== '',
+            ));
+
+            $csp = $config->get('http-basics.security.csp.policy');
+            $cspReportOnly = $config->get('http-basics.security.csp.report_only_policy');
+            $cspReportUri = $config->get('http-basics.security.csp.report_uri');
+
+            $xFrame = $config->get('http-basics.security.x_frame_options', 'DENY');
+            $referrer = $config->get('http-basics.security.referrer_policy', 'strict-origin-when-cross-origin');
+            $permissions = $config->get(
+                'http-basics.security.permissions_policy',
+                'camera=(), microphone=(), geolocation=(), payment=(), usb=()',
+            );
+
+            $hstsMaxAgeRaw = $config->get('http-basics.security.hsts.max_age', 0);
+            $hstsMaxAge = 0;
+            if (is_int($hstsMaxAgeRaw)) {
+                $hstsMaxAge = $hstsMaxAgeRaw;
+            } elseif (is_string($hstsMaxAgeRaw) && is_numeric($hstsMaxAgeRaw)) {
+                $hstsMaxAge = (int) $hstsMaxAgeRaw;
+            }
+
+            return new SecurityHeadersPolicy(
+                enabled: (bool) $config->get('http-basics.security.enabled', true),
+                xFrameOptions: is_string($xFrame) && $xFrame !== '' ? $xFrame : 'DENY',
+                referrerPolicy: is_string($referrer) && $referrer !== '' ? $referrer : 'strict-origin-when-cross-origin',
+                permissionsPolicy: is_string($permissions) && $permissions !== ''
+                    ? $permissions
+                    : 'camera=(), microphone=(), geolocation=(), payment=(), usb=()',
+                cspMode: $cspMode,
+                csp: is_string($csp) && trim($csp) !== '' ? trim($csp) : null,
+                cspReportOnly: is_string($cspReportOnly) && trim($cspReportOnly) !== '' ? trim($cspReportOnly) : null,
+                cspReportUri: is_string($cspReportUri) && trim($cspReportUri) !== '' ? trim($cspReportUri) : null,
+                hstsMaxAge: $hstsMaxAge,
+                hstsIncludeSubdomains: (bool) $config->get('http-basics.security.hsts.include_subdomains', false),
+                hstsPreload: (bool) $config->get('http-basics.security.hsts.preload', false),
+                baselineOnMachineDoors: (bool) $config->get('http-basics.security.baseline_on_machine_doors', true),
+                machineDoorPatterns: $machineDoorPatterns,
+            );
+        });
+
+        $this->app->singleton(SecurityHeaderBuilder::class, function (Application $app): SecurityHeaderBuilder {
+            return new SecurityHeaderBuilder($app->make(CspPolicyBuilder::class));
         });
     }
 
