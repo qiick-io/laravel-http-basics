@@ -17,14 +17,17 @@ return [
 
     'ignoring' => [
         'Contracts' => [
-            // Design §3.1: public contract names without Contract suffix.
+            // Design §3.1 / §3.2: public contract names without Contract suffix.
             'Qiick\HttpBasics\Contracts\IdGenerator',
             'Qiick\HttpBasics\Contracts\TrustedProxyDetector',
+            'Qiick\HttpBasics\Contracts\SupportedLocales',
+            'Qiick\HttpBasics\Contracts\DefaultLocaleResolver',
         ],
         'Enums' => [
-            // Design §3.1: RequestIdSource / RequestIdAcceptFrom (not *Enum).
+            // Design §3.1 / §3.2: source enums without Enum suffix.
             'Qiick\HttpBasics\RequestId\RequestIdSource',
             'Qiick\HttpBasics\RequestId\RequestIdAcceptFrom',
+            'Qiick\HttpBasics\Locale\LocaleSource',
         ],
     ],
 
