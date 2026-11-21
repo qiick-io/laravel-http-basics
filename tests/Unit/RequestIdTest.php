@@ -19,6 +19,8 @@ it('rejects values outside the PATTERN', function (string $bad): void {
     'space' => ['bad id value'],
     'slash' => ['bad/id/value'],
     'empty' => [''],
+    'punctuation only' => ['--------'],
+    'dots only' => ['........'],
 ]);
 
 it('rejects duplicate header values even when each matches', function (): void {
@@ -33,4 +35,11 @@ it('returns outbound headers keyed by X-Request-Id', function (): void {
     $id = new RequestId('outbound-id-1', RequestIdSource::Generated);
 
     expect($id->outboundHeaders())->toBe([RequestId::HEADER => 'outbound-id-1']);
+});
+
+it('skips non-string header values and keeps a single valid candidate', function (): void {
+    $id = RequestId::tryFromHeaderValues([null, 'abcdefgh']);
+
+    expect($id)->not->toBeNull()
+        ->and($id?->value)->toBe('abcdefgh');
 });

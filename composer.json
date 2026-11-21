@@ -54,15 +54,15 @@
     "autoload": {
         "psr-4": {
             "Qiick\\HttpBasics\\": "src/"
-        }
-    },
-    "autoload-dev": {
-        "psr-4": {
-            "Qiick\\HttpBasics\\Tests\\": "tests/"
         },
         "files": [
             "src/Testing/functions.php"
         ]
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Qiick\\HttpBasics\\Tests\\": "tests/"
+        }
     },
     "scripts": {
         "test": "pest",

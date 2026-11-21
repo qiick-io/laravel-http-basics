@@ -40,7 +40,7 @@ it('keeps a valid inbound id under trusted_proxy when the hop is trusted', funct
     expect($id->value)->toBe('from-proxy-01')
         ->and($id->source)->toBe(RequestIdSource::TrustedProxy)
         ->and($request->headers->get(RequestId::HEADER))->toBe('from-proxy-01')
-        ->and(Context::getHidden('http_basics.request_id'))->toBe('from-proxy-01')
+        ->and(Context::get(RequestIdResolver::VISIBLE_CONTEXT_KEY))->toBe('from-proxy-01')
         ->and(Context::getHidden('http_basics.request_id_source'))->toBe('trusted_proxy');
 });
 
@@ -53,7 +53,6 @@ it('generates when trusted_proxy and the hop is untrusted', function (): void {
 
     expect($id->value)->toBe('generated-fixed-id')
         ->and($id->source)->toBe(RequestIdSource::Generated)
-        // Must overwrite the spoofed inbound on the Request itself (H2).
         ->and($request->headers->get(RequestId::HEADER))->toBe('generated-fixed-id');
 });
 
@@ -95,18 +94,19 @@ it('generates on invalid or duplicate inbound values', function (array $values):
     'invalid' => [['bad id']],
     'duplicates' => [['dup-value-1', 'dup-value-2']],
     'missing' => [[]],
+    'punctuation only' => [['--------']],
 ]);
 
-it('stores provenance only in hidden Context, never visible Context', function (): void {
+it('stores the id in visible Context for logging and jobs', function (): void {
     $resolver = makeResolver();
     $request = Request::create('/', 'GET');
 
     $resolver->bind($request);
 
-    expect(Context::getHidden('http_basics.request_id'))->toBe('generated-fixed-id')
+    expect(Context::get(RequestIdResolver::VISIBLE_CONTEXT_KEY))->toBe('generated-fixed-id')
+        ->and(Context::getHidden('http_basics.request_id'))->toBe('generated-fixed-id')
         ->and(Context::getHidden('http_basics.request_id_source'))->toBe('generated')
-        ->and(Context::has('http_basics.request_id'))->toBeFalse()
-        ->and(Context::all())->not->toHaveKey('http_basics.request_id');
+        ->and(Context::hasHidden('http_basics.request_id_source'))->toBeTrue();
 });
 
 it('echoes the bound id onto the response', function (): void {
@@ -120,7 +120,7 @@ it('echoes the bound id onto the response', function (): void {
     expect($response->headers->get(RequestId::HEADER))->toBe('generated-fixed-id');
 });
 
-it('exposes current() from hidden Context after bind', function (): void {
+it('exposes current() from visible Context after bind', function (): void {
     $resolver = makeResolver(RequestIdAcceptFrom::Any);
     $request = Request::create('/', 'GET');
     $request->headers->set(RequestId::HEADER, 'current-id-01');
@@ -128,34 +128,40 @@ it('exposes current() from hidden Context after bind', function (): void {
 
     $current = $resolver->current();
 
-    expect($current->value)->toBe('current-id-01')
-        ->and($current->source)->toBe(RequestIdSource::Client);
+    expect($current)->not->toBeNull()
+        ->and($current?->value)->toBe('current-id-01')
+        ->and($current?->source)->toBe(RequestIdSource::Client);
 });
 
-it('current() prefers the first configured hidden key that is set', function (): void {
+it('returns null from current() when nothing is bound instead of throwing', function (): void {
+    $resolver = makeResolver();
+
+    expect($resolver->current())->toBeNull();
+});
+
+it('falls back to hidden context keys in current() when visible is absent', function (): void {
+    $resolver = makeResolver();
+    Context::addHidden('http_basics.request_id', 'hidden-only-id');
+    Context::addHidden('http_basics.request_id_source', 'generated');
+
+    $current = $resolver->current();
+
+    expect($current)->not->toBeNull()
+        ->and($current?->value)->toBe('hidden-only-id');
+});
+
+it('uses the first matching hidden key when several are configured', function (): void {
     $resolver = new RequestIdResolver(
         new FixedIdGenerator('generated-fixed-id'),
         new AlwaysTrustedProxyDetector,
         RequestIdAcceptFrom::Never,
-        ['http_basics.request_id', 'structured_log.request_id'],
-        'http_basics.request_id_source',
+        ['http_basics.request_id', 'legacy.request_id'],
     );
 
-    Context::flush();
-    Context::addHidden('http_basics.request_id', 'first-key-wins');
-    Context::addHidden('structured_log.request_id', 'second-key-value');
-    Context::addHidden('http_basics.request_id_source', RequestIdSource::Generated->value);
+    Context::addHidden('http_basics.request_id', 'first-hidden-id');
+    Context::addHidden('legacy.request_id', 'second-hidden-id');
+    Context::addHidden('http_basics.request_id_source', 'generated');
 
-    expect($resolver->current()->value)->toBe('first-key-wins');
+    // break keeps the first hit; continue would overwrite with the second.
+    expect($resolver->current()?->value)->toBe('first-hidden-id');
 });
-
-it('current() rejects a non-string or empty hidden value', function (mixed $bad): void {
-    $resolver = makeResolver();
-    Context::flush();
-    Context::addHidden('http_basics.request_id', $bad);
-
-    $resolver->current();
-})->with([
-    'empty string' => [''],
-    'integer' => [123],
-])->throws(RuntimeException::class);

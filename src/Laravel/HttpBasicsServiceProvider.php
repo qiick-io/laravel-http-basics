@@ -9,10 +9,11 @@ use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Support\ServiceProvider;
 use Qiick\HttpBasics\Contracts\IdGenerator;
 use Qiick\HttpBasics\Contracts\TrustedProxyDetector;
+use Qiick\HttpBasics\RequestId\ConfigTrustedProxyDetector;
+use Qiick\HttpBasics\RequestId\RequestId;
 use Qiick\HttpBasics\RequestId\RequestIdAcceptFrom;
 use Qiick\HttpBasics\RequestId\RequestIdPropagator;
 use Qiick\HttpBasics\RequestId\RequestIdResolver;
-use Qiick\HttpBasics\RequestId\SymfonyTrustedProxyDetector;
 use Qiick\HttpBasics\RequestId\UuidIdGenerator;
 
 /**
@@ -28,7 +29,15 @@ final class HttpBasicsServiceProvider extends ServiceProvider
         $this->mergeConfigFrom(__DIR__.'/../../config/http-basics.php', 'http-basics');
 
         $this->app->singleton(IdGenerator::class, UuidIdGenerator::class);
-        $this->app->singleton(TrustedProxyDetector::class, SymfonyTrustedProxyDetector::class);
+
+        $this->app->singleton(TrustedProxyDetector::class, function (Application $app): TrustedProxyDetector {
+            $config = $this->config($app);
+
+            return new ConfigTrustedProxyDetector(
+                $config,
+                (bool) $config->get('http-basics.request_id.trust_wildcard_proxies', false),
+            );
+        });
 
         $this->app->singleton(RequestIdResolver::class, function (Application $app): RequestIdResolver {
             $config = $this->config($app);
@@ -48,20 +57,17 @@ final class HttpBasicsServiceProvider extends ServiceProvider
                 );
             }
 
-            $keys = $config->get('http-basics.request_id.hidden_context_keys', ['http_basics.request_id']);
-            if (! is_array($keys) || $keys === []) {
-                throw new \InvalidArgumentException(
-                    'http-basics.request_id.hidden_context_keys must be a non-empty list of strings.',
-                );
+            $keys = $config->get('http-basics.request_id.hidden_context_keys', []);
+            if (! is_array($keys)) {
+                $keys = [];
             }
 
             /** @var list<string> $hiddenKeys */
             $hiddenKeys = array_values(array_filter($keys, static fn (mixed $key): bool => is_string($key) && $key !== ''));
 
-            if ($hiddenKeys === []) {
-                throw new \InvalidArgumentException(
-                    'http-basics.request_id.hidden_context_keys must be a non-empty list of strings.',
-                );
+            $pattern = $config->get('http-basics.request_id.accept_pattern', RequestId::PATTERN);
+            if (! is_string($pattern) || $pattern === '') {
+                $pattern = RequestId::PATTERN;
             }
 
             return new RequestIdResolver(
@@ -69,6 +75,8 @@ final class HttpBasicsServiceProvider extends ServiceProvider
                 $app->make(TrustedProxyDetector::class),
                 $acceptFrom,
                 $hiddenKeys,
+                'http_basics.request_id_source',
+                $pattern,
             );
         });
 

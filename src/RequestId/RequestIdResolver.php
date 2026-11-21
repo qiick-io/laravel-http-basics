@@ -13,15 +13,18 @@ use Symfony\Component\HttpFoundation\Response;
 /** @api */
 final class RequestIdResolver
 {
+    public const string VISIBLE_CONTEXT_KEY = 'request_id';
+
     /**
-     * @param  list<string>  $hiddenContextKeys
+     * @param  list<string>  $hiddenContextKeys  Optional dual-write aliases (e.g. externa).
      */
     public function __construct(
         private IdGenerator $ids,
         private TrustedProxyDetector $proxies,
         private RequestIdAcceptFrom $acceptFrom,
-        private array $hiddenContextKeys,
+        private array $hiddenContextKeys = [],
         private string $provenanceContextKey = 'http_basics.request_id_source',
+        private string $acceptPattern = RequestId::PATTERN,
     ) {}
 
     public function bind(Request $request): RequestId
@@ -29,6 +32,9 @@ final class RequestIdResolver
         $id = $this->resolve($request);
 
         $request->headers->set(RequestId::HEADER, $id->value);
+
+        // Visible so Laravel's context processor logs it and queued jobs inherit it.
+        Context::add(self::VISIBLE_CONTEXT_KEY, $id->value);
 
         foreach ($this->hiddenContextKeys as $key) {
             Context::addHidden($key, $id->value);
@@ -44,19 +50,29 @@ final class RequestIdResolver
         $response->headers->set(RequestId::HEADER, $id->value);
     }
 
-    public function current(): RequestId
+    /**
+     * Bound id, or null when nothing is bound (CLI / jobs without a prior HTTP bind).
+     * Never throws: outbound callers treat null as "send no header".
+     */
+    public function current(): ?RequestId
     {
         $value = null;
 
-        foreach ($this->hiddenContextKeys as $key) {
-            if (Context::hasHidden($key)) {
-                $value = Context::getHidden($key);
-                break;
+        if (Context::has(self::VISIBLE_CONTEXT_KEY)) {
+            $value = Context::get(self::VISIBLE_CONTEXT_KEY);
+        }
+
+        if (! is_string($value) || $value === '') {
+            foreach ($this->hiddenContextKeys as $key) {
+                if (Context::hasHidden($key)) {
+                    $value = Context::getHidden($key);
+                    break;
+                }
             }
         }
 
         if (! is_string($value) || $value === '') {
-            throw new \RuntimeException('No request id is bound in the current Context.');
+            return null;
         }
 
         $sourceRaw = Context::hasHidden($this->provenanceContextKey)
@@ -76,21 +92,13 @@ final class RequestIdResolver
             return new RequestId($this->ids->generate(), RequestIdSource::Generated);
         }
 
-        /** @var list<string|null> $values */
-        $values = $request->headers->all(RequestId::HEADER);
-        // Symfony may return a nested list for multi-value headers.
+        /** @var list<string|null> $flat */
         $flat = [];
-        foreach ($values as $value) {
-            if (is_array($value)) {
-                foreach ($value as $inner) {
-                    $flat[] = is_string($inner) ? $inner : null;
-                }
-            } else {
-                $flat[] = is_string($value) ? $value : null;
-            }
+        foreach ($request->headers->all(RequestId::HEADER) as $value) {
+            $flat[] = is_string($value) ? $value : null;
         }
 
-        $incoming = RequestId::tryFromHeaderValues($flat);
+        $incoming = RequestId::tryFromHeaderValues($flat, $this->acceptPattern);
 
         if ($incoming === null) {
             return new RequestId($this->ids->generate(), RequestIdSource::Generated);
@@ -100,7 +108,6 @@ final class RequestIdResolver
             return new RequestId($incoming->value, RequestIdSource::Client);
         }
 
-        // trusted_proxy (default)
         if ($this->proxies->isTrusted($request)) {
             return new RequestId($incoming->value, RequestIdSource::TrustedProxy);
         }

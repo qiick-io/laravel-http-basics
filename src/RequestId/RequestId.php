@@ -11,8 +11,11 @@ final readonly class RequestId
 {
     public const string HEADER = 'X-Request-Id';
 
-    /** Externa app/Http/Middleware/AssignRequestIdMiddleware.php:27 */
-    public const string PATTERN = '/\A[A-Za-z0-9\-_.:]{8,128}\z/D';
+    /**
+     * Letters, digits and `-_.:`, 8–128 chars, and at least one alphanumeric
+     * so a punctuation-only token cannot forge a log line.
+     */
+    public const string PATTERN = '/\A(?=[A-Za-z0-9\-_.:]{8,128}$)(?=.*[A-Za-z0-9])[A-Za-z0-9\-_.:]+\z/D';
 
     public function __construct(
         public string $value,
@@ -22,7 +25,7 @@ final readonly class RequestId
     /**
      * @param  list<string|null>  $headerValues  Exactly one matching value; duplicates → null.
      */
-    public static function tryFromHeaderValues(array $headerValues): ?self
+    public static function tryFromHeaderValues(array $headerValues, string $pattern = self::PATTERN): ?self
     {
         $candidates = [];
 
@@ -31,7 +34,7 @@ final readonly class RequestId
                 continue;
             }
 
-            if (preg_match(self::PATTERN, $value) !== 1) {
+            if (preg_match($pattern, $value) !== 1) {
                 return null;
             }
 
@@ -42,7 +45,6 @@ final readonly class RequestId
             return null;
         }
 
-        // Source filled by the resolver once accept policy is applied.
         return new self($candidates[0], RequestIdSource::Client);
     }
 

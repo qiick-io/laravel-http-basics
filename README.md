@@ -51,8 +51,9 @@ this package).
 use Qiick\HttpBasics\RequestId\AssignRequestIdMiddleware;
 use Qiick\HttpBasics\RequestId\RequestIdPropagator;
 
-// bootstrap/app.php — outermost global middleware
-$middleware->append(AssignRequestIdMiddleware::class);
+// bootstrap/app.php — OUTERMOST global middleware (prepend), so 401/404/405/419/429/503,
+// maintenance and CORS preflight responses carry X-Request-Id.
+$middleware->prepend(AssignRequestIdMiddleware::class);
 
 // Outbound (only when http-basics.request_id.outbound.allowed_hosts is set)
 app(RequestIdPropagator::class)->applyTo($pending, $url);
@@ -60,21 +61,29 @@ app(RequestIdPropagator::class)->applyTo($pending, $url);
 
 | Config / env | Default | Meaning |
 | --- | --- | --- |
-| `HTTP_BASICS_REQUEST_ID_ACCEPT_FROM` | `trusted_proxy` | Keep inbound id only behind TrustProxies (`any` / `never` also valid). |
-| `HTTP_BASICS_OUTBOUND_HOSTS` | empty | Comma-separated hosts; empty = never propagate; `*` = all hosts. |
+| `HTTP_BASICS_REQUEST_ID_ACCEPT_FROM` | `trusted_proxy` | Keep inbound id only from a trusted proxy hop (`any` / `never` also valid). |
+| `HTTP_BASICS_TRUST_WILDCARD_PROXIES` | `false` | When TrustProxies is `*` / `**` (Cloud/Forge/Vapor), still reject client ids unless true. |
+| `HTTP_BASICS_OUTBOUND_HOSTS` | empty | Comma-separated `host` or `host:port`; empty = never propagate; `*` = all hosts. |
+| `http-basics.request_id.accept_pattern` | `RequestId::PATTERN` | Must require ≥1 alphanumeric; punctuation-only tokens are rejected. |
+
+The id is stored in **visible** Context as `request_id` (Laravel logs it and queued jobs inherit it). Provenance (`generated` / `trusted_proxy` / `client`) stays in hidden Context.
+
+Trust is computed by `ConfigTrustedProxyDetector` from the same sources as TrustProxies (`TrustProxies::at()` and `trustedproxy.proxies`) via `IpUtils::checkIp` on `REMOTE_ADDR`. It does **not** call `$request->isFromTrustedProxy()`, so middleware order and Octane static request state cannot flip the decision.
 
 ## Threat model (short)
 
 | Topic | Contract |
 | --- | --- |
-| Log injection / header smuggling | Charset + single-value `X-Request-Id`; provenance in hidden Context only (`generated` / `trusted_proxy` / `client`). |
+| Log injection / header smuggling | Charset + single-value `X-Request-Id` (≥1 alphanumeric); provenance in hidden Context only (`generated` / `trusted_proxy` / `client`). |
 | Correlation spoofing | Default inbound `accept_from=trusted_proxy`; outbound host allowlist empty by default (no propagation). |
+| Wildcard TrustProxies (`*` / `**`) | Common on Cloud/Forge/Vapor. Client ids are **not** trusted under `*` unless `trust_wildcard_proxies=true` (default false). |
+| Outbound leak | Allowlist decides at send time from the real URI; cross-host/port redirects strip `X-Request-Id`; caller-supplied header wins (no duplicate). |
 | Cross-credential replay | Server-side credential bucket + owner lease; unique `(bucket, key_hash)`; never a request-controlled bucket. |
 | Anonymous bucket | Best-effort de-duplication, **not** an identity boundary; HMAC secret rotatable (rotation invalidates anon records); depends on TrustProxies. |
 | Secret replay | Route `replayable=false` + header deny-list + text/JSON only; API-key issuance must be non-replayable. |
 | Retry storms / double execution | 409 while lock held; lease-conditional complete; fail closed on marker eviction. |
 | Cache poisoning | `Vary: Accept-Language` when negotiated from the header; authenticated responses documented `Cache-Control: private`. |
-| Proxy trust | Same rule as api-keys IP source — `Request::ip()` behind configured TrustProxies only. |
+| Proxy trust | Same configured proxies as TrustProxies, evaluated independently of middleware order / request static state. |
 
 ## CORS (fleet)
 

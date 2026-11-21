@@ -2,7 +2,6 @@
 
 declare(strict_types=1);
 
-use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Context;
 use Illuminate\Support\Facades\Http;
@@ -45,6 +44,14 @@ it('propagates to an allowlisted host', function (): void {
         ->toBe([RequestId::HEADER => 'mesh-request-id']);
 });
 
+it('matches host and port on the allowlist', function (): void {
+    $propagator = makePropagator(['api.internal.test:8443']);
+
+    expect($propagator->headersForHost('api.internal.test', 8443))
+        ->toBe([RequestId::HEADER => 'mesh-request-id'])
+        ->and($propagator->headersForHost('api.internal.test', 443))->toBe([]);
+});
+
 it('does not leak to a host outside the allowlist', function (): void {
     $propagator = makePropagator(['api.internal.test']);
 
@@ -58,74 +65,169 @@ it('propagates to every host when allowlist is *', function (): void {
         ->toBe([RequestId::HEADER => 'mesh-request-id']);
 });
 
-it('lets a caller-supplied X-Request-Id win on the PendingRequest', function (): void {
-    Http::fake();
+it('sends no header when current() is unbound', function (): void {
+    $resolver = new RequestIdResolver(
+        new FixedIdGenerator('mesh-request-id'),
+        new AlwaysTrustedProxyDetector,
+        RequestIdAcceptFrom::Never,
+    );
+    Context::flush();
+    $propagator = new RequestIdPropagator(['*'], $resolver);
+
+    expect($propagator->headersForHost('api.internal.test'))->toBe([]);
+});
+
+it('decides from the actual request URI not the applyTo url argument', function (): void {
+    Http::fake(function (Illuminate\Http\Client\Request $request) {
+        expect($request->header(RequestId::HEADER))->toBeEmpty();
+
+        return Http::response('ok', 200);
+    });
+
+    $propagator = makePropagator(['api.internal.test']);
+    // Misleading URL argument (would have allowed) — actual GET goes to evil.
+    $pending = $propagator->applyTo(Http::asJson(), 'https://api.internal.test/v1');
+    $pending->get('https://evil.example/steal');
+});
+
+it('lets a caller-supplied X-Request-Id win and never duplicates', function (): void {
+    Http::fake(function (Illuminate\Http\Client\Request $request) {
+        $values = $request->header(RequestId::HEADER);
+        expect($values)->toBe(['caller-wins-id']);
+
+        return Http::response('ok', 200);
+    });
 
     $propagator = makePropagator(['*']);
     $pending = Http::withHeaders([RequestId::HEADER => 'caller-wins-id']);
-
-    $applied = $propagator->applyTo($pending, 'https://api.internal.test/v1');
-
-    $headers = $applied->getOptions()['headers'] ?? [];
-    $found = null;
-    foreach ($headers as $name => $value) {
-        if (is_string($name) && strcasecmp($name, RequestId::HEADER) === 0) {
-            $found = $value;
-        }
-    }
-
-    expect($found)->toBe('caller-wins-id');
+    $propagator->applyTo($pending, 'https://api.internal.test/v1')
+        ->get('https://api.internal.test/v1');
 });
 
 it('does not treat an empty caller X-Request-Id as winning', function (): void {
-    Http::fake();
+    Http::fake(function (Illuminate\Http\Client\Request $request) {
+        expect($request->header(RequestId::HEADER))->toBe(['mesh-request-id']);
+
+        return Http::response('ok', 200);
+    });
 
     $propagator = makePropagator(['*']);
+    // Empty header should be replaced at send time, not duplicated.
     $pending = Http::withHeaders([RequestId::HEADER => '']);
+    $response = $propagator->applyTo($pending)->get('https://api.internal.test/v1');
 
-    $applied = $propagator->applyTo($pending, 'https://api.internal.test/v1');
-
-    $headers = $applied->getOptions()['headers'] ?? [];
-    $found = null;
-    foreach ($headers as $name => $value) {
-        if (is_string($name) && strcasecmp($name, RequestId::HEADER) === 0) {
-            $found = $value;
-        }
-    }
-
-    expect($found)->toBe('mesh-request-id');
+    expect($response->status())->toBe(200);
 });
 
-it('applies the bound id when the PendingRequest has no caller header', function (): void {
-    Http::fake();
+it('strips the header when a redirect lands on a host outside the allowlist', function (): void {
+    Http::fake([
+        'https://api.internal.test/start' => Http::response('', 302, [
+            'Location' => 'https://evil.example/sink',
+        ]),
+        'https://evil.example/sink' => function (Illuminate\Http\Client\Request $request) {
+            expect($request->header(RequestId::HEADER))->toBeEmpty();
+
+            return Http::response('sink', 200);
+        },
+    ]);
 
     $propagator = makePropagator(['api.internal.test']);
-    $pending = new PendingRequest(Http::getFacadeRoot());
+    $response = $propagator->applyTo(Http::withOptions(['allow_redirects' => true]))
+        ->get('https://api.internal.test/start');
 
-    $applied = $propagator->applyTo($pending, 'https://api.internal.test/v1/items');
-
-    $headers = $applied->getOptions()['headers'] ?? [];
-    $found = null;
-    foreach ($headers as $name => $value) {
-        if (is_string($name) && strcasecmp($name, RequestId::HEADER) === 0) {
-            $found = $value;
-        }
-    }
-
-    expect($found)->toBe('mesh-request-id');
+    expect($response->status())->toBe(200)->and($response->body())->toBe('sink');
 });
 
-it('does not propagate when the URL has no usable host', function (string $url): void {
-    Http::fake();
+it('re-applies the header on a same-allowlist redirect hop', function (): void {
+    Http::fake([
+        'https://api.internal.test/start' => Http::response('', 302, [
+            'Location' => 'https://api.internal.test/next',
+        ]),
+        'https://api.internal.test/next' => function (Illuminate\Http\Client\Request $request) {
+            expect($request->header(RequestId::HEADER))->toBe(['mesh-request-id']);
 
-    $propagator = makePropagator(['*']);
-    $pending = new PendingRequest(Http::getFacadeRoot());
+            return Http::response('next', 200);
+        },
+    ]);
 
-    $applied = $propagator->applyTo($pending, $url);
+    $propagator = makePropagator(['api.internal.test']);
+    $response = $propagator->applyTo(Http::withOptions(['allow_redirects' => true]))
+        ->get('https://api.internal.test/start');
 
-    $headers = $applied->getOptions()['headers'] ?? [];
-    expect($headers)->not->toHaveKey(RequestId::HEADER);
-})->with([
-    'relative path' => ['/local/only'],
-    'scheme only' => ['https://'],
-]);
+    expect($response->body())->toBe('next');
+});
+
+it('does not leak via baseUrl when the relative path resolves off-allowlist', function (): void {
+    Http::fake(function (Illuminate\Http\Client\Request $request) {
+        expect($request->url())->toStartWith('https://evil.example/')
+            ->and($request->header(RequestId::HEADER))->toBeEmpty();
+
+        return Http::response('ok', 200);
+    });
+
+    $propagator = makePropagator(['api.internal.test']);
+    $propagator->applyTo(Http::baseUrl('https://evil.example'))
+        ->get('/steal');
+});
+
+it('respects allow_redirects false and does not follow Location', function (): void {
+    Http::fake([
+        'https://api.internal.test/start' => Http::response('', 302, [
+            'Location' => 'https://evil.example/sink',
+        ]),
+        'https://evil.example/sink' => Http::response('should-not-hit', 200),
+    ]);
+
+    $propagator = makePropagator(['api.internal.test']);
+    $response = $propagator->applyTo(Http::withOptions(['allow_redirects' => false]))
+        ->get('https://api.internal.test/start');
+
+    expect($response->status())->toBe(302);
+});
+
+it('uses default https port 443 when the URI omits an explicit port', function (): void {
+    $propagator = makePropagator(['api.internal.test:443']);
+
+    expect($propagator->headersForHost('api.internal.test', 443))
+        ->toBe([RequestId::HEADER => 'mesh-request-id']);
+});
+
+it('applies the id on an https URI with no explicit port via applyTo', function (): void {
+    Http::fake(function (Illuminate\Http\Client\Request $request) {
+        expect($request->header(RequestId::HEADER))->toBe(['mesh-request-id']);
+
+        return Http::response('ok', 200);
+    });
+
+    $propagator = makePropagator(['api.internal.test:443']);
+    $propagator->applyTo(Http::asJson())->get('https://api.internal.test/v1');
+});
+
+it('applies the id on an http URI with default port 80 via applyTo', function (): void {
+    Http::fake(function (Illuminate\Http\Client\Request $request) {
+        expect($request->header(RequestId::HEADER))->toBe(['mesh-request-id']);
+
+        return Http::response('ok', 200);
+    });
+
+    $propagator = makePropagator(['api.internal.test:80']);
+    $propagator->applyTo(Http::asJson())->get('http://api.internal.test/v1');
+});
+
+it('changes POST to GET when following a 302 redirect', function (): void {
+    Http::fake(function (Illuminate\Http\Client\Request $request) {
+        if ($request->url() === 'https://api.internal.test/start') {
+            return Http::response('', 302, ['Location' => 'https://api.internal.test/next']);
+        }
+
+        expect($request->method())->toBe('GET');
+
+        return Http::response('next', 200);
+    });
+
+    $propagator = makePropagator(['api.internal.test']);
+    $response = $propagator->applyTo(Http::withOptions(['allow_redirects' => true]))
+        ->post('https://api.internal.test/start');
+
+    expect($response->body())->toBe('next');
+});

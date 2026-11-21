@@ -12,12 +12,27 @@ declare(strict_types=1);
 return [
 
     'request_id' => [
+        /*
+         * Optional dual-write aliases into hidden Context (e.g. externa).
+         * The id is always also stored in visible Context as `request_id`.
+         *
+         * @var list<string>
+         */
         'hidden_context_keys' => ['http_basics.request_id'],
-        'accept_pattern' => '/\A[A-Za-z0-9\-_.:]{8,128}\z/D',
+        /*
+         * Must require ≥1 alphanumeric (see RequestId::PATTERN). Override only
+         * with a pattern that keeps that floor.
+         */
+        'accept_pattern' => '/\A(?=[A-Za-z0-9\-_.:]{8,128}$)(?=.*[A-Za-z0-9])[A-Za-z0-9\-_.:]+\z/D',
         /*
          * trusted_proxy | any | never
          */
         'accept_from' => env('HTTP_BASICS_REQUEST_ID_ACCEPT_FROM', 'trusted_proxy'),
+        /*
+         * When TrustProxies is `*` / `**` (Cloud/Forge/Vapor), client ids are
+         * still rejected unless this is true.
+         */
+        'trust_wildcard_proxies' => (bool) env('HTTP_BASICS_TRUST_WILDCARD_PROXIES', false),
         'outbound' => [
             /*
              * Empty = never propagate. Explicit ['*'] = all hosts (documented opt-in).
