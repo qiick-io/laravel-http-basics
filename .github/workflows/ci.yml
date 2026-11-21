@@ -135,12 +135,12 @@ jobs:
 
       - name: Pest (real HTTP group)
         run: |
-          if vendor/bin/pest --list-tests 2>/dev/null | grep -q 'http-server'; then
-            vendor/bin/pest --group=http-server
-          else
-            echo "No http-server group yet (scaffold); feature PRs add the suite."
-            vendor/bin/pest
+          count="$(vendor/bin/pest --list-tests 2>/dev/null | grep -c 'http-server' || true)"
+          if [ "${count}" -eq 0 ]; then
+            echo "::error::http-server Pest group is empty — real HTTP tests are required."
+            exit 1
           fi
+          vendor/bin/pest --group=http-server --fail-on-empty-test-suite
 
   # no-dev cell: cache store must boot without illuminate/database (design §10).
   no-dev-cache:

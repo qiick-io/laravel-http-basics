@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Request id: `RequestId`, `RequestIdResolver`, `AssignRequestIdMiddleware`,
+  `RequestIdPropagator`, `IdGenerator` / `TrustedProxyDetector` seams, and
+  testing doubles (`FixedIdGenerator`, trusted-proxy detectors,
+  `assertRequestIdEchoed`). Default `accept_from=trusted_proxy`; outbound
+  allowlist empty (no propagation) until configured.
 - Package scaffold: auto-discovered `HttpBasicsServiceProvider`, publishable
   `config/http-basics.php` (tag `http-basics-config`), Pest + Testbench, Pint,
   PHPStan level max, qiick standards pack pinned to app-ui `v0.12.0`, CI matrix

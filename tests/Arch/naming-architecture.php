@@ -16,7 +16,16 @@ return [
     'namespace' => 'Qiick\HttpBasics',
 
     'ignoring' => [
-        // Feature PRs add design §3 types that omit shared suffixes (e.g. IdGenerator).
+        'Contracts' => [
+            // Design §3.1: public contract names without Contract suffix.
+            'Qiick\HttpBasics\Contracts\IdGenerator',
+            'Qiick\HttpBasics\Contracts\TrustedProxyDetector',
+        ],
+        'Enums' => [
+            // Design §3.1: RequestIdSource / RequestIdAcceptFrom (not *Enum).
+            'Qiick\HttpBasics\RequestId\RequestIdSource',
+            'Qiick\HttpBasics\RequestId\RequestIdAcceptFrom',
+        ],
     ],
 
     'suffixes' => [
