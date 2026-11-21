@@ -24,10 +24,11 @@ return [
             'Qiick\HttpBasics\Contracts\DefaultLocaleResolver',
         ],
         'Enums' => [
-            // Design §3.1 / §3.2: source enums without Enum suffix.
+            // Design §3.1 / §3.2 / §3.3: source enums without Enum suffix.
             'Qiick\HttpBasics\RequestId\RequestIdSource',
             'Qiick\HttpBasics\RequestId\RequestIdAcceptFrom',
             'Qiick\HttpBasics\Locale\LocaleSource',
+            'Qiick\HttpBasics\Security\CspMode',
         ],
     ],
 

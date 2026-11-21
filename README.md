@@ -112,6 +112,27 @@ door, not only when it won.
 | `HTTP_BASICS_LOCALE_MAX_HEADER_BYTES` | `1024` | Oversize `Accept-Language` is ignored (fall through). |
 | `HTTP_BASICS_LOCALE_MAX_LANGUAGES` | `20` | Too many ranges (counted before dedupe) → treat header as absent. |
 
+### Security headers (landed)
+
+```php
+use Qiick\HttpBasics\Security\SetSecurityHeadersMiddleware;
+
+// Global (with request-id and locale). Machine doors get nosniff / Referrer /
+// Permissions only; web gets XFO + CSP per http-basics.security.csp.mode.
+$middleware->append(SetSecurityHeadersMiddleware::class);
+```
+
+| Config / env | Default | Meaning |
+| --- | --- | --- |
+| `HTTP_BASICS_SECURITY_ENABLED` | `true` | Master switch. |
+| `HTTP_BASICS_CSP_MODE` | `enforce` | `enforce` / `report-only` / `off` / `both`. |
+| `HTTP_BASICS_CSP` | empty → Vite-friendly default | Full CSP override (verbatim). |
+| `HTTP_BASICS_CSP_REPORT_URI` | empty | Appended to the built/override CSP string before set. |
+| `HTTP_BASICS_HSTS_MAX_AGE` | `0` | HSTS only when greater than 0 and the request is HTTPS; proxy usually owns this. |
+| `HTTP_BASICS_BASELINE_ON_API` | `true` | Machine doors still get nosniff / Referrer / Permissions. |
+
+Existing CSP / HSTS / XFO / Referrer / Permissions / nosniff on the response are never replaced.
+
 ## Threat model (short)
 
 | Topic | Contract |

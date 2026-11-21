@@ -34,3 +34,31 @@ function assertVaryAcceptLanguage(Response $response): void
 
     Assert::assertTrue($found, 'Expected Vary to include Accept-Language.');
 }
+
+/**
+ * Asserts the default web-door security headers (nosniff, XFO, Referrer,
+ * Permissions, and CSP when mode is enforce).
+ *
+ * @param  list<string>  $expectedHeaderNames
+ */
+function assertSecurityHeaders(
+    Response $response,
+    array $expectedHeaderNames = [
+        'X-Content-Type-Options',
+        'X-Frame-Options',
+        'Referrer-Policy',
+        'Permissions-Policy',
+        'Content-Security-Policy',
+    ],
+): void {
+    foreach ($expectedHeaderNames as $headerName) {
+        Assert::assertTrue(
+            $response->headers->has($headerName),
+            "Expected security header {$headerName} to be present.",
+        );
+    }
+
+    if (in_array('X-Content-Type-Options', $expectedHeaderNames, true)) {
+        Assert::assertSame('nosniff', $response->headers->get('X-Content-Type-Options'));
+    }
+}
