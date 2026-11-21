@@ -70,6 +70,24 @@ The id is stored in **visible** Context as `request_id` (Laravel logs it and que
 
 Trust is computed by `ConfigTrustedProxyDetector` from the same sources as TrustProxies (`TrustProxies::at()` and `trustedproxy.proxies`) via `IpUtils::checkIp` on `REMOTE_ADDR`. It does **not** call `$request->isFromTrustedProxy()`, so middleware order and Octane static request state cannot flip the decision.
 
+### Locale (landed)
+
+```php
+use Qiick\HttpBasics\Locale\SetLocaleMiddleware;
+use Qiick\HttpBasics\Locale\LocaleNegotiator;
+
+$middleware->append(SetLocaleMiddleware::class);
+
+// After API-key / principal auth (inside the stack, before Content-Language):
+app(LocaleNegotiator::class)->applyPrincipalLocale($request, $principal->locale);
+```
+
+| Config / env | Default | Meaning |
+| --- | --- | --- |
+| `HTTP_BASICS_SUPPORTED_LOCALES` | empty → app locale + fallback | Comma-separated supported tags (case-sensitive). |
+| `HTTP_BASICS_LOCALE_MAX_HEADER_BYTES` | `1024` | Oversize `Accept-Language` is ignored (fall through). |
+| `HTTP_BASICS_LOCALE_MAX_LANGUAGES` | `20` | Too many ranges → treat header as absent. |
+
 ## Threat model (short)
 
 | Topic | Contract |

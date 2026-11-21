@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Locale negotiation: `LocaleNegotiator`, `SetLocaleMiddleware`,
+  `MachineDoorClassifier`, `SupportedLocales` / `DefaultLocaleResolver` seams,
+  and testing helpers (`ArraySupportedLocales`, `FixedDefaultLocaleResolver`,
+  `assertContentLanguage`, `assertVaryAcceptLanguage`). Machine doors honour
+  capped Accept-Language; web ignores it; `Content-Language` + `Vary` on
+  header-sourced responses.
 - Request id: `RequestId`, `RequestIdResolver`, `AssignRequestIdMiddleware`,
   `RequestIdPropagator`, `IdGenerator` / `TrustedProxyDetector` seams, and
   testing doubles (`FixedIdGenerator`, trusted-proxy detectors,
