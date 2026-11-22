@@ -10,8 +10,8 @@ namespace Qiick\HttpBasics\Uploads;
 final class ConfigUploadPolicyResolver implements UploadPolicyResolver
 {
     /**
-     * @param  array<string, array<string, mixed>>  $contexts
-     * @param  array<string, list<string>>  $defaultMagic
+     * @param  array<mixed, mixed>  $contexts
+     * @param  array<mixed, mixed>  $defaultMagic
      */
     public function __construct(
         private array $contexts,
@@ -40,7 +40,7 @@ final class ConfigUploadPolicyResolver implements UploadPolicyResolver
             isset($config['max_uncompressed_ratio']) && is_int($config['max_uncompressed_ratio'])
                 ? $config['max_uncompressed_ratio']
                 : null,
-            is_array($magic) ? $this->stringListMap($magic) : [],
+            $this->stringListMap(is_array($magic) ? $magic : $this->defaultMagic),
         );
     }
 
@@ -57,7 +57,9 @@ final class ConfigUploadPolicyResolver implements UploadPolicyResolver
                 continue;
             }
 
-            $normalized[$extension] = array_values(array_filter($signatures, 'is_string'));
+            /** @var list<string> $hexSignatures */
+            $hexSignatures = array_values(array_filter($signatures, 'is_string'));
+            $normalized[$extension] = $hexSignatures;
         }
 
         return $normalized;

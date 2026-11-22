@@ -30,7 +30,7 @@ final class FileNameSanitizer
 
         $base = basename($clientName);
 
-        if ($base !== $clientName || $base === '' || $base === '.' || $base === '..') {
+        if ($base !== $clientName || $base === '.' || $base === '..') {
             throw UploadRejectedException::nameInvalid($clientName);
         }
 
