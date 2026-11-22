@@ -54,7 +54,7 @@ final class ConfigUploadPolicyResolver implements UploadPolicyResolver
             }
         }
 
-        return array_values($strings); // @pest-mutate-ignore: UnwrapArrayValues
+        return $strings;
     }
 
     private function positiveIntOrNull(mixed $value): ?int
@@ -96,7 +96,7 @@ final class ConfigUploadPolicyResolver implements UploadPolicyResolver
                 }
             }
 
-            $normalized[$extension] = array_values($hexSignatures); // @pest-mutate-ignore: UnwrapArrayValues
+            $normalized[$extension] = $hexSignatures;
         }
 
         return $normalized;
