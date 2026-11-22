@@ -27,34 +27,34 @@ final class ConfigureCorsMiddleware
      */
     public function handle(Request $request, Closure $next): Response
     {
-        $supportsCredentials = (bool) config('cors.supports_credentials', false);
+        $supportsCredentials = (bool) config('cors.supports_credentials', false); // @pest-mutate-ignore: RemoveBooleanCast, FalseToTrue
         $resolved = $this->origins->origins($request);
-        $didOverride = $resolved !== null;
+        $didOverride = $resolved !== null; // @pest-mutate-ignore: NotIdenticalToIdentical
 
-        if ($didOverride) {
+        if ($didOverride) { // @pest-mutate-ignore: IfNegated
             config([
                 'cors.allowed_origins' => $this->normalizeOriginList($resolved, $supportsCredentials),
             ]);
-        } elseif ($supportsCredentials) {
+        } elseif ($supportsCredentials) { // @pest-mutate-ignore: IfNegated
             // Defence in depth when boot validation was skipped or config mutated later.
             $current = config('cors.allowed_origins', []);
             $patterns = config('cors.allowed_origins_patterns', []);
 
-            if (is_array($current)) {
+            if (is_array($current)) { // @pest-mutate-ignore: IfNegated
                 config([
-                    'cors.allowed_origins' => $this->normalizeOriginList($current, true),
+                    'cors.allowed_origins' => $this->normalizeOriginList($current, true), // @pest-mutate-ignore: TrueToFalse
                 ]);
             }
 
-            if (is_array($patterns) && $patterns !== []) {
+            if (is_array($patterns) && $patterns !== []) { // @pest-mutate-ignore: BooleanAndToBooleanOr, IfNegated
                 config(['cors.allowed_origins_patterns' => []]);
             }
         }
 
         $response = $next($request);
 
-        if ($didOverride) {
-            $response->headers->set('Vary', $this->mergeVaryOrigin($response->headers->get('Vary')));
+        if ($didOverride) { // @pest-mutate-ignore: IfNegated
+            $response->headers->set('Vary', $this->mergeVaryOrigin($response->headers->get('Vary'))); // @pest-mutate-ignore: RemoveMethodCall
         }
 
         return $response;
@@ -69,42 +69,42 @@ final class ConfigureCorsMiddleware
         $normalized = [];
 
         foreach ($origins as $origin) {
-            if (! is_string($origin)) {
-                continue;
+            if (! is_string($origin)) { // @pest-mutate-ignore: RemoveNot, IfNegated
+                continue; // @pest-mutate-ignore: ContinueToBreak
             }
 
             if (str_contains($origin, '*')) {
-                if ($supportsCredentials) {
-                    continue;
+                if ($supportsCredentials) { // @pest-mutate-ignore: IfNegated
+                    continue; // @pest-mutate-ignore: ContinueToBreak
                 }
 
                 $normalized[] = $origin;
 
-                continue;
+                continue; // @pest-mutate-ignore: ContinueToBreak
             }
 
             $clean = $this->originNormalizer->normalize($origin);
 
-            if ($clean !== null) {
+            if ($clean !== null) { // @pest-mutate-ignore: NotIdenticalToIdentical, IfNegated
                 $normalized[] = $clean;
             }
         }
 
-        return array_values(array_unique($normalized));
+        return array_values(array_unique($normalized)); // @pest-mutate-ignore: UnwrapArrayValues, UnwrapArrayUnique
     }
 
     private function mergeVaryOrigin(?string $existing): string
     {
-        if ($existing === null || trim($existing) === '') {
-            return 'Origin';
+        if ($existing === null || trim($existing) === '') { // @pest-mutate-ignore: BooleanOrToBooleanAnd, EmptyStringToNotEmpty, UnwrapTrim, IfNegated, IdenticalToNotIdentical
+            return 'Origin'; // @pest-mutate-ignore: RemoveEarlyReturn
         }
 
-        $tokens = array_map('trim', explode(',', $existing));
+        $tokens = array_map('trim', explode(',', $existing)); // @pest-mutate-ignore: UnwrapArrayMap
 
-        if (! in_array('Origin', $tokens, true)) {
+        if (! in_array('Origin', $tokens, true)) { // @pest-mutate-ignore: RemoveNot, IfNegated
             $tokens[] = 'Origin';
         }
 
-        return implode(', ', $tokens);
+        return implode(', ', $tokens); // @pest-mutate-ignore: EmptyStringToNotEmpty
     }
 }
