@@ -5,9 +5,10 @@ declare(strict_types=1);
 namespace Qiick\HttpBasics\Errors;
 
 use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
+use Symfony\Component\HttpKernel\Exception\MethodNotAllowedHttpException;
 
 /**
- * @api Default register mapping from common framework exceptions to fleet codes.
+ * @api Default register mapping from common framework exceptions to {@see ErrorCode}.
  *
  * Products may wrap or replace this resolver; it never invents product-specific codes.
  * Optional Illuminate exception classes are matched by FQCN so the package stays
@@ -17,37 +18,53 @@ final class FrameworkErrorCodeResolver implements ErrorCodeResolver
 {
     public function forException(\Throwable $exception): string
     {
+        return $this->resolve($exception)->value;
+    }
+
+    public function resolve(\Throwable $exception): ErrorCode
+    {
         if (is_a($exception, 'Illuminate\\Validation\\ValidationException')) {
-            return 'validation_failed';
+            return ErrorCode::ValidationFailed;
         }
 
         if (is_a($exception, 'Illuminate\\Auth\\AuthenticationException')) {
-            return 'unauthenticated';
+            return ErrorCode::Unauthenticated;
         }
 
         if (is_a($exception, 'Illuminate\\Auth\\Access\\AuthorizationException')) {
-            return 'forbidden';
+            return ErrorCode::Forbidden;
         }
 
         if (is_a($exception, 'Illuminate\\Database\\Eloquent\\ModelNotFoundException')) {
-            return 'not_found';
+            return ErrorCode::NotFound;
+        }
+
+        if (is_a($exception, 'Illuminate\\Routing\\Exceptions\\ThrottleRequestsException')
+            || is_a($exception, 'Illuminate\\Http\\Exceptions\\ThrottleRequestsException')) {
+            return ErrorCode::TooManyRequests;
+        }
+
+        if ($exception instanceof MethodNotAllowedHttpException) {
+            return ErrorCode::MethodNotAllowed;
         }
 
         if ($exception instanceof HttpExceptionInterface) {
             return match ($exception->getStatusCode()) {
-                401 => 'unauthenticated',
-                403 => 'forbidden',
-                404 => 'not_found',
-                405 => 'method_not_allowed',
-                409 => 'conflict',
-                415 => 'unsupported_media_type',
-                422 => 'validation_failed',
-                429 => 'too_many_requests',
-                503 => 'service_unavailable',
-                default => $exception->getStatusCode() >= 500 ? 'server_error' : 'http_error',
+                401 => ErrorCode::Unauthenticated,
+                403 => ErrorCode::Forbidden,
+                404 => ErrorCode::NotFound,
+                405 => ErrorCode::MethodNotAllowed,
+                409 => ErrorCode::Conflict,
+                415 => ErrorCode::UnsupportedMediaType,
+                422 => ErrorCode::ValidationFailed,
+                429 => ErrorCode::TooManyRequests,
+                503 => ErrorCode::ServiceUnavailable,
+                default => $exception->getStatusCode() >= 500
+                    ? ErrorCode::ServerError
+                    : ErrorCode::HttpError,
             };
         }
 
-        return 'server_error';
+        return ErrorCode::ServerError;
     }
 }

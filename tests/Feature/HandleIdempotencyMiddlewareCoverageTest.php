@@ -8,13 +8,13 @@ use Illuminate\Support\Facades\Context;
 use Qiick\HttpBasics\Contracts\CredentialBucketResolver;
 use Qiick\HttpBasics\Contracts\ErrorRenderer;
 use Qiick\HttpBasics\Contracts\IdempotencyStore;
+use Qiick\HttpBasics\Errors\ErrorCode;
 use Qiick\HttpBasics\Idempotency\AnonymousBucketResolver;
 use Qiick\HttpBasics\Idempotency\ClaimOutcome;
 use Qiick\HttpBasics\Idempotency\Fingerprinter;
 use Qiick\HttpBasics\Idempotency\FleetErrorRenderer;
 use Qiick\HttpBasics\Idempotency\HandleIdempotencyMiddleware;
 use Qiick\HttpBasics\Idempotency\IdempotencyClaim;
-use Qiick\HttpBasics\Idempotency\IdempotencyErrorCode;
 use Qiick\HttpBasics\Idempotency\IdempotencyKeyFormat;
 use Qiick\HttpBasics\Idempotency\IdempotencyKeyValidator;
 use Qiick\HttpBasics\Idempotency\IdempotencyRejection;
@@ -666,7 +666,7 @@ it('returns 409 not_replayable for sealed completed-without-body claims', functi
     });
 
     expect($response->getStatusCode())->toBe(409)
-        ->and($response->getData(true)['error'])->toBe(IdempotencyErrorCode::NotReplayable->value);
+        ->and($response->getData(true)['error'])->toBe(ErrorCode::IdempotencyNotReplayable->value);
 });
 
 it('seals unreplayable when the response exceeds max_response_bytes', function (): void {
@@ -724,7 +724,7 @@ it('seals unreplayable when the response exceeds max_response_bytes', function (
     });
 
     expect($second->getStatusCode())->toBe(409)
-        ->and($second->getData(true)['error'])->toBe(IdempotencyErrorCode::NotReplayable->value)
+        ->and($second->getData(true)['error'])->toBe(ErrorCode::IdempotencyNotReplayable->value)
         ->and($runs)->toBe(1);
 });
 
@@ -791,7 +791,7 @@ it('enforces max_handler_seconds and seals unreplayable after a slow handler', f
 
     // Sealed, not merely still locked: the retry is told the response is gone for good.
     expect($second->getStatusCode())->toBe(409)
-        ->and($second->getData(true)['error'] ?? null)->toBe(IdempotencyErrorCode::NotReplayable->value)
+        ->and($second->getData(true)['error'] ?? null)->toBe(ErrorCode::IdempotencyNotReplayable->value)
         ->and($runs)->toBe(1);
 });
 
@@ -894,7 +894,7 @@ it('maps claim QueryException-equivalent store failures to 503 with Retry-After'
 
     expect($response->getStatusCode())->toBe(503)
         ->and($response->headers->get('Retry-After'))->toBe('9')
-        ->and($response->getData(true)['error'])->toBe(IdempotencyErrorCode::Unavailable->value);
+        ->and($response->getData(true)['error'])->toBe(ErrorCode::IdempotencyUnavailable->value);
 });
 
 it('renders malformed JSON through ErrorRenderer as validation_failed', function (): void {

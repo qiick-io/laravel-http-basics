@@ -62,7 +62,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   descriptor and symbolic link entries are refused. The package checks structure only:
   products must never extract uploads with streaming readers (see the README).
 
-- Errors: design §3.5 fleet helpers — `ErrorCodeResolver` /
+- Errors: design §3.5 fleet helpers — single `ErrorCode` backed enum with
+  `docs/error-codes.md` catalogue (Pest fails on drift), `ErrorCodeResolver` /
   `FrameworkErrorCodeResolver`, `ErrorCodeAugmentor` (JSON ≥400 only, never
   overwrites `error`), `ExceptionRespondBinder`, `ExceptionErrorCodeAugmenter`,
   and `MachineDoorJson::whenCallback` (Illuminate-only; no Foundation types).

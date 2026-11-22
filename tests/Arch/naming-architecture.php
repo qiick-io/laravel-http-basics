@@ -42,7 +42,7 @@ return [
             'Qiick\HttpBasics\Locale\LocaleSource',
             'Qiick\HttpBasics\Security\CspMode',
             'Qiick\HttpBasics\Idempotency\ClaimOutcome',
-            'Qiick\HttpBasics\Idempotency\IdempotencyErrorCode',
+            'Qiick\HttpBasics\Errors\ErrorCode',
             'Qiick\HttpBasics\Idempotency\IdempotencyKeyFormat',
             'Qiick\HttpBasics\Uploads\ScanResult',
             'Qiick\HttpBasics\Uploads\MismatchMode',

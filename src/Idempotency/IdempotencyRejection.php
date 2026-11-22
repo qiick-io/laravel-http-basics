@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Qiick\HttpBasics\Idempotency;
 
+use Qiick\HttpBasics\Errors\ErrorCode;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 
 /**
@@ -15,21 +16,29 @@ final class IdempotencyRejection extends HttpException
      * @param  array<string, string>  $headers
      */
     public function __construct(
-        private IdempotencyErrorCode $idempotencyCode,
+        private ErrorCode $error,
         int $statusCode,
         array $headers = [],
         ?\Throwable $previous = null,
     ) {
-        parent::__construct($statusCode, $idempotencyCode->value, $previous, $headers);
+        parent::__construct($statusCode, $error->value, $previous, $headers);
     }
 
     public function errorCode(): string
     {
-        return $this->idempotencyCode->value;
+        return $this->error->value;
     }
 
-    public function idempotencyErrorCode(): IdempotencyErrorCode
+    public function fleetErrorCode(): ErrorCode
     {
-        return $this->idempotencyCode;
+        return $this->error;
+    }
+
+    /**
+     * @deprecated Use {@see fleetErrorCode()} — kept for call sites mid-migration.
+     */
+    public function idempotencyErrorCode(): ErrorCode
+    {
+        return $this->error;
     }
 }

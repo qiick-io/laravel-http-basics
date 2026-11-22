@@ -66,8 +66,8 @@ $exceptions->respond(function ($response, $exception, $request) {
 ```
 
 Idempotency refusals already use `ErrorRenderer` with translated `message` and a
-stable `error` code. The augmentor covers framework and product exceptions the
-same way.
+stable `error` code from the shared `ErrorCode` enum (see `docs/error-codes.md`).
+The augmentor covers framework and product exceptions the same way.
 
 ### Request id (landed)
 
