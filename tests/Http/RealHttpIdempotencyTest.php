@@ -1,0 +1,217 @@
+<?php
+
+declare(strict_types=1);
+
+use Qiick\HttpBasics\Idempotency\HandleIdempotencyMiddleware;
+use Qiick\HttpBasics\Idempotency\IdempotencyErrorCode;
+
+require_once __DIR__.'/Support/php-built-in-server.php';
+
+/**
+ * Real HTTP idempotency against dual php -S workers sharing a file cache.
+ *
+ * php -S is single-threaded, so concurrency needs two processes and a shared
+ * LockProvider store (file cache) for overlapping Idempotency-Key claims.
+ */
+$idempotencyHttpState = new class
+{
+    public int $portA = 0;
+
+    public int $portB = 0;
+
+    public string $cachePath = '';
+
+    /** @var resource|null */
+    public $procA = null;
+
+    /** @var resource|null */
+    public $procB = null;
+};
+
+beforeAll(function () use ($idempotencyHttpState): void {
+    $server = __DIR__.'/fixtures/idempotency-server.php';
+    $root = dirname(__DIR__, 1);
+    $idempotencyHttpState->cachePath = sys_get_temp_dir().'/http-basics-idempotency-'.getmypid().'-'.bin2hex(random_bytes(4));
+    if (! mkdir($idempotencyHttpState->cachePath, 0777, true) && ! is_dir($idempotencyHttpState->cachePath)) {
+        throw new RuntimeException('Failed to create shared cache path');
+    }
+
+    $idempotencyHttpState->portA = 9200 + random_int(0, 200);
+    $idempotencyHttpState->portB = $idempotencyHttpState->portA + 1;
+
+    $environment = [
+        'HTTP_BASICS_CACHE_PATH' => $idempotencyHttpState->cachePath,
+        'HTTP_BASICS_IDEMPOTENCY_LOCK_TTL' => '2',
+        'HTTP_BASICS_IDEMPOTENCY_STALE_AFTER' => '1',
+        'HTTP_BASICS_IDEMPOTENCY_MAX_HANDLER' => '1',
+    ];
+
+    $idempotencyHttpState->procA = startPhpBuiltInServer(
+        $idempotencyHttpState->portA,
+        $server,
+        $root,
+        '127.0.0.1',
+        $environment,
+    );
+    $idempotencyHttpState->procB = startPhpBuiltInServer(
+        $idempotencyHttpState->portB,
+        $server,
+        $root,
+        '127.0.0.1',
+        $environment,
+    );
+});
+
+afterAll(function () use ($idempotencyHttpState): void {
+    foreach ([$idempotencyHttpState->procA, $idempotencyHttpState->procB] as $proc) {
+        if (is_resource($proc)) {
+            stopPhpBuiltInServer($proc);
+        }
+    }
+
+    if ($idempotencyHttpState->cachePath !== '' && is_dir($idempotencyHttpState->cachePath)) {
+        $iterator = new RecursiveIteratorIterator(
+            new RecursiveDirectoryIterator($idempotencyHttpState->cachePath, FilesystemIterator::SKIP_DOTS),
+            RecursiveIteratorIterator::CHILD_FIRST,
+        );
+        foreach ($iterator as $fileInfo) {
+            if ($fileInfo->isDir()) {
+                @rmdir($fileInfo->getPathname());
+            } else {
+                @unlink($fileInfo->getPathname());
+            }
+        }
+        @rmdir($idempotencyHttpState->cachePath);
+    }
+});
+
+/**
+ * @param  array<string, mixed>  $payload
+ * @return array{status: int, headers: array<string, string>, body: string}
+ */
+function idempotencyJsonPost(int $port, string $key, array $payload, int $sleepMs = 0): array
+{
+    $path = '/api/items';
+    if ($sleepMs > 0) {
+        $path .= '?sleep_ms='.$sleepMs;
+    }
+
+    return realHttpRequest(
+        $port,
+        $path,
+        'POST',
+        [
+            HandleIdempotencyMiddleware::HEADER => $key,
+            'Content-Type' => 'application/json',
+            'Accept' => 'application/json',
+        ],
+        json_encode($payload, JSON_THROW_ON_ERROR),
+    );
+}
+
+it('returns in-progress 409 for a concurrent duplicate Idempotency-Key over real HTTP', function () use ($idempotencyHttpState): void {
+    $key = '550e8400-e29b-41d4-a716-446655440101';
+    $body = json_encode(['name' => 'concurrent'], JSON_THROW_ON_ERROR);
+    $headers = [
+        HandleIdempotencyMiddleware::HEADER => $key,
+        'Content-Type' => 'application/json',
+        'Accept' => 'application/json',
+    ];
+
+    // Overlap on two php -S workers: A sleeps after claiming; B should hit the held lock.
+    [$first, $second] = realHttpRequestPool(
+        [
+            'port' => $idempotencyHttpState->portA,
+            'path' => '/api/items?sleep_ms=800',
+            'method' => 'POST',
+            'headers' => $headers,
+            'body' => $body,
+        ],
+        [
+            'port' => $idempotencyHttpState->portB,
+            'path' => '/api/items',
+            'method' => 'POST',
+            'headers' => $headers,
+            'body' => $body,
+        ],
+    );
+
+    $statuses = [$first['status'], $second['status']];
+    sort($statuses);
+
+    expect($statuses)->toBe([201, 409]);
+
+    $conflict = $first['status'] === 409 ? $first : $second;
+    $winner = $first['status'] === 201 ? $first : $second;
+
+    expect(json_decode($winner['body'], true)['created'] ?? null)->toBeTrue()
+        ->and(json_decode($conflict['body'], true)['error'] ?? null)->toBe(IdempotencyErrorCode::InProgress->value)
+        ->and($conflict['headers'])->toHaveKey('retry-after');
+})->group('http-server');
+
+it('rejects replay with a different body as 422 idempotency_payload_mismatch over real HTTP', function () use ($idempotencyHttpState): void {
+    $key = '550e8400-e29b-41d4-a716-446655440102';
+
+    $first = idempotencyJsonPost($idempotencyHttpState->portA, $key, ['name' => 'alpha']);
+    expect($first['status'])->toBe(201);
+
+    $mismatch = idempotencyJsonPost($idempotencyHttpState->portB, $key, ['name' => 'beta']);
+
+    expect($mismatch['status'])->toBe(422)
+        ->and(json_decode($mismatch['body'], true)['error'] ?? null)
+        ->toBe(IdempotencyErrorCode::PayloadMismatch->value);
+})->group('http-server');
+
+it('allows lock-expiry takeover after stale_after when the lock is gone over real HTTP', function () use ($idempotencyHttpState): void {
+    $key = '550e8400-e29b-41d4-a716-446655440103';
+    $body = json_encode(['name' => 'stale-takeover'], JSON_THROW_ON_ERROR);
+    $headers = [
+        HandleIdempotencyMiddleware::HEADER => $key,
+        'Content-Type' => 'application/json',
+        'Accept' => 'application/json',
+    ];
+
+    // Hold the first claim past lock_ttl (2s) and stale_after (1s) without completing.
+    $multi = curl_multi_init();
+    $slow = curl_init("http://127.0.0.1:{$idempotencyHttpState->portA}/api/items?sleep_ms=5000");
+    curl_setopt_array($slow, [
+        CURLOPT_CUSTOMREQUEST => 'POST',
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_HEADER => true,
+        CURLOPT_HTTPHEADER => array_map(
+            static fn (string $name, string $value): string => "{$name}: {$value}",
+            array_keys($headers),
+            array_values($headers),
+        ),
+        CURLOPT_POSTFIELDS => $body,
+        CURLOPT_TIMEOUT => 15,
+        CURLOPT_FOLLOWLOCATION => false,
+    ]);
+    curl_multi_add_handle($multi, $slow);
+
+    $running = null;
+    curl_multi_exec($multi, $running);
+    // Let the first worker claim the key and write the in_progress marker.
+    usleep(300_000);
+    curl_multi_exec($multi, $running);
+
+    // Wait until the file-cache lock TTL expires and the marker is stale.
+    sleep(3);
+
+    $takeover = idempotencyJsonPost($idempotencyHttpState->portB, $key, ['name' => 'stale-takeover']);
+
+    expect($takeover['status'])->toBe(201)
+        ->and(json_decode($takeover['body'], true)['created'] ?? null)->toBeTrue();
+
+    // Drain the slow request (may 503 on lease mismatch after takeover — not asserted).
+    do {
+        $status = curl_multi_exec($multi, $running);
+        if ($running) {
+            curl_multi_select($multi, 0.2);
+        }
+    } while ($running && $status === CURLM_OK);
+
+    curl_multi_remove_handle($multi, $slow);
+    curl_close($slow);
+    curl_multi_close($multi);
+})->group('http-server');

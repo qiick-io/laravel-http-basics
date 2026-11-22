@@ -12,6 +12,8 @@ use Qiick\HttpBasics\RequestId\RequestIdResolver;
 use Qiick\HttpBasics\Testing\AlwaysTrustedProxyDetector;
 use Qiick\HttpBasics\Testing\FixedIdGenerator;
 
+require_once __DIR__.'/Support/php-built-in-server.php';
+
 /**
  * Real HTTP against php -S (fleet rule). Group http-server is required by CI.
  */
@@ -27,96 +29,6 @@ $httpState = new class
     /** @var resource|null */
     public $redirectProc = null;
 };
-
-/**
- * Start php -S so the tracked PID is the server itself (not an `sh -c` parent).
- * Prefers `setsid` + array form (process group kill); falls back to `exec php -S`.
- *
- * @return resource
- */
-function startPhpBuiltInServer(int $port, string $server, string $root, string $trustProxies)
-{
-    $descriptors = [
-        0 => ['pipe', 'r'],
-        1 => ['file', sys_get_temp_dir()."/http-basics-{$port}.log", 'w'],
-        2 => ['file', sys_get_temp_dir()."/http-basics-{$port}.err", 'w'],
-    ];
-
-    $setsid = null;
-    foreach (['/usr/bin/setsid', '/bin/setsid'] as $candidate) {
-        if (is_executable($candidate)) {
-            $setsid = $candidate;
-            break;
-        }
-    }
-
-    if ($setsid !== null) {
-        $environment = [];
-        foreach ($_SERVER as $key => $value) {
-            if (is_string($key) && is_string($value)) {
-                $environment[$key] = $value;
-            }
-        }
-        $environment['HTTP_BASICS_TRUST_PROXIES'] = $trustProxies;
-        $command = [$setsid, PHP_BINARY, '-S', "127.0.0.1:{$port}", $server];
-        $proc = proc_open($command, $descriptors, $pipes, $root, $environment);
-    } else {
-        // exec replaces the shell so proc_terminate hits php -S, not sh.
-        $command = sprintf(
-            'exec env HTTP_BASICS_TRUST_PROXIES=%s %s -S 127.0.0.1:%d %s',
-            escapeshellarg($trustProxies),
-            escapeshellarg(PHP_BINARY),
-            $port,
-            escapeshellarg($server),
-        );
-        $proc = proc_open($command, $descriptors, $pipes, $root);
-    }
-
-    if (! is_resource($proc)) {
-        throw new RuntimeException("Failed to start php -S on {$port}");
-    }
-
-    for ($attempt = 0; $attempt < 50; $attempt++) {
-        $errno = 0;
-        $errstr = '';
-        $socket = @fsockopen('127.0.0.1', $port, $errno, $errstr, 0.2);
-        if (is_resource($socket)) {
-            fclose($socket);
-
-            return $proc;
-        }
-        usleep(100_000);
-    }
-
-    stopPhpBuiltInServer($proc);
-
-    throw new RuntimeException("php -S on {$port} did not become ready");
-}
-
-/**
- * @param  resource  $proc
- */
-function stopPhpBuiltInServer($proc): void
-{
-    if (! is_resource($proc)) {
-        return;
-    }
-
-    $status = proc_get_status($proc);
-    $pid = is_array($status) ? (int) ($status['pid'] ?? 0) : 0;
-
-    if ($pid > 0 && function_exists('posix_kill')) {
-        // Negative PID = process group when started under setsid; also kill the PID.
-        @posix_kill(-$pid, SIGTERM);
-        @posix_kill($pid, SIGTERM);
-        usleep(50_000);
-        @posix_kill(-$pid, SIGKILL);
-        @posix_kill($pid, SIGKILL);
-    }
-
-    proc_terminate($proc);
-    proc_close($proc);
-}
 
 beforeAll(function () use ($httpState): void {
     $server = __DIR__.'/fixtures/server.php';
@@ -145,46 +57,6 @@ afterAll(function () use ($httpState): void {
         }
     }
 });
-
-/**
- * @param  array<string, string>  $headers
- * @return array{status: int, headers: array<string, string>, body: string}
- */
-function realHttpRequest(int $port, string $path, string $method = 'GET', array $headers = []): array
-{
-    $ch = curl_init("http://127.0.0.1:{$port}{$path}");
-    $headerLines = [];
-    foreach ($headers as $name => $value) {
-        $headerLines[] = "{$name}: {$value}";
-    }
-    curl_setopt_array($ch, [
-        CURLOPT_CUSTOMREQUEST => $method,
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_HEADER => true,
-        CURLOPT_HTTPHEADER => $headerLines,
-        CURLOPT_TIMEOUT => 5,
-        CURLOPT_FOLLOWLOCATION => false,
-    ]);
-    $raw = curl_exec($ch);
-    if ($raw === false) {
-        throw new RuntimeException('curl failed: '.curl_error($ch));
-    }
-    $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
-    curl_close($ch);
-
-    $parts = explode("\r\n\r\n", $raw, 2);
-    $headerBlob = $parts[0];
-    $body = $parts[1] ?? '';
-    $parsed = [];
-    foreach (explode("\r\n", $headerBlob) as $line) {
-        if (str_contains($line, ':')) {
-            [$n, $v] = explode(':', $line, 2);
-            $parsed[strtolower(trim($n))] = trim($v);
-        }
-    }
-
-    return ['status' => $status, 'headers' => $parsed, 'body' => $body];
-}
 
 it('echoes a generated X-Request-Id over real HTTP', function () use ($httpState): void {
     $result = realHttpRequest($httpState->primaryPort, '/ping');
