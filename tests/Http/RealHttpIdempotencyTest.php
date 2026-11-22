@@ -43,7 +43,8 @@ beforeAll(function () use ($idempotencyHttpState): void {
         'HTTP_BASICS_CACHE_PATH' => $idempotencyHttpState->cachePath,
         'HTTP_BASICS_IDEMPOTENCY_LOCK_TTL' => '2',
         'HTTP_BASICS_IDEMPOTENCY_STALE_AFTER' => '1',
-        'HTTP_BASICS_IDEMPOTENCY_MAX_HANDLER' => '2',
+        // Must stay strictly under lock TTL (middleware refuses max_handler >= lock).
+        'HTTP_BASICS_IDEMPOTENCY_MAX_HANDLER' => '1',
     ];
 
     $idempotencyHttpState->procA = startPhpBuiltInServer(
@@ -123,7 +124,8 @@ it('returns in-progress 409 for a concurrent duplicate Idempotency-Key over real
         array_values($headers),
     );
     // Same path on both so fingerprints match; conflict never reaches the handler.
-    $path = '/api/items?sleep_ms=1200';
+    // Stay under max_handler_seconds (1) so the winner completes as 201, not 503.
+    $path = '/api/items?sleep_ms=800';
     $enteredFile = $idempotencyHttpState->cachePath.DIRECTORY_SEPARATOR.'handler_entered';
     @unlink($enteredFile);
 

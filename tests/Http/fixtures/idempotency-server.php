@@ -73,9 +73,11 @@ $config->set('cache.stores.file', [
 $config->set('http-basics.request_id.accept_from', 'trusted_proxy');
 $config->set('http-basics.idempotency.store', 'cache');
 $config->set('http-basics.idempotency.cache_store', 'file');
-$config->set('http-basics.idempotency.lock_ttl_seconds', max(1, $lockTtl));
+$effectiveLockTtl = max(2, $lockTtl);
+$config->set('http-basics.idempotency.lock_ttl_seconds', $effectiveLockTtl);
 $config->set('http-basics.idempotency.stale_after_seconds', max(1, $staleAfter));
-$config->set('http-basics.idempotency.max_handler_seconds', max(1, min($maxHandler, $lockTtl)));
+// Handler budget must stay strictly under the store lock TTL.
+$config->set('http-basics.idempotency.max_handler_seconds', max(1, min($maxHandler, $effectiveLockTtl - 1)));
 $config->set('http-basics.idempotency.ttl_seconds', 86400);
 $config->set('http-basics.idempotency.max_response_bytes', max(1, $maxResponse));
 $config->set('http-basics.idempotency.anonymous.enabled', false);
