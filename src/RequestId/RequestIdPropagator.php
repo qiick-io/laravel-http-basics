@@ -143,7 +143,7 @@ final class RequestIdPropagator
     {
         foreach (array_keys($request->getHeaders()) as $name) {
             if (strcasecmp($name, RequestId::HEADER) === 0) {
-                return $request->withoutHeader($name); // @pest-mutate-ignore: RemoveEarlyReturn
+                return $request->withoutHeader($name);
             }
         }
 

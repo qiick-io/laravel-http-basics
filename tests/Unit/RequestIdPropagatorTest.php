@@ -277,3 +277,15 @@ it('re-decides the allowlist on each Guzzle-followed hop', function (): void {
 
     expect($response->body())->toBe('next');
 });
+
+it('strips a carried X-Request-Id on a redirect hop to a host outside the allowlist', function (): void {
+    Http::fake();
+    $propagator = makePropagator(['api.internal.test']);
+
+    // Guzzle sets __redirect_count before every followed hop; the caller's header rides along.
+    $propagator->applyTo(Http::withOptions(['__redirect_count' => 1])->withHeaders(['x-request-id' => 'caller-id']))
+        ->get('https://evil.example/collect');
+
+    Http::assertSent(static fn (Illuminate\Http\Client\Request $request): bool => $request->url() === 'https://evil.example/collect'
+        && ! $request->hasHeader(RequestId::HEADER));
+});
