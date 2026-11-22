@@ -32,3 +32,7 @@ it('accepts a plain basename and rejects each unsafe shape', function (): void {
     expect(fn () => $sanitizer->sanitize('trailing '))->toThrow(UploadRejectedException::class);
     expect(fn () => $sanitizer->sanitize(' leading.jpg'))->toThrow(UploadRejectedException::class);
 });
+
+it('returns the NFC form of a decomposed name', function (): void {
+    expect((new FileNameSanitizer)->sanitize("cafe\u{0301}.txt"))->toBe("caf\u{00E9}.txt");
+})->skip(! class_exists(Normalizer::class), 'ext-intl is optional');

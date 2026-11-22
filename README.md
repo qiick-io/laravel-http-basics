@@ -191,6 +191,29 @@ Products that expose these headers to browsers must list them in CORS
 `exposed_headers`: `X-Request-Id`, `X-RateLimit-*`, `Retry-After`, `Deprecation`,
 `Sunset`, `Content-Language`, and `Vary` (see fleet contracts).
 
+## Uploads (floor)
+
+`Qiick\HttpBasics\Uploads\UploadValidator` (or the `SafeUpload` rule) checks an
+upload against `http-basics.uploads.contexts.<context>`: the hard floor on every
+filename suffix and on the sniffed MIME, the extension and MIME allowlists,
+`max_bytes`, magic bytes, the archive budget, and the bound `MalwareScanner`.
+The storage name is a random id plus an extension chosen from the sniffed MIME,
+never the client suffix.
+
+Archive budget: any file libzip opens as a ZIP (docx, jar and polyglots
+included) is inflated in streaming and its real bytes are counted, because the
+sizes in its headers are attacker-controlled. Reading stops at `size ×
+max_uncompressed_ratio`, capped by `max_uncompressed_bytes`, and an archive over
+10 000 entries is refused before any entry is read. Corrupt or encrypted
+archives cannot be measured and are refused. Nested archives are counted by
+their compressed bytes and are not opened: a product that unpacks them must
+check each level again.
+
+A floor cannot catch polyglots (`GIF89a<?php …`, a PNG header followed by
+HTML). Serve uploads with `X-Content-Type-Options: nosniff` and
+`Content-Disposition: attachment`, or from a cookieless domain, and re-encode
+images a browser will render inline.
+
 ## Development
 
 ```bash

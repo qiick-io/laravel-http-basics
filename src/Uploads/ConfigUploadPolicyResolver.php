@@ -29,11 +29,12 @@ final class ConfigUploadPolicyResolver implements UploadPolicyResolver
         return new ArrayUploadPolicy(
             $this->stringList($config['allowed_extensions'] ?? null),
             $this->stringList($config['allowed_mime_types'] ?? null),
-            $this->positiveIntOrNull($config['max_bytes'] ?? null),
-            (bool) ($config['allows_svg'] ?? false), // @pest-mutate-ignore: RemoveBooleanCast, CoalesceRemoveLeft, FalseToTrue
-            $this->mismatchMode($config['content_type_mismatch'] ?? MismatchMode::Reject->value), // @pest-mutate-ignore: CoalesceRemoveLeft
-            $this->positiveIntOrNull($config['max_uncompressed_ratio'] ?? null),
-            $this->stringListMap(is_array($config['magic_signatures'] ?? null) ? $config['magic_signatures'] : $this->defaultMagic), // @pest-mutate-ignore: TernaryNegated
+            $this->intOrNull($config['max_bytes'] ?? null),
+            (bool) ($config['allows_svg'] ?? false),
+            $this->mismatchMode($config['content_type_mismatch'] ?? MismatchMode::Reject->value),
+            $this->intOrNull($config['max_uncompressed_ratio'] ?? null),
+            $this->stringListMap(is_array($config['magic_signatures'] ?? null) ? $config['magic_signatures'] : $this->defaultMagic),
+            $this->intOrNull($config['max_uncompressed_bytes'] ?? null),
         );
     }
 
@@ -57,10 +58,14 @@ final class ConfigUploadPolicyResolver implements UploadPolicyResolver
         return $strings;
     }
 
-    private function positiveIntOrNull(mixed $value): ?int
+    /**
+     * A non-integer means "no limit"; zero or a negative integer is kept, so a
+     * mistyped limit fails closed (it refuses every file) instead of lifting the limit.
+     */
+    private function intOrNull(mixed $value): ?int
     {
-        if (! is_int($value)) { // @pest-mutate-ignore: IfNegated
-            return null; // @pest-mutate-ignore: RemoveEarlyReturn
+        if (! is_int($value)) {
+            return null;
         }
 
         return $value;
@@ -68,11 +73,11 @@ final class ConfigUploadPolicyResolver implements UploadPolicyResolver
 
     private function mismatchMode(mixed $value): MismatchMode
     {
-        if (! is_string($value)) { // @pest-mutate-ignore: IfNegated
+        if (! is_string($value)) {
             return MismatchMode::Reject;
         }
 
-        return MismatchMode::tryFrom($value) ?? MismatchMode::Reject; // @pest-mutate-ignore: CoalesceRemoveLeft
+        return MismatchMode::tryFrom($value) ?? MismatchMode::Reject;
     }
 
     /**
@@ -84,8 +89,8 @@ final class ConfigUploadPolicyResolver implements UploadPolicyResolver
         $normalized = [];
 
         foreach ($magic as $extension => $signatures) {
-            if (! is_string($extension) || ! is_array($signatures)) { // @pest-mutate-ignore: BooleanOrToBooleanAnd
-                continue; // @pest-mutate-ignore: ContinueToBreak
+            if (! is_string($extension) || ! is_array($signatures)) {
+                continue;
             }
 
             $hexSignatures = [];

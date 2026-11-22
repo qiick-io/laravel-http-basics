@@ -22,6 +22,7 @@ final class ArrayUploadPolicy implements UploadPolicy
         private MismatchMode $contentTypeMismatch = MismatchMode::Reject,
         private ?int $maxUncompressedRatio = null,
         private array $magicSignatures = [],
+        private ?int $maxUncompressedBytes = null,
     ) {}
 
     public function allowedExtensions(): ?array
@@ -52,6 +53,11 @@ final class ArrayUploadPolicy implements UploadPolicy
     public function maxUncompressedRatio(): ?int
     {
         return $this->maxUncompressedRatio;
+    }
+
+    public function maxUncompressedBytes(): ?int
+    {
+        return $this->maxUncompressedBytes;
     }
 
     public function magicSignatures(): array

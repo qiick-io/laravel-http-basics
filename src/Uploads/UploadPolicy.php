@@ -28,6 +28,12 @@ interface UploadPolicy
     public function maxUncompressedRatio(): ?int;
 
     /**
+     * Absolute ceiling on the bytes an archive may inflate to, whatever its ratio;
+     * null = the ratio budget alone.
+     */
+    public function maxUncompressedBytes(): ?int;
+
+    /**
      * @return array<string, list<string>> Extension => hex magic prefixes.
      */
     public function magicSignatures(): array;

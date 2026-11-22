@@ -9,7 +9,7 @@ namespace Qiick\HttpBasics\Uploads;
  *
  * NUL, C0/C1 controls, bidi / format characters, path separators, `..`,
  * trailing dots/spaces, invalid UTF-8, and names over 255 bytes are invalid.
- * Returns the NFC basename on success.
+ * Returns the NFC-normalised name on success.
  */
 final class FileNameSanitizer
 {
@@ -20,11 +20,11 @@ final class FileNameSanitizer
 
     public function sanitize(string $clientName): string
     {
-        if ($clientName === '') { // @pest-mutate-ignore: EmptyStringToNotEmpty
+        if ($clientName === '') {
             throw UploadRejectedException::nameInvalid($clientName);
         }
 
-        if (strlen($clientName) > self::maxBytes()) { // @pest-mutate-ignore: GreaterToGreaterOrEqual
+        if (strlen($clientName) > self::maxBytes()) {
             throw UploadRejectedException::nameInvalid($clientName);
         }
 
@@ -48,44 +48,29 @@ final class FileNameSanitizer
             throw UploadRejectedException::nameInvalid($clientName);
         }
 
-        if (str_contains($clientName, ':') || str_contains($clientName, '%') || str_contains($clientName, ';')) { // @pest-mutate-ignore: BooleanOrToBooleanAnd
+        if (str_contains($clientName, ':') || str_contains($clientName, '%') || str_contains($clientName, ';')) {
             throw UploadRejectedException::nameInvalid($clientName);
         }
 
-        $normalized = $clientName;
+        // Normalisation fails only on invalid UTF-8, refused above; ext-intl is optional.
+        $normalizedName = class_exists(\Normalizer::class) ? \Normalizer::normalize($clientName, \Normalizer::FORM_C) : $clientName;
 
-        if (class_exists(\Normalizer::class)) { // @pest-mutate-ignore: IfNegated
-            $nfc = \Normalizer::normalize($clientName, \Normalizer::FORM_C);
-
-            if (! is_string($nfc) || $nfc === '') { // @pest-mutate-ignore: BooleanOrToBooleanAnd, EmptyStringToNotEmpty
-                throw UploadRejectedException::nameInvalid($clientName);
-            }
-
-            $normalized = $nfc;
-        }
-
-        $base = basename($normalized);
-
-        if ($base !== $normalized) {
+        if (! is_string($normalizedName)) {
             throw UploadRejectedException::nameInvalid($clientName);
         }
 
-        if ($base === '.' || $base === '..') { // @pest-mutate-ignore: BooleanOrToBooleanAnd
+        if (str_ends_with($normalizedName, '.')) {
             throw UploadRejectedException::nameInvalid($clientName);
         }
 
-        if (str_ends_with($base, '.')) {
+        if (str_ends_with($normalizedName, ' ')) {
             throw UploadRejectedException::nameInvalid($clientName);
         }
 
-        if (str_ends_with($base, ' ')) {
+        if (str_starts_with($normalizedName, ' ')) {
             throw UploadRejectedException::nameInvalid($clientName);
         }
 
-        if (str_starts_with($base, ' ')) {
-            throw UploadRejectedException::nameInvalid($clientName);
-        }
-
-        return $base;
+        return $normalizedName;
     }
 }

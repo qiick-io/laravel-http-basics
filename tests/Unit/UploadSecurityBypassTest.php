@@ -169,3 +169,58 @@ it('enforces max_uncompressed_ratio on zip archives (review U5)', function (): v
 
     @unlink($zipPath);
 });
+
+/**
+ * Builds a one-entry ZIP of `$uncompressedBytes` zero bytes, optionally rewriting the
+ * declared uncompressed size in both the local and the central header, as an attacker can.
+ */
+function uploadZipOfZeros(int $uncompressedBytes, ?int $forgedDeclaredSize = null): string
+{
+    $zipPath = sys_get_temp_dir().'/hb-zip-'.uniqid('', true).'.zip';
+    $zip = new ZipArchive;
+    expect($zip->open($zipPath, ZipArchive::CREATE | ZipArchive::OVERWRITE))->toBeTrue();
+    $zip->addFromString('a.txt', str_repeat("\0", $uncompressedBytes));
+    $zip->close();
+
+    if ($forgedDeclaredSize !== null) {
+        $bytes = (string) file_get_contents($zipPath);
+        $forged = pack('V', $forgedDeclaredSize);
+        $localHeaderOffset = strpos($bytes, "PK\x03\x04");
+        $centralHeaderOffset = strpos($bytes, "PK\x01\x02");
+        expect($localHeaderOffset)->toBeInt()->and($centralHeaderOffset)->toBeInt();
+        $bytes = substr_replace($bytes, $forged, (int) $localHeaderOffset + 22, 4);
+        $bytes = substr_replace($bytes, $forged, (int) $centralHeaderOffset + 24, 4);
+        file_put_contents($zipPath, $bytes);
+    }
+
+    return $zipPath;
+}
+
+function uploadZipValidator(int $ratio, ?int $maxUncompressedBytes = null): UploadValidator
+{
+    return uploadSecurityValidator(new ArrayUploadPolicy(
+        allowedExtensions: ['zip'],
+        allowedMimeTypes: ['application/zip'],
+        maxBytes: 10_000_000,
+        maxUncompressedRatio: $ratio,
+        maxUncompressedBytes: $maxUncompressedBytes,
+    ));
+}
+
+it('measures the real inflated bytes, not the sizes the zip headers declare (re-review U-R1)', function (): void {
+    $zipPath = uploadZipOfZeros(5 * 1024 * 1024, forgedDeclaredSize: 10);
+
+    $archive = new ZipArchive;
+    expect($archive->open($zipPath))->toBeTrue()
+        ->and($archive->statIndex(0)['size'] ?? null)->toBe(10);
+    $archive->close();
+
+    try {
+        uploadZipValidator(ratio: 10)->validatePath($zipPath, 'forged.zip', 'files', 'file', 'application/zip');
+        $this->fail('A zip with forged sizes must be measured by its real inflated bytes.');
+    } catch (UploadRejectedException $exception) {
+        expect($exception->errorCode())->toBe('upload_too_large');
+    } finally {
+        @unlink($zipPath);
+    }
+});

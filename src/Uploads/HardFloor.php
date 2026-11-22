@@ -8,8 +8,9 @@ namespace Qiick\HttpBasics\Uploads;
  * @api Always-blocked filename suffixes (every suffix is checked, not only the last).
  *
  * Seeded from externa's hard floor plus the adversarial review gaps. Mangled
- * tokens (`php%00`, `php;`, `php::$DATA`) match after taking the leading
- * `[a-z0-9]+` run when the suffix contains `%`, `;`, `:`, or NBSP.
+ * tokens (`php%00`, `php;`, `php::$DATA`) match by their leading `[a-z0-9]+` run.
+ * Takes the whole client name, not a basename: a separator or NUL only adds
+ * suffixes, so it can make a name stricter, never looser.
  */
 final class HardFloor
 {
@@ -71,38 +72,22 @@ final class HardFloor
 
     public function isBlocked(string $fileName): bool
     {
-        $base = $this->normalizedBaseName($fileName);
-
-        // Dotless basenames have no suffixes; dotted forms (.htaccess / user.ini) hit extensions().
-        if (in_array(strtolower($base), ['htaccess', 'htpasswd'], true)) { // @pest-mutate-ignore: UnwrapStrtolower
+        // Dotless names have no suffixes; dotted forms (.htaccess / user.ini) hit extensions().
+        if (in_array(strtolower($fileName), ['htaccess', 'htpasswd'], true)) {
             return true;
         }
 
-        foreach ($this->suffixes($fileName) as $suffix) {
-            if ($this->suffixIsBlocked($suffix)) {
-                return true;
-            }
-        }
-
-        return false;
+        return $this->hasSuffixIn($fileName, self::extensions());
     }
 
     public function isSvg(string $fileName): bool
     {
-        foreach ($this->suffixes($fileName) as $suffix) {
-            $token = $this->matchToken($suffix);
-
-            if ($token !== '' && in_array($token, self::svgExtensions(), true)) { // @pest-mutate-ignore: EmptyStringToNotEmpty
-                return true;
-            }
-        }
-
-        return false;
+        return $this->hasSuffixIn($fileName, self::svgExtensions());
     }
 
     public function isBlockedMime(string $mimeType, bool $allowsSvg): bool
     {
-        $mime = strtolower(trim(explode(';', $mimeType, 2)[0])); // @pest-mutate-ignore: IncrementInteger
+        $mime = strtolower(trim(explode(';', $mimeType)[0]));
 
         if ($mime === 'image/svg+xml') {
             return ! $allowsSvg;
@@ -112,56 +97,36 @@ final class HardFloor
     }
 
     /**
+     * Lower-cased, non-empty dot-separated suffixes after the first segment.
+     *
      * @return list<string>
      */
     public function suffixes(string $fileName): array
     {
-        $base = $this->normalizedBaseName($fileName);
-        $parts = explode('.', $base);
-
-        if (count($parts) < 2) { // @pest-mutate-ignore: LessThanToLessThanOrEqual, DecrementInteger, IncrementInteger
-            return []; // @pest-mutate-ignore: RemoveEarlyReturn, AlwaysReturnEmptyArray
-        }
-
+        $parts = explode('.', $fileName);
         array_shift($parts);
 
         return array_values(array_filter(
-            array_map(static fn (string $part): string => strtolower($part), $parts),
-            static fn (string $part): bool => $part !== '', // @pest-mutate-ignore: EmptyStringToNotEmpty
+            array_map(strtolower(...), $parts),
+            static fn (string $part): bool => $part !== '',
         ));
     }
 
-    private function suffixIsBlocked(string $suffix): bool
-    {
-        $token = $this->matchToken($suffix);
-
-        return $token !== '' && in_array($token, self::extensions(), true); // @pest-mutate-ignore: EmptyStringToNotEmpty, BooleanAndToBooleanOr
-    }
-
     /**
-     * Leading `[a-z0-9]+` when the suffix is mangled; otherwise the bare suffix
-     * after trimming trailing non-alnum junk. Empty string means "no token".
+     * A suffix matches by its leading `[a-z0-9]+` run, so whatever follows it
+     * (`php%00`, `php;`, `php::$data`, `php<NBSP>`, `php!!!`, a path or a NUL) cannot
+     * hide a listed extension from the floor.
+     *
+     * @param  list<string>  $extensions
      */
-    private function matchToken(string $suffix): string
+    private function hasSuffixIn(string $fileName, array $extensions): bool
     {
-        if ($suffix === '') { // @pest-mutate-ignore: EmptyStringToNotEmpty
-            return ''; // @pest-mutate-ignore: EmptyStringToNotEmpty, RemoveEarlyReturn
-        }
-
-        if (preg_match('/[%:;]|\x{00A0}/u', $suffix) === 1) {
-            if (preg_match('/\A[a-z0-9]+/', $suffix, $matches) === 1) {
-                return $matches[0];
+        foreach ($this->suffixes($fileName) as $suffix) {
+            if (preg_match('/\A[a-z0-9]+/', $suffix, $matches) === 1 && in_array($matches[0], $extensions, true)) {
+                return true;
             }
-
-            return ''; // @pest-mutate-ignore: EmptyStringToNotEmpty, RemoveEarlyReturn
         }
 
-        return preg_replace('/[^a-z0-9]+$/u', '', $suffix) ?? ''; // @pest-mutate-ignore: EmptyStringToNotEmpty
-    }
-
-    private function normalizedBaseName(string $fileName): string
-    {
-        // NUL and Windows separators; equivalent mutants on Unix runners where basename ignores `\`.
-        return basename(str_replace(["\0", '\\'], ['', '/'], $fileName)); // @pest-mutate-ignore: RemoveArrayItem, EmptyStringToNotEmpty, UnwrapStrReplace
+        return false;
     }
 }

@@ -37,6 +37,11 @@ return [
                 'allows_svg' => false,
                 'content_type_mismatch' => 'reject',
                 'max_uncompressed_ratio' => 100,
+                /*
+                 * Absolute ceiling on the real inflated bytes of an archive, measured
+                 * in streaming whatever its headers declare.
+                 */
+                'max_uncompressed_bytes' => 256 * 1024 * 1024,
             ],
         ],
     ],

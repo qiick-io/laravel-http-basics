@@ -8,7 +8,7 @@ namespace Qiick\HttpBasics\Uploads;
  * @api Maps a sniffed MIME type to a canonical storage extension.
  *
  * Storage names never inherit the client suffix; only these package-owned
- * extensions (matching `^[a-z0-9]{1,10}$`) are appended.
+ * extensions (each `^[a-z0-9]{1,10}$`, pinned by a test) are appended.
  */
 final class DetectedMimeExtension
 {
@@ -32,17 +32,6 @@ final class DetectedMimeExtension
 
     public function extensionFor(string $mimeType): ?string
     {
-        $mime = strtolower(trim(explode(';', $mimeType, 2)[0])); // @pest-mutate-ignore: IncrementInteger
-        $extension = self::map()[$mime] ?? null;
-
-        if ($extension === null) {
-            return null; // @pest-mutate-ignore: RemoveEarlyReturn
-        }
-
-        if (preg_match('/\A[a-z0-9]{1,10}\z/', $extension) !== 1) { // @pest-mutate-ignore: IncrementInteger, DecrementInteger
-            return null; // @pest-mutate-ignore: RemoveEarlyReturn
-        }
-
-        return $extension;
+        return self::map()[strtolower(trim(explode(';', $mimeType)[0]))] ?? null;
     }
 }
