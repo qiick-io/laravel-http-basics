@@ -800,6 +800,55 @@ it('accepts application/json content type case-insensitively with parameters', f
     expect($middleware->handle($request, static fn () => response('ok', 200))->getContent())->toBe('ok');
 });
 
+it('accepts application/merge-patch+json and other application/*+json types', function (): void {
+    $middleware = makeIdempotencyMiddleware($this->store, new FakeCredentialBucketResolver('tenant:1'));
+
+    $mergePatch = Request::create(
+        '/api/widgets',
+        'PATCH',
+        [],
+        [],
+        [],
+        [
+            'HTTP_Idempotency-Key' => '550e8400-e29b-41d4-a716-446655440094',
+            'CONTENT_TYPE' => 'application/merge-patch+json',
+        ],
+        '{"name":"patched"}',
+    );
+
+    expect($middleware->handle($mergePatch, static fn () => response('patched', 200))->getContent())->toBe('patched');
+
+    $problemJson = Request::create(
+        '/api/widgets',
+        'POST',
+        [],
+        [],
+        [],
+        [
+            'HTTP_Idempotency-Key' => '550e8400-e29b-41d4-a716-446655440095',
+            'CONTENT_TYPE' => 'application/vnd.api+json',
+        ],
+        '{}',
+    );
+
+    expect($middleware->handle($problemJson, static fn () => response('ok', 200))->getContent())->toBe('ok');
+
+    $notStructuredSuffix = Request::create(
+        '/api/widgets',
+        'POST',
+        [],
+        [],
+        [],
+        [
+            'HTTP_Idempotency-Key' => '550e8400-e29b-41d4-a716-446655440096',
+            'CONTENT_TYPE' => 'application/jsonx',
+        ],
+        '{}',
+    );
+
+    expect($middleware->handle($notStructuredSuffix, static fn () => response('x', 200))->getStatusCode())->toBe(415);
+});
+
 it('falls through empty credential buckets to anonymous when enabled', function (): void {
     $middleware = makeIdempotencyMiddleware(
         $this->store,

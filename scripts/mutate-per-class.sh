@@ -30,6 +30,9 @@ CLASSES=(
   'Qiick\HttpBasics\Uploads\UploadValidator'
   'Qiick\HttpBasics\Uploads\ConfigUploadPolicyResolver'
   'Qiick\HttpBasics\Uploads\DetectedMimeExtension'
+  'Qiick\HttpBasics\Cors\CorsConfigValidator'
+  'Qiick\HttpBasics\Cors\ConfigureCorsMiddleware'
+  'Qiick\HttpBasics\Cors\OriginNormalizer'
 )
 
 CLASS_FILES=(
@@ -51,9 +54,12 @@ CLASS_FILES=(
   'src/Uploads/UploadValidator.php'
   'src/Uploads/ConfigUploadPolicyResolver.php'
   'src/Uploads/DetectedMimeExtension.php'
+  'src/Cors/CorsConfigValidator.php'
+  'src/Cors/ConfigureCorsMiddleware.php'
+  'src/Cors/OriginNormalizer.php'
 )
 
-# Extra files under RequestId\ / Locale\ / Security\ / Idempotency\ / Uploads\ prefixes that are not mutation targets.
+# Extra files under RequestId\ / Locale\ / Security\ / Idempotency\ / Cors\ / Uploads\ prefixes that are not mutation targets.
 SIBLING_FILES=(
   'src/RequestId/RequestIdAcceptFrom.php'
   'src/RequestId/RequestIdSource.php'
@@ -90,6 +96,9 @@ SIBLING_FILES=(
   'src/Uploads/UploadPolicyResolver.php'
   'src/Uploads/UploadRejectedException.php'
   'src/Uploads/ValidatedUpload.php'
+  'src/Cors/AllowedOriginsResolver.php'
+  'src/Cors/NullAllowedOriginsResolver.php'
+  'src/Cors/CorsHeaderCatalog.php'
   'src/Contracts/CredentialBucketResolver.php'
   'src/Contracts/IdempotencyStore.php'
   'src/Contracts/ErrorRenderer.php'

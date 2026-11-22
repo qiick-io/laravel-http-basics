@@ -230,7 +230,12 @@ final class HandleIdempotencyMiddleware
         $contentType = (string) $request->headers->get('Content-Type', ''); // @pest-mutate-ignore: RemoveStringCast, EmptyStringToNotEmpty
         $base = strtolower(trim(explode(';', $contentType)[0])); // @pest-mutate-ignore: UnwrapTrim
 
-        return $base === 'application/json';
+        // RFC 6839 §3.1: application/json and any application/*+json (e.g. merge-patch+json on PATCH).
+        if ($base === 'application/json') {
+            return true;
+        }
+
+        return str_starts_with($base, 'application/') && str_ends_with($base, '+json');
     }
 
     private function resolveBucket(Request $request): ?string

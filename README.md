@@ -181,15 +181,29 @@ stale `X-RateLimit-*` headers.
 | Cross-credential replay | Server-side credential bucket + owner lease; unique `(bucket, key_hash)`; never a request-controlled bucket. |
 | Anonymous bucket | Best-effort de-duplication, **not** an identity boundary; HMAC secret rotatable (rotation invalidates anon records); depends on TrustProxies. |
 | Secret replay | Route `replayable=false` + header deny-list + text/JSON only; API-key issuance must be non-replayable. |
-| Retry storms / double execution | 409 while lock held; lease-conditional complete; fail closed on marker eviction. |
+| Retry storms / double execution | 409 while lock held; lease-conditional complete; fail closed on marker eviction. Config requires `max_handler_seconds` **strictly less than** store `lock_ttl_seconds` so a route cannot claim a handler budget that outlives the lock. Soft overrun remains possible: `max_handler_seconds` is checked **after** `$next` returns, so a hung or wall-clock-skewed handler can still hold the request past lock expiry; once the lock and `stale_after` elapse, another worker may claim `New` (crash-recovery takeover by design). Bound handlers and keep lock TTL above real p99 latency. |
 | Cache poisoning | `Vary: Accept-Language` whenever Accept-Language was read on a machine door; authenticated responses documented `Cache-Control: private`. |
 | Proxy trust | Same configured proxies as TrustProxies, evaluated independently of middleware order / request static state. |
 
 ## CORS (fleet)
 
-Products that expose these headers to browsers must list them in CORS
-`exposed_headers`: `X-Request-Id`, `X-RateLimit-*`, `Retry-After`, `Deprecation`,
-`Sunset`, `Content-Language`, and `Vary` (see fleet contracts).
+Use Laravel's `HandleCors` (Fruitcake). Prepend
+`Qiick\HttpBasics\Cors\ConfigureCorsMiddleware` so a product
+`AllowedOriginsResolver` can overwrite `cors.allowed_origins` per request
+(externa's pattern). With `supports_credentials` true, boot validation rejects
+any origin containing `*` (subdomain wildcards such as `https://*.example.com`
+included: list each origin), any `allowed_origins_patterns` entry, and `*` in
+`exposed_headers`. The middleware applies the same guard at runtime on every
+credentialed request, to resolver output and to config alike, so turning
+`validate_on_boot` off never re-enables a reflecting wildcard. Resolver
+responses get `Vary: Origin`, merged into every existing `Vary` line; a shared
+cache in front must honour it.
+
+Merge `CorsHeaderCatalog::exposedHeaders()` / `allowedRequestHeaders()` into
+`config/cors.php`. Catalog includes `X-Request-Id`, `X-RateLimit-*`,
+`Retry-After`, `Deprecation`, `Sunset`, `Content-Language`, `Vary`, `Link`,
+`Location`, and `Idempotent-Replayed`. Origin enforcement with API keys stays
+in the product.
 
 ## Uploads (floor)
 

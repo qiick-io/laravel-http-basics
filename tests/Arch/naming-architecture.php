@@ -29,6 +29,8 @@ return [
             'Qiick\HttpBasics\Uploads\UploadPolicy',
             'Qiick\HttpBasics\Uploads\UploadPolicyResolver',
             'Qiick\HttpBasics\Uploads\MalwareScanner',
+            // Design M9: CORS seams without Contract suffix.
+            'Qiick\HttpBasics\Cors\AllowedOriginsResolver',
         ],
         'Enums' => [
             // Design §3.1 / §3.2 / §3.3: source enums without Enum suffix.
