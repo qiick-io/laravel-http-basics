@@ -10,6 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Security headers: `SecurityHeaderBuilder`, `SetSecurityHeadersMiddleware`,
+  `SecurityHeadersPolicy`, `CspMode`, `CspPolicyBuilder` /
+  `ViteFriendlyCspPolicyBuilder`, and `assertSecurityHeaders`. Never clobbers
+  existing HSTS/XFO/Referrer/Permissions/nosniff; if either CSP or CSP-RO is
+  already present, neither CSP header is added; machine doors get baseline
+  only; HSTS only when `max_age>0` and the request is secure; CSP `report-uri`
+  is appended to the built/override string before set; install with global
+  prepend so maintenance 503 carries the headers. Vite hot origin is
+  feature-detected via `devServerUrl()` (Laravel 13+; skipped on 12).
 - Locale negotiation: `LocaleNegotiator`, `SetLocaleMiddleware`,
   `MachineDoorClassifier`, `SupportedLocales` / `DefaultLocaleResolver` seams,
   and testing helpers (`ArraySupportedLocales`, `FixedDefaultLocaleResolver`,

@@ -18,6 +18,7 @@ CLASSES=(
   'Qiick\HttpBasics\RequestId\AssignRequestIdMiddleware'
   'Qiick\HttpBasics\RequestId\ConfigTrustedProxyDetector'
   'Qiick\HttpBasics\Locale\LocaleNegotiator'
+  'Qiick\HttpBasics\Security\SecurityHeaderBuilder'
 )
 
 CLASS_FILES=(
@@ -27,9 +28,10 @@ CLASS_FILES=(
   'src/RequestId/AssignRequestIdMiddleware.php'
   'src/RequestId/ConfigTrustedProxyDetector.php'
   'src/Locale/LocaleNegotiator.php'
+  'src/Security/SecurityHeaderBuilder.php'
 )
 
-# Extra files under RequestId\ / Locale\ prefixes that are not mutation targets.
+# Extra files under RequestId\ / Locale\ / Security\ prefixes that are not mutation targets.
 SIBLING_FILES=(
   'src/RequestId/RequestIdAcceptFrom.php'
   'src/RequestId/RequestIdSource.php'
@@ -38,6 +40,11 @@ SIBLING_FILES=(
   'src/Locale/ConfigSupportedLocales.php'
   'src/Locale/MachineDoorClassifier.php'
   'src/Locale/SetLocaleMiddleware.php'
+  'src/Security/CspMode.php'
+  'src/Security/SecurityHeadersPolicy.php'
+  'src/Security/CspPolicyBuilder.php'
+  'src/Security/ViteFriendlyCspPolicyBuilder.php'
+  'src/Security/SetSecurityHeadersMiddleware.php'
 )
 
 MIN="${MUTATE_MIN:-95}"

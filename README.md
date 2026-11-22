@@ -112,6 +112,33 @@ door, not only when it won.
 | `HTTP_BASICS_LOCALE_MAX_HEADER_BYTES` | `1024` | Oversize `Accept-Language` is ignored (fall through). |
 | `HTTP_BASICS_LOCALE_MAX_LANGUAGES` | `20` | Too many ranges (counted before dedupe) → treat header as absent. |
 
+### Security headers (landed)
+
+Register **globally with prepend** (same reason as request-id / locale) so
+maintenance 503 and early errors still get the defense headers.
+
+```php
+use Qiick\HttpBasics\Security\SetSecurityHeadersMiddleware;
+
+// bootstrap/app.php — prepend globally so 401/404/405/419/429/503 and
+// maintenance responses carry nosniff / Referrer / Permissions (and web XFO +
+// CSP). Machine doors stay baseline-only.
+$middleware->prepend(SetSecurityHeadersMiddleware::class);
+```
+
+| Config / env | Default | Meaning |
+| --- | --- | --- |
+| `HTTP_BASICS_SECURITY_ENABLED` | `true` | Master switch. |
+| `HTTP_BASICS_CSP_MODE` | `enforce` | `enforce` / `report-only` / `off` / `both`. |
+| `HTTP_BASICS_CSP` | empty → Vite-friendly default | Full CSP override (verbatim). |
+| `HTTP_BASICS_CSP_REPORT_URI` | empty | Appended to the built/override CSP string before set. |
+| `HTTP_BASICS_HSTS_MAX_AGE` | `0` | HSTS only when greater than 0 and the request is HTTPS; proxy usually owns this. |
+| `HTTP_BASICS_BASELINE_ON_API` | `true` | Machine doors still get nosniff / Referrer / Permissions. |
+
+Existing HSTS / XFO / Referrer / Permissions / nosniff on the response are never
+replaced. If the response already has **either** `Content-Security-Policy` or
+`Content-Security-Policy-Report-Only`, this package adds **neither** CSP header.
+
 ## Threat model (short)
 
 | Topic | Contract |
