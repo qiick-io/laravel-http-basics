@@ -114,12 +114,16 @@ door, not only when it won.
 
 ### Security headers (landed)
 
+Register **globally with prepend** (same reason as request-id / locale) so
+maintenance 503 and early errors still get the defense headers.
+
 ```php
 use Qiick\HttpBasics\Security\SetSecurityHeadersMiddleware;
 
-// Global (with request-id and locale). Machine doors get nosniff / Referrer /
-// Permissions only; web gets XFO + CSP per http-basics.security.csp.mode.
-$middleware->append(SetSecurityHeadersMiddleware::class);
+// bootstrap/app.php — prepend globally so 401/404/405/419/429/503 and
+// maintenance responses carry nosniff / Referrer / Permissions (and web XFO +
+// CSP). Machine doors stay baseline-only.
+$middleware->prepend(SetSecurityHeadersMiddleware::class);
 ```
 
 | Config / env | Default | Meaning |
@@ -131,7 +135,9 @@ $middleware->append(SetSecurityHeadersMiddleware::class);
 | `HTTP_BASICS_HSTS_MAX_AGE` | `0` | HSTS only when greater than 0 and the request is HTTPS; proxy usually owns this. |
 | `HTTP_BASICS_BASELINE_ON_API` | `true` | Machine doors still get nosniff / Referrer / Permissions. |
 
-Existing CSP / HSTS / XFO / Referrer / Permissions / nosniff on the response are never replaced.
+Existing HSTS / XFO / Referrer / Permissions / nosniff on the response are never
+replaced. If the response already has **either** `Content-Security-Policy` or
+`Content-Security-Policy-Report-Only`, this package adds **neither** CSP header.
 
 ## Threat model (short)
 

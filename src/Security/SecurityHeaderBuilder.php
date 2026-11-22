@@ -9,7 +9,8 @@ use Symfony\Component\HttpFoundation\Response;
 
 /**
  * @api Computes security headers for a response without clobbering ones already
- * present (CSP, CSP-RO, XFO, Referrer, Permissions, nosniff, HSTS). See design §5.3.
+ * present (CSP, CSP-RO, XFO, Referrer, Permissions, nosniff, HSTS). If either
+ * CSP or CSP-RO is already on the response, neither kind is added. See design §5.3.
  */
 final class SecurityHeaderBuilder
 {
@@ -53,6 +54,7 @@ final class SecurityHeaderBuilder
     private function isMachineDoor(Request $request, array $patterns): bool
     {
         if ($patterns === []) {
+            // Request::is() with zero patterns also returns false.
             return false; // @pest-mutate-ignore: RemoveEarlyReturn
         }
 
@@ -83,6 +85,15 @@ final class SecurityHeaderBuilder
         SecurityHeadersPolicy $policy,
     ): void {
         if ($policy->cspMode === CspMode::Off) {
+            // Off is neither Enforce/Both nor ReportOnly/Both, so fall-through adds nothing.
+            return; // @pest-mutate-ignore: RemoveEarlyReturn
+        }
+
+        // Product already chose a CSP surface: do not add the other kind either.
+        if (
+            $response->headers->has('Content-Security-Policy')
+            || $response->headers->has('Content-Security-Policy-Report-Only')
+        ) {
             return;
         }
 
@@ -95,10 +106,10 @@ final class SecurityHeaderBuilder
         if ($policy->cspMode === CspMode::ReportOnly || $policy->cspMode === CspMode::Both) {
             $reportOnly = $policy->cspReportOnly;
 
-            if ($reportOnly === null || trim($reportOnly) === '') { // @pest-mutate-ignore: EmptyStringToNotEmpty, UnwrapTrim, BooleanOrToBooleanAnd
+            if ($reportOnly === null || trim($reportOnly) === '') {
                 $reportOnly = $this->resolveCspValue($request, $policy->csp, $policy->cspReportUri);
             } else {
-                $reportOnly = $this->withReportUri(trim($reportOnly), $policy->cspReportUri); // @pest-mutate-ignore: UnwrapTrim
+                $reportOnly = $this->withReportUri(trim($reportOnly), $policy->cspReportUri);
             }
 
             $this->putIfAbsent($headers, $response, 'Content-Security-Policy-Report-Only', $reportOnly);
@@ -107,8 +118,8 @@ final class SecurityHeaderBuilder
 
     private function resolveCspValue(Request $request, ?string $override, ?string $reportUri): string
     {
-        if (is_string($override) && trim($override) !== '') { // @pest-mutate-ignore: EmptyStringToNotEmpty, UnwrapTrim
-            return $this->withReportUri(trim($override), $reportUri); // @pest-mutate-ignore: UnwrapTrim
+        if (is_string($override) && trim($override) !== '') {
+            return $this->withReportUri(trim($override), $reportUri);
         }
 
         return $this->withReportUri($this->cspPolicyBuilder->build($request), $reportUri);
@@ -116,11 +127,11 @@ final class SecurityHeaderBuilder
 
     private function withReportUri(string $policy, ?string $reportUri): string
     {
-        if ($reportUri === null || trim($reportUri) === '') { // @pest-mutate-ignore: EmptyStringToNotEmpty, UnwrapTrim, BooleanOrToBooleanAnd
+        if ($reportUri === null || trim($reportUri) === '') {
             return $policy;
         }
 
-        return rtrim($policy, '; ').'; report-uri '.trim($reportUri); // @pest-mutate-ignore: UnwrapRtrim, UnwrapTrim
+        return rtrim($policy, '; ').'; report-uri '.trim($reportUri);
     }
 
     /**
@@ -132,7 +143,7 @@ final class SecurityHeaderBuilder
         Response $response,
         SecurityHeadersPolicy $policy,
     ): void {
-        if ($policy->hstsMaxAge <= 0) { // @pest-mutate-ignore: SmallerToSmallerOrEqual, IncrementInteger, DecrementInteger
+        if ($policy->hstsMaxAge <= 0) {
             return;
         }
 

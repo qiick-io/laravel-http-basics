@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use Illuminate\Contracts\Http\Kernel;
+use Illuminate\Foundation\Http\Middleware\PreventRequestsDuringMaintenance;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use Qiick\HttpBasics\Security\CspMode;
@@ -61,7 +63,15 @@ it('sets baseline only on machine doors', function (): void {
         ->and($response->headers->get('Content-Security-Policy'))->toBeNull();
 });
 
-it('keeps an existing CSP on the response', function (): void {
+it('keeps an existing CSP and adds no CSP-RO either', function (): void {
+    $this->app->instance(SecurityHeadersPolicy::class, new SecurityHeadersPolicy(
+        cspMode: CspMode::Both,
+        csp: "default-src 'self'",
+        cspReportOnly: "default-src 'none'",
+        machineDoorPatterns: ['api/*', 'mcp', 'mcp/*'],
+    ));
+    $this->app->forgetInstance(SetSecurityHeadersMiddleware::class);
+
     Route::middleware(SetSecurityHeadersMiddleware::class)->get('/dashboard/sandbox', function () {
         return response('ok', 200)->header('Content-Security-Policy', "default-src 'none'");
     });
@@ -69,7 +79,44 @@ it('keeps an existing CSP on the response', function (): void {
     $response = $this->get('/dashboard/sandbox');
 
     $response->assertOk();
-    expect($response->headers->get('Content-Security-Policy'))->toBe("default-src 'none'");
+    expect($response->headers->get('Content-Security-Policy'))->toBe("default-src 'none'")
+        ->and($response->headers->get('Content-Security-Policy-Report-Only'))->toBeNull();
+});
+
+it('adds no CSP of either kind when CSP-RO is already present', function (): void {
+    $this->app->instance(SecurityHeadersPolicy::class, new SecurityHeadersPolicy(
+        cspMode: CspMode::Both,
+        csp: "default-src 'self'",
+        cspReportOnly: "default-src 'none'",
+        machineDoorPatterns: ['api/*', 'mcp', 'mcp/*'],
+    ));
+    $this->app->forgetInstance(SetSecurityHeadersMiddleware::class);
+
+    Route::middleware(SetSecurityHeadersMiddleware::class)->get('/dashboard/sandbox-ro', function () {
+        return response('ok', 200)->header('Content-Security-Policy-Report-Only', "default-src 'none'");
+    });
+
+    $response = $this->get('/dashboard/sandbox-ro');
+
+    $response->assertOk();
+    expect($response->headers->get('Content-Security-Policy'))->toBeNull()
+        ->and($response->headers->get('Content-Security-Policy-Report-Only'))->toBe("default-src 'none'");
+});
+
+it('carries security headers on a maintenance 503 when prepended globally', function (): void {
+    $kernel = $this->app->make(Kernel::class);
+    $kernel->prependMiddleware(PreventRequestsDuringMaintenance::class);
+    $kernel->prependMiddleware(SetSecurityHeadersMiddleware::class);
+
+    $this->app->maintenanceMode()->activate([]);
+
+    try {
+        $response = $this->get('/dashboard');
+        $response->assertStatus(503);
+        assertSecurityHeaders($response->baseResponse);
+    } finally {
+        $this->app->maintenanceMode()->deactivate();
+    }
 });
 
 it('applies headers to error responses without buffering a body', function (): void {

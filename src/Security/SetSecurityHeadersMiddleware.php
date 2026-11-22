@@ -9,8 +9,9 @@ use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
- * @api Register globally so errors, redirects and streamed responses still get
- * defense headers. Machine doors get baseline only (no CSP / X-Frame-Options).
+ * @api Register OUTERMOST (prepend) so 401/404/405/419/429/503, maintenance and
+ * streamed responses still get defense headers. Machine doors get baseline only
+ * (no CSP / X-Frame-Options).
  */
 final class SetSecurityHeadersMiddleware
 {

@@ -112,21 +112,48 @@ it('skips CSP headers when mode is off', function (): void {
         ->and($headers)->toHaveKey('X-Frame-Options');
 });
 
-it('never clobbers an existing CSP or HSTS header', function (): void {
+it('never clobbers an existing HSTS header', function (): void {
     $builder = makeSecurityBuilder();
     $request = Request::create('/dashboard', 'GET');
     $request->server->set('HTTPS', 'on');
     $response = new Response('ok');
-    $response->headers->set('Content-Security-Policy', "default-src 'none'");
     $response->headers->set('Strict-Transport-Security', 'max-age=1');
 
     $headers = $builder->forResponse($request, $response, makeSecurityPolicy([
-        'csp' => "default-src 'self'",
         'hstsMaxAge' => 31536000,
     ]));
 
+    expect($headers)->not->toHaveKey('Strict-Transport-Security');
+});
+
+it('adds no CSP of either kind when Content-Security-Policy is already present', function (): void {
+    $builder = makeSecurityBuilder();
+    $response = new Response('ok');
+    $response->headers->set('Content-Security-Policy', "default-src 'none'");
+
+    $headers = $builder->forResponse(Request::create('/dashboard', 'GET'), $response, makeSecurityPolicy([
+        'cspMode' => CspMode::Both,
+        'csp' => "default-src 'self'",
+        'cspReportOnly' => "default-src 'none'",
+    ]));
+
     expect($headers)->not->toHaveKey('Content-Security-Policy')
-        ->and($headers)->not->toHaveKey('Strict-Transport-Security');
+        ->and($headers)->not->toHaveKey('Content-Security-Policy-Report-Only');
+});
+
+it('adds no CSP of either kind when Content-Security-Policy-Report-Only is already present', function (): void {
+    $builder = makeSecurityBuilder();
+    $response = new Response('ok');
+    $response->headers->set('Content-Security-Policy-Report-Only', "default-src 'none'");
+
+    $headers = $builder->forResponse(Request::create('/dashboard', 'GET'), $response, makeSecurityPolicy([
+        'cspMode' => CspMode::Both,
+        'csp' => "default-src 'self'",
+        'cspReportOnly' => "default-src 'none'",
+    ]));
+
+    expect($headers)->not->toHaveKey('Content-Security-Policy')
+        ->and($headers)->not->toHaveKey('Content-Security-Policy-Report-Only');
 });
 
 it('never clobbers X-Frame-Options, Referrer-Policy, Permissions-Policy or nosniff', function (): void {
@@ -262,6 +289,18 @@ it('does not emit HSTS when max_age is zero even on https', function (): void {
     ])))->not->toHaveKey('Strict-Transport-Security');
 });
 
+it('emits HSTS when max_age is exactly one on https', function (): void {
+    $builder = makeSecurityBuilder();
+    $secure = Request::create('https://example.test/dashboard', 'GET');
+    $secure->server->set('HTTPS', 'on');
+
+    $headers = $builder->forResponse($secure, new Response('ok'), makeSecurityPolicy([
+        'hstsMaxAge' => 1,
+    ]));
+
+    expect($headers['Strict-Transport-Security'])->toBe('max-age=1');
+});
+
 it('trims a whitespace-only report-only policy and falls back to the builder', function (): void {
     $builder = makeSecurityBuilder();
     $headers = $builder->forResponse(Request::create('/dashboard', 'GET'), new Response('ok'), makeSecurityPolicy([
@@ -270,6 +309,55 @@ it('trims a whitespace-only report-only policy and falls back to the builder', f
     ]));
 
     expect($headers['Content-Security-Policy-Report-Only'])->toContain("frame-ancestors 'none'");
+});
+
+it('falls back to the builder when the CSP override is whitespace-only', function (): void {
+    $builder = makeSecurityBuilder();
+    $headers = $builder->forResponse(Request::create('/dashboard', 'GET'), new Response('ok'), makeSecurityPolicy([
+        'csp' => '   ',
+    ]));
+
+    expect($headers['Content-Security-Policy'])->toContain("frame-ancestors 'none'");
+});
+
+it('trims a padded CSP override before set', function (): void {
+    $builder = makeSecurityBuilder();
+    $headers = $builder->forResponse(Request::create('/dashboard', 'GET'), new Response('ok'), makeSecurityPolicy([
+        'csp' => "  default-src 'self'  ",
+    ]));
+
+    expect($headers['Content-Security-Policy'])->toBe("default-src 'self'");
+});
+
+it('trims a padded report-only override before set', function (): void {
+    $builder = makeSecurityBuilder();
+    $headers = $builder->forResponse(Request::create('/dashboard', 'GET'), new Response('ok'), makeSecurityPolicy([
+        'cspMode' => CspMode::ReportOnly,
+        'cspReportOnly' => "  default-src 'none'  ",
+    ]));
+
+    expect($headers['Content-Security-Policy-Report-Only'])->toBe("default-src 'none'");
+});
+
+it('ignores a whitespace-only report-uri', function (): void {
+    $builder = makeSecurityBuilder();
+    $headers = $builder->forResponse(Request::create('/dashboard', 'GET'), new Response('ok'), makeSecurityPolicy([
+        'csp' => "default-src 'self'",
+        'cspReportUri' => '   ',
+    ]));
+
+    expect($headers['Content-Security-Policy'])->toBe("default-src 'self'")
+        ->and($headers['Content-Security-Policy'])->not->toContain('report-uri');
+});
+
+it('trims a padded report-uri before appending', function (): void {
+    $builder = makeSecurityBuilder();
+    $headers = $builder->forResponse(Request::create('/dashboard', 'GET'), new Response('ok'), makeSecurityPolicy([
+        'csp' => "default-src 'self'",
+        'cspReportUri' => '  https://example.test/csp  ',
+    ]));
+
+    expect($headers['Content-Security-Policy'])->toBe("default-src 'self'; report-uri https://example.test/csp");
 });
 
 it('normalises a trailing semicolon before appending report-uri', function (): void {

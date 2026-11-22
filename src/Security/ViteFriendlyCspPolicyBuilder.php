@@ -5,15 +5,17 @@ declare(strict_types=1);
 namespace Qiick\HttpBasics\Security;
 
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Vite;
 
 /**
  * @api Default CSP for Vite + Echo/Reverb style apps: `'self'` with pragmatic
  * script/style/connect allowances and `frame-ancestors 'none'`. Adds the Vite
- * hot-server origin when `Illuminate\Support\Facades\Vite` is available.
+ * hot-server origin when the Vite facade root exposes `devServerUrl()` (Laravel
+ * 13+). Laravel 12 has no such method; feature-detect and skip the origin.
  */
 final class ViteFriendlyCspPolicyBuilder implements CspPolicyBuilder
 {
+    private const string VITE_FACADE = 'Illuminate\Support\Facades\Vite';
+
     public function build(Request $request): string
     {
         $developmentServerOrigins = $this->viteDevOrigins();
@@ -40,16 +42,32 @@ final class ViteFriendlyCspPolicyBuilder implements CspPolicyBuilder
     }
 
     /**
+     * Resolves the Vite hot origin without importing Foundation types. Uses the
+     * Support facade class name + `method_exists` so Laravel 12 (no
+     * `devServerUrl`) and Laravel 13+ both analyse and run cleanly.
+     *
      * @return list<string>
      */
     private function viteDevOrigins(): array
     {
-        if (! class_exists(Vite::class)) {
+        if (! class_exists(self::VITE_FACADE)) {
+            return [];
+        }
+
+        $facadeClass = self::VITE_FACADE;
+
+        try {
+            $vite = $facadeClass::getFacadeRoot();
+        } catch (\Throwable) {
+            return [];
+        }
+
+        if (! is_object($vite) || ! method_exists($vite, 'devServerUrl')) {
             return [];
         }
 
         try {
-            $url = Vite::devServerUrl();
+            $url = \call_user_func([$vite, 'devServerUrl']);
         } catch (\Throwable) {
             return [];
         }
