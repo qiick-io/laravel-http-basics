@@ -66,8 +66,10 @@ it('honours q-values and ignores q=0 on machine doors', function (): void {
 it('keeps the highest q when a tag is duplicated', function (): void {
     $negotiator = makeNegotiator(['en', 'de']);
     $request = machineRequest(headers: ['Accept-Language' => 'de;q=0.2,en;q=0.5,de;q=0.9']);
+    $lowerRepeat = machineRequest(headers: ['Accept-Language' => 'de;q=0.9,en;q=0.5,de;q=0.1']);
 
-    expect($negotiator->resolve($request)->locale)->toBe('de');
+    expect($negotiator->resolve($request)->locale)->toBe('de')
+        ->and($negotiator->resolve($lowerRepeat)->locale)->toBe('de');
 });
 
 it('uses the first q parameter when q is duplicated on one range', function (): void {
