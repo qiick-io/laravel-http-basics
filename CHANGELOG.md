@@ -61,6 +61,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that match the directory, and a single end record; stored entries with a data
   descriptor and symbolic link entries are refused. The package checks structure only:
   products must never extract uploads with streaming readers (see the README).
+
+- Errors: design §3.5 fleet helpers — `ErrorCodeResolver` /
+  `FrameworkErrorCodeResolver`, `ErrorCodeAugmentor` (JSON ≥400 only, never
+  overwrites `error`), `ExceptionRespondBinder`, `ExceptionErrorCodeAugmenter`,
+  and `MachineDoorJson::whenCallback` (Illuminate-only; no Foundation types).
 - Idempotency: `HandleIdempotencyMiddleware`, `Fingerprinter`, `CacheIdempotencyStore`,
   `DatabaseIdempotencyStore`, `AnonymousBucketResolver`, `FleetErrorRenderer`,
   `IdempotencyRejection`, contract seams (`CredentialBucketResolver`, `IdempotencyStore`,

@@ -45,6 +45,30 @@ per-route after throttle / auth / scope / cost. Products wire
 `ExceptionErrorCodeAugmenter` through their own bootstrap (no Foundation types in
 this package).
 
+### Fleet error shape (landed)
+
+```php
+use Qiick\HttpBasics\Errors\ErrorCodeResolver;
+use Qiick\HttpBasics\Errors\ExceptionErrorCodeAugmenter;
+use Qiick\HttpBasics\Errors\MachineDoorJson;
+use Qiick\HttpBasics\Locale\MachineDoorClassifier;
+
+// shouldRenderJsonWhen — machine doors only
+$exceptions->shouldRenderJsonWhen(MachineDoorJson::whenCallback(['api/*', 'mcp', 'mcp/*']));
+
+// respond() — add top-level `error` on JSON ≥400, never overwrite
+$exceptions->respond(function ($response, $exception, $request) {
+    return ExceptionErrorCodeAugmenter::callback(
+        app(ErrorCodeResolver::class),
+        app(MachineDoorClassifier::class),
+    )($response, $exception, $request);
+});
+```
+
+Idempotency refusals already use `ErrorRenderer` with translated `message` and a
+stable `error` code. The augmentor covers framework and product exceptions the
+same way.
+
 ### Request id (landed)
 
 ```php

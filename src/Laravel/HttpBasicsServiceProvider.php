@@ -20,6 +20,8 @@ use Qiick\HttpBasics\Contracts\TrustedProxyDetector;
 use Qiick\HttpBasics\Cors\AllowedOriginsResolver;
 use Qiick\HttpBasics\Cors\CorsConfigValidator;
 use Qiick\HttpBasics\Cors\NullAllowedOriginsResolver;
+use Qiick\HttpBasics\Errors\ErrorCodeResolver;
+use Qiick\HttpBasics\Errors\FrameworkErrorCodeResolver;
 use Qiick\HttpBasics\Idempotency\AnonymousBucketResolver;
 use Qiick\HttpBasics\Idempotency\CacheIdempotencyStore;
 use Qiick\HttpBasics\Idempotency\DatabaseIdempotencyStore;
@@ -339,6 +341,7 @@ final class HttpBasicsServiceProvider extends ServiceProvider
             );
         });
         $this->app->singleton(AllowedOriginsResolver::class, NullAllowedOriginsResolver::class);
+        $this->app->singleton(ErrorCodeResolver::class, FrameworkErrorCodeResolver::class);
 
         $this->app->singleton(ErrorRenderer::class, function (Application $app): ErrorRenderer {
             $url = $this->config($app)->get('http-basics.idempotency.documentation_url');

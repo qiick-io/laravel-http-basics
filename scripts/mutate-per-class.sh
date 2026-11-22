@@ -34,6 +34,7 @@ CLASSES=(
   'Qiick\HttpBasics\Cors\CorsConfigValidator'
   'Qiick\HttpBasics\Cors\ConfigureCorsMiddleware'
   'Qiick\HttpBasics\Cors\OriginNormalizer'
+  'Qiick\HttpBasics\Errors\ErrorCodeAugmentor'
 )
 
 CLASS_FILES=(
@@ -59,6 +60,7 @@ CLASS_FILES=(
   'src/Cors/CorsConfigValidator.php'
   'src/Cors/ConfigureCorsMiddleware.php'
   'src/Cors/OriginNormalizer.php'
+  'src/Errors/ErrorCodeAugmentor.php'
 )
 
 # Extra files under RequestId\ / Locale\ / Security\ / Idempotency\ / Cors\ / Uploads\ prefixes that are not mutation targets.
@@ -104,6 +106,11 @@ SIBLING_FILES=(
   'src/Contracts/CredentialBucketResolver.php'
   'src/Contracts/IdempotencyStore.php'
   'src/Contracts/ErrorRenderer.php'
+  'src/Errors/ErrorCodeResolver.php'
+  'src/Errors/FrameworkErrorCodeResolver.php'
+  'src/Errors/ExceptionRespondBinder.php'
+  'src/Errors/ExceptionErrorCodeAugmenter.php'
+  'src/Errors/MachineDoorJson.php'
   'src/Testing/InMemoryIdempotencyStore.php'
   'src/Testing/FixedClock.php'
   'src/Testing/FakeCredentialBucketResolver.php'
