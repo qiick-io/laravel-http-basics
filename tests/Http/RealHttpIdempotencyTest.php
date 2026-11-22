@@ -41,9 +41,9 @@ beforeAll(function () use ($idempotencyHttpState): void {
 
     $environment = [
         'HTTP_BASICS_CACHE_PATH' => $idempotencyHttpState->cachePath,
-        'HTTP_BASICS_IDEMPOTENCY_LOCK_TTL' => '5',
+        'HTTP_BASICS_IDEMPOTENCY_LOCK_TTL' => '2',
         'HTTP_BASICS_IDEMPOTENCY_STALE_AFTER' => '1',
-        'HTTP_BASICS_IDEMPOTENCY_MAX_HANDLER' => '4',
+        'HTTP_BASICS_IDEMPOTENCY_MAX_HANDLER' => '2',
     ];
 
     $idempotencyHttpState->procA = startPhpBuiltInServer(
