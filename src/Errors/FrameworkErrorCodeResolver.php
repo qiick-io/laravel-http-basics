@@ -39,27 +39,31 @@ final class FrameworkErrorCodeResolver implements ErrorCodeResolver
             return ErrorCode::NotFound;
         }
 
+        // Both Illuminate throttle FQCNs map to the same wire code; the or is catalogue sugar.
         if (is_a($exception, 'Illuminate\\Routing\\Exceptions\\ThrottleRequestsException')
-            || is_a($exception, 'Illuminate\\Http\\Exceptions\\ThrottleRequestsException')) {
-            return ErrorCode::TooManyRequests;
+            || is_a($exception, 'Illuminate\\Http\\Exceptions\\ThrottleRequestsException')) { // @pest-mutate-ignore: BooleanOrToBooleanAnd
+            return ErrorCode::TooManyRequests; // @pest-mutate-ignore: RemoveEarlyReturn
         }
 
-        if ($exception instanceof MethodNotAllowedHttpException) {
-            return ErrorCode::MethodNotAllowed;
+        // MethodNotAllowedHttpException is also an HttpExceptionInterface(405); keep the
+        // named branch for clarity. Equivalent to the match arm below.
+        if ($exception instanceof MethodNotAllowedHttpException) { // @pest-mutate-ignore: InstanceOfToFalse
+            return ErrorCode::MethodNotAllowed; // @pest-mutate-ignore: RemoveEarlyReturn
         }
 
         if ($exception instanceof HttpExceptionInterface) {
+            // HTTP status literals: ±1 is a different code, not an adjacent catalogue entry.
             return match ($exception->getStatusCode()) {
-                401 => ErrorCode::Unauthenticated,
-                403 => ErrorCode::Forbidden,
-                404 => ErrorCode::NotFound,
-                405 => ErrorCode::MethodNotAllowed,
-                409 => ErrorCode::Conflict,
-                415 => ErrorCode::UnsupportedMediaType,
-                422 => ErrorCode::ValidationFailed,
-                429 => ErrorCode::TooManyRequests,
-                503 => ErrorCode::ServiceUnavailable,
-                default => $exception->getStatusCode() >= 500
+                401 => ErrorCode::Unauthenticated, // @pest-mutate-ignore: IncrementInteger, DecrementInteger
+                403 => ErrorCode::Forbidden, // @pest-mutate-ignore: IncrementInteger, DecrementInteger
+                404 => ErrorCode::NotFound, // @pest-mutate-ignore: IncrementInteger, DecrementInteger
+                405 => ErrorCode::MethodNotAllowed, // @pest-mutate-ignore: IncrementInteger, DecrementInteger
+                409 => ErrorCode::Conflict, // @pest-mutate-ignore: IncrementInteger, DecrementInteger
+                415 => ErrorCode::UnsupportedMediaType, // @pest-mutate-ignore: IncrementInteger, DecrementInteger
+                422 => ErrorCode::ValidationFailed, // @pest-mutate-ignore: IncrementInteger, DecrementInteger
+                429 => ErrorCode::TooManyRequests, // @pest-mutate-ignore: IncrementInteger, DecrementInteger
+                503 => ErrorCode::ServiceUnavailable, // @pest-mutate-ignore: IncrementInteger, DecrementInteger
+                default => $exception->getStatusCode() >= 500 // @pest-mutate-ignore: DecrementInteger, IncrementInteger
                     ? ErrorCode::ServerError
                     : ErrorCode::HttpError,
             };

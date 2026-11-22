@@ -62,8 +62,14 @@ it('maps every register framework exception to a documented ErrorCode', function
         ->and($resolver->resolve(new ConflictHttpException))->toBe(ErrorCode::Conflict)
         ->and($resolver->resolve(new UnsupportedMediaTypeHttpException))->toBe(ErrorCode::UnsupportedMediaType)
         ->and($resolver->resolve(new ServiceUnavailableHttpException))->toBe(ErrorCode::ServiceUnavailable)
+        ->and($resolver->resolve(new HttpException(401, 'auth')))->toBe(ErrorCode::Unauthenticated)
+        ->and($resolver->resolve(new HttpException(403, 'forbid')))->toBe(ErrorCode::Forbidden)
+        ->and($resolver->resolve(new HttpException(415, 'media')))->toBe(ErrorCode::UnsupportedMediaType)
+        ->and($resolver->resolve(new HttpException(422, 'invalid')))->toBe(ErrorCode::ValidationFailed)
         ->and($resolver->resolve(new HttpException(418, 'teapot')))->toBe(ErrorCode::HttpError)
+        ->and($resolver->resolve(new HttpException(499, 'client-closed')))->toBe(ErrorCode::HttpError)
         ->and($resolver->resolve(new HttpException(500, 'fail')))->toBe(ErrorCode::ServerError)
+        ->and($resolver->resolve(new HttpException(502, 'bad-gateway')))->toBe(ErrorCode::ServerError)
         ->and($resolver->resolve(new RuntimeException('boom')))->toBe(ErrorCode::ServerError);
 
     expect(ErrorCode::tryFrom($resolver->forException(new RuntimeException('boom'))))->toBe(ErrorCode::ServerError);
