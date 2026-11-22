@@ -6,9 +6,10 @@ declare(strict_types=1);
  * Front controller for real-HTTP Pest tests (php -S).
  *
  * Query flags:
- * - redirect_to=<url>  → 302 Location
- * - status=<int>       → arbitrary status (default 200)
- * - dump_headers=1     → body is JSON including raw inbound X-Request-Id
+ * - redirect_to=<url>       → redirect with Location (status via redirect_status, default 302)
+ * - redirect_status=<int>   → 301/302/303/307/308
+ * - status=<int>            → arbitrary status (default 200)
+ * - dump_headers=1          → body is JSON including raw inbound headers of interest
  */
 
 use Illuminate\Contracts\Http\Kernel;
@@ -24,8 +25,12 @@ use Qiick\HttpBasics\Testing\FixedIdGenerator;
 
 require dirname(__DIR__, 3).'/vendor/autoload.php';
 
-// Capture the wire header before Laravel normalizes / middleware rewrites it.
+// Capture wire headers before Laravel normalizes / middleware rewrites them.
 $GLOBALS['http_basics_raw_inbound_id'] = $_SERVER['HTTP_X_REQUEST_ID'] ?? null;
+$GLOBALS['http_basics_raw_authorization'] = $_SERVER['HTTP_AUTHORIZATION'] ?? null;
+$GLOBALS['http_basics_raw_cookie'] = $_SERVER['HTTP_COOKIE'] ?? null;
+$GLOBALS['http_basics_raw_method'] = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+$GLOBALS['http_basics_raw_content_length'] = $_SERVER['CONTENT_LENGTH'] ?? null;
 
 $app = Application::create(
     basePath: null,
@@ -59,12 +64,18 @@ $kernel->prependMiddleware(AssignRequestIdMiddleware::class);
 
 Route::any('/ping', function (Request $request) {
     if ($request->query->has('redirect_to')) {
-        return redirect()->away((string) $request->query('redirect_to'), 302);
+        $status = (int) $request->query('redirect_status', 302);
+
+        return redirect()->away((string) $request->query('redirect_to'), $status);
     }
 
     if ($request->boolean('dump_headers')) {
         return response()->json([
             'raw_inbound_x_request_id' => $GLOBALS['http_basics_raw_inbound_id'],
+            'raw_authorization' => $GLOBALS['http_basics_raw_authorization'],
+            'raw_cookie' => $GLOBALS['http_basics_raw_cookie'],
+            'raw_method' => $GLOBALS['http_basics_raw_method'],
+            'raw_content_length' => $GLOBALS['http_basics_raw_content_length'],
         ]);
     }
 

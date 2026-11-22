@@ -28,53 +28,120 @@ $httpState = new class
     public $redirectProc = null;
 };
 
+/**
+ * Start php -S so the tracked PID is the server itself (not an `sh -c` parent).
+ * Prefers `setsid` + array form (process group kill); falls back to `exec php -S`.
+ *
+ * @return resource
+ */
+function startPhpBuiltInServer(int $port, string $server, string $root, string $trustProxies)
+{
+    $descriptors = [
+        0 => ['pipe', 'r'],
+        1 => ['file', sys_get_temp_dir()."/http-basics-{$port}.log", 'w'],
+        2 => ['file', sys_get_temp_dir()."/http-basics-{$port}.err", 'w'],
+    ];
+
+    $setsid = null;
+    foreach (['/usr/bin/setsid', '/bin/setsid'] as $candidate) {
+        if (is_executable($candidate)) {
+            $setsid = $candidate;
+            break;
+        }
+    }
+
+    if ($setsid !== null) {
+        $environment = [];
+        foreach ($_SERVER as $key => $value) {
+            if (is_string($key) && is_string($value)) {
+                $environment[$key] = $value;
+            }
+        }
+        $environment['HTTP_BASICS_TRUST_PROXIES'] = $trustProxies;
+        $command = [$setsid, PHP_BINARY, '-S', "127.0.0.1:{$port}", $server];
+        $proc = proc_open($command, $descriptors, $pipes, $root, $environment);
+    } else {
+        // exec replaces the shell so proc_terminate hits php -S, not sh.
+        $command = sprintf(
+            'exec env HTTP_BASICS_TRUST_PROXIES=%s %s -S 127.0.0.1:%d %s',
+            escapeshellarg($trustProxies),
+            escapeshellarg(PHP_BINARY),
+            $port,
+            escapeshellarg($server),
+        );
+        $proc = proc_open($command, $descriptors, $pipes, $root);
+    }
+
+    if (! is_resource($proc)) {
+        throw new RuntimeException("Failed to start php -S on {$port}");
+    }
+
+    for ($attempt = 0; $attempt < 50; $attempt++) {
+        $errno = 0;
+        $errstr = '';
+        $socket = @fsockopen('127.0.0.1', $port, $errno, $errstr, 0.2);
+        if (is_resource($socket)) {
+            fclose($socket);
+
+            return $proc;
+        }
+        usleep(100_000);
+    }
+
+    stopPhpBuiltInServer($proc);
+
+    throw new RuntimeException("php -S on {$port} did not become ready");
+}
+
+/**
+ * @param  resource  $proc
+ */
+function stopPhpBuiltInServer($proc): void
+{
+    if (! is_resource($proc)) {
+        return;
+    }
+
+    $status = proc_get_status($proc);
+    $pid = is_array($status) ? (int) ($status['pid'] ?? 0) : 0;
+
+    if ($pid > 0 && function_exists('posix_kill')) {
+        // Negative PID = process group when started under setsid; also kill the PID.
+        @posix_kill(-$pid, SIGTERM);
+        @posix_kill($pid, SIGTERM);
+        usleep(50_000);
+        @posix_kill(-$pid, SIGKILL);
+        @posix_kill($pid, SIGKILL);
+    }
+
+    proc_terminate($proc);
+    proc_close($proc);
+}
+
 beforeAll(function () use ($httpState): void {
     $server = __DIR__.'/fixtures/server.php';
     $root = dirname(__DIR__, 1);
     $httpState->primaryPort = 8765 + random_int(0, 200);
     $httpState->redirectPort = $httpState->primaryPort + 1;
 
-    $start = function (int $port) use ($server, $root) {
-        $cmd = sprintf(
-            'HTTP_BASICS_TRUST_PROXIES=%s php -S 127.0.0.1:%d %s',
-            escapeshellarg('127.0.0.1'),
-            $port,
-            escapeshellarg($server),
-        );
-        $descriptors = [
-            0 => ['pipe', 'r'],
-            1 => ['file', sys_get_temp_dir()."/http-basics-{$port}.log", 'w'],
-            2 => ['file', sys_get_temp_dir()."/http-basics-{$port}.err", 'w'],
-        ];
-        $proc = proc_open($cmd, $descriptors, $pipes, $root);
-        if (! is_resource($proc)) {
-            throw new RuntimeException("Failed to start php -S on {$port}");
-        }
-
-        for ($i = 0; $i < 50; $i++) {
-            $errno = 0;
-            $errstr = '';
-            $fp = @fsockopen('127.0.0.1', $port, $errno, $errstr, 0.2);
-            if (is_resource($fp)) {
-                fclose($fp);
-
-                return $proc;
-            }
-            usleep(100_000);
-        }
-
-        throw new RuntimeException("php -S on {$port} did not become ready");
-    };
-
-    $httpState->primaryProc = $start($httpState->primaryPort);
-    $httpState->redirectProc = $start($httpState->redirectPort);
+    $httpState->primaryProc = startPhpBuiltInServer(
+        $httpState->primaryPort,
+        $server,
+        $root,
+        '127.0.0.1',
+    );
+    $httpState->redirectProc = startPhpBuiltInServer(
+        $httpState->redirectPort,
+        $server,
+        $root,
+        '127.0.0.1',
+    );
 });
 
 afterAll(function () use ($httpState): void {
     foreach ([$httpState->primaryProc, $httpState->redirectProc] as $proc) {
         if (is_resource($proc)) {
-            proc_terminate($proc);
-            proc_close($proc);
+            stopPhpBuiltInServer($proc);
         }
     }
 });
@@ -180,4 +247,57 @@ it('strips X-Request-Id on a cross-port redirect followed by the propagator', fu
         ->and($payload)->toBeArray()
         ->and(array_key_exists('raw_inbound_x_request_id', $payload))->toBeTrue()
         ->and($payload['raw_inbound_x_request_id'])->toBeNull();
+})->group('http-server');
+
+it('does not forward Authorization or Cookie on a cross-host redirect hop', function () use ($httpState): void {
+    Context::flush();
+    $resolver = new RequestIdResolver(
+        new FixedIdGenerator('mesh-request-id'),
+        new AlwaysTrustedProxyDetector,
+        RequestIdAcceptFrom::Never,
+    );
+    $resolver->bind(Request::create('/', 'GET'));
+
+    $primary = "http://127.0.0.1:{$httpState->primaryPort}";
+    $redirect = "http://127.0.0.1:{$httpState->redirectPort}/ping?dump_headers=1";
+
+    $propagator = new RequestIdPropagator(['*'], $resolver);
+    $response = $propagator->applyTo(Http::withOptions(['allow_redirects' => true])
+        ->withHeaders([
+            'Authorization' => 'Bearer should-not-leak',
+            'Cookie' => 'session=should-not-leak',
+        ]))
+        ->get($primary.'/ping?redirect_to='.urlencode($redirect));
+
+    expect($response->status())->toBe(200);
+    $payload = $response->json();
+    expect($payload)->toBeArray()
+        ->and(array_key_exists('raw_authorization', $payload))->toBeTrue()
+        ->and($payload['raw_authorization'])->toBeNull()
+        ->and(array_key_exists('raw_cookie', $payload))->toBeTrue()
+        ->and($payload['raw_cookie'])->toBeNull();
+})->group('http-server');
+
+it('follows a 303 like Guzzle: POST becomes GET without a body', function () use ($httpState): void {
+    Context::flush();
+    $resolver = new RequestIdResolver(
+        new FixedIdGenerator('mesh-request-id'),
+        new AlwaysTrustedProxyDetector,
+        RequestIdAcceptFrom::Never,
+    );
+    $resolver->bind(Request::create('/', 'GET'));
+
+    $primary = "http://127.0.0.1:{$httpState->primaryPort}";
+    $redirect = "http://127.0.0.1:{$httpState->redirectPort}/ping?dump_headers=1";
+
+    $propagator = new RequestIdPropagator(['*'], $resolver);
+    $response = $propagator->applyTo(Http::withOptions(['allow_redirects' => true]))
+        ->withBody('posted-body', 'text/plain')
+        ->post($primary.'/ping?redirect_to='.urlencode($redirect).'&redirect_status=303');
+
+    expect($response->status())->toBe(200);
+    $payload = $response->json();
+    expect($payload)->toBeArray()
+        ->and($payload['raw_method'] ?? null)->toBe('GET')
+        ->and(in_array($payload['raw_content_length'] ?? null, [null, '', '0'], true))->toBeTrue();
 })->group('http-server');

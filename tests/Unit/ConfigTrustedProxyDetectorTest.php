@@ -156,10 +156,155 @@ it('rejects an empty proxy list after filtering blanks', function (): void {
     expect($detector->isTrusted($request))->toBeFalse();
 });
 
-it('rejects an empty TrustProxies::at string', function (): void {
+it('falls back to trustedproxy.proxies when TrustProxies::at is an empty string', function (): void {
     TrustProxies::at('');
+    Config::set('trustedproxy.proxies', ['10.0.0.1']);
     $detector = new ConfigTrustedProxyDetector(Config::getFacadeRoot(), trustWildcardProxies: false);
     $request = Request::create('/', 'GET', server: ['REMOTE_ADDR' => '10.0.0.1']);
 
+    expect($detector->isTrusted($request))->toBeTrue();
+});
+
+it('falls back to trustedproxy.proxies when TrustProxies::at is an empty array', function (): void {
+    TrustProxies::at([]);
+    Config::set('trustedproxy.proxies', ['10.0.0.7']);
+    $detector = new ConfigTrustedProxyDetector(Config::getFacadeRoot(), trustWildcardProxies: false);
+    $request = Request::create('/', 'GET', server: ['REMOTE_ADDR' => '10.0.0.7']);
+
+    expect($detector->isTrusted($request))->toBeTrue();
+});
+
+it('treats a single-star array like the wildcard string', function (): void {
+    TrustProxies::at(['*']);
+    $detector = new ConfigTrustedProxyDetector(Config::getFacadeRoot(), trustWildcardProxies: false);
+    $request = Request::create('/', 'GET', server: ['REMOTE_ADDR' => '203.0.113.9']);
+
     expect($detector->isTrusted($request))->toBeFalse();
+
+    $trusted = new ConfigTrustedProxyDetector(Config::getFacadeRoot(), trustWildcardProxies: true);
+    expect($trusted->isTrusted($request))->toBeTrue();
+});
+
+it('treats a double-star array like the wildcard string', function (): void {
+    TrustProxies::at(['**']);
+    $denied = new ConfigTrustedProxyDetector(Config::getFacadeRoot(), trustWildcardProxies: false);
+    $allowed = new ConfigTrustedProxyDetector(Config::getFacadeRoot(), trustWildcardProxies: true);
+    $request = Request::create('/', 'GET', server: ['REMOTE_ADDR' => '203.0.113.9']);
+
+    expect($denied->isTrusted($request))->toBeFalse()
+        ->and($allowed->isTrusted($request))->toBeTrue();
+});
+
+it('expands the PRIVATE_SUBNETS token like Symfony setTrustedProxies', function (): void {
+    TrustProxies::at(['PRIVATE_SUBNETS']);
+    $detector = new ConfigTrustedProxyDetector(Config::getFacadeRoot(), trustWildcardProxies: false);
+
+    expect($detector->isTrusted(Request::create('/', 'GET', server: ['REMOTE_ADDR' => '10.1.2.3'])))->toBeTrue()
+        ->and($detector->isTrusted(Request::create('/', 'GET', server: ['REMOTE_ADDR' => '203.0.113.9'])))->toBeFalse();
+});
+
+it('keeps entries after a PRIVATE_SUBNETS token in the same list', function (): void {
+    // 198.51.100.1 is TEST-NET-2 — not in PRIVATE_RANGES. It must remain after expand.
+    TrustProxies::at(['PRIVATE_SUBNETS', '198.51.100.1']);
+    $detector = new ConfigTrustedProxyDetector(Config::getFacadeRoot(), trustWildcardProxies: false);
+
+    expect($detector->isTrusted(Request::create('/', 'GET', server: ['REMOTE_ADDR' => '198.51.100.1'])))->toBeTrue();
+});
+
+it('treats Laravel Cloud with null proxies as a wildcard gated by the opt-in', function (): void {
+    $previous = $_ENV['LARAVEL_CLOUD'] ?? null;
+    $_ENV['LARAVEL_CLOUD'] = '1';
+    $_SERVER['LARAVEL_CLOUD'] = '1';
+
+    try {
+        $request = Request::create('https://app.example/test', 'GET', server: [
+            'REMOTE_ADDR' => '203.0.113.9',
+            'HTTP_HOST' => 'app.example',
+        ]);
+
+        $denied = new ConfigTrustedProxyDetector(Config::getFacadeRoot(), trustWildcardProxies: false);
+        $allowed = new ConfigTrustedProxyDetector(Config::getFacadeRoot(), trustWildcardProxies: true);
+
+        expect($denied->isTrusted($request))->toBeFalse()
+            ->and($allowed->isTrusted($request))->toBeTrue();
+    } finally {
+        if ($previous === null) {
+            unset($_ENV['LARAVEL_CLOUD'], $_SERVER['LARAVEL_CLOUD']);
+        } else {
+            $_ENV['LARAVEL_CLOUD'] = $previous;
+            $_SERVER['LARAVEL_CLOUD'] = $previous;
+        }
+    }
+});
+
+it('treats Forge hosts with FORGE_SERVER_ID as an implicit wildcard', function (): void {
+    $forge = Request::create('https://app.on-forge.com/', 'GET', server: [
+        'REMOTE_ADDR' => '203.0.113.9',
+        'HTTP_HOST' => 'app.on-forge.com',
+        'FORGE_SERVER_ID' => '42',
+    ]);
+    $forgeWrongHost = Request::create('https://app.example/', 'GET', server: [
+        'REMOTE_ADDR' => '203.0.113.9',
+        'HTTP_HOST' => 'app.example',
+        'FORGE_SERVER_ID' => '42',
+    ]);
+    $forgeMissingId = Request::create('https://app.on-forge.com/', 'GET', server: [
+        'REMOTE_ADDR' => '203.0.113.9',
+        'HTTP_HOST' => 'app.on-forge.com',
+    ]);
+
+    $allowed = new ConfigTrustedProxyDetector(Config::getFacadeRoot(), trustWildcardProxies: true);
+    $denied = new ConfigTrustedProxyDetector(Config::getFacadeRoot(), trustWildcardProxies: false);
+
+    expect($allowed->isTrusted($forge))->toBeTrue()
+        ->and($denied->isTrusted($forge))->toBeFalse()
+        ->and($allowed->isTrusted($forgeWrongHost))->toBeFalse()
+        ->and($allowed->isTrusted($forgeMissingId))->toBeFalse();
+});
+
+it('treats Vapor hosts with VAPOR_SSM_PATH as an implicit wildcard', function (): void {
+    $previous = $_ENV['VAPOR_SSM_PATH'] ?? null;
+    $_ENV['VAPOR_SSM_PATH'] = '/vapor/ssm';
+
+    try {
+        $vapor = Request::create('https://app.on-vapor.com/', 'GET', server: [
+            'REMOTE_ADDR' => '203.0.113.9',
+            'HTTP_HOST' => 'app.on-vapor.com',
+        ]);
+        $vaporWrongHost = Request::create('https://app.example/', 'GET', server: [
+            'REMOTE_ADDR' => '203.0.113.9',
+            'HTTP_HOST' => 'app.example',
+        ]);
+
+        $allowed = new ConfigTrustedProxyDetector(Config::getFacadeRoot(), trustWildcardProxies: true);
+
+        expect($allowed->isTrusted($vapor))->toBeTrue()
+            ->and($allowed->isTrusted($vaporWrongHost))->toBeFalse();
+    } finally {
+        if ($previous === null) {
+            unset($_ENV['VAPOR_SSM_PATH']);
+        } else {
+            $_ENV['VAPOR_SSM_PATH'] = $previous;
+        }
+    }
+});
+
+it('honours a TrustProxies subclass $proxies when at() is unset', function (): void {
+    $subclass = new class extends TrustProxies
+    {
+        /** @var list<string> */
+        protected $proxies = ['10.9.8.7'];
+    };
+
+    app()->instance(TrustProxies::class, $subclass);
+
+    try {
+        $detector = new ConfigTrustedProxyDetector(Config::getFacadeRoot(), trustWildcardProxies: false);
+        $request = Request::create('/', 'GET', server: ['REMOTE_ADDR' => '10.9.8.7']);
+
+        expect($detector->isTrusted($request))->toBeTrue()
+            ->and($detector->isTrusted(Request::create('/', 'GET', server: ['REMOTE_ADDR' => '203.0.113.9'])))->toBeFalse();
+    } finally {
+        app()->forgetInstance(TrustProxies::class);
+    }
 });

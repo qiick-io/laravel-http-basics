@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use GuzzleHttp\Exception\TooManyRedirectsException;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Context;
 use Illuminate\Support\Facades\Http;
@@ -228,6 +230,50 @@ it('changes POST to GET when following a 302 redirect', function (): void {
     $propagator = makePropagator(['api.internal.test']);
     $response = $propagator->applyTo(Http::withOptions(['allow_redirects' => true]))
         ->post('https://api.internal.test/start');
+
+    expect($response->body())->toBe('next');
+});
+
+it('stops after Guzzle\'s default redirect limit of 5', function (): void {
+    $hop = 0;
+    Http::fake(function () use (&$hop) {
+        $hop++;
+
+        return Http::response('', 302, [
+            'Location' => 'https://api.internal.test/hop-'.$hop,
+        ]);
+    });
+
+    $propagator = makePropagator(['api.internal.test']);
+
+    try {
+        $propagator->applyTo(Http::withOptions(['allow_redirects' => true]))
+            ->get('https://api.internal.test/start');
+        expect(false)->toBeTrue(); // unreachable: must throw
+    } catch (ConnectionException $exception) {
+        expect($exception->getPrevious())->toBeInstanceOf(TooManyRedirectsException::class)
+            ->and($exception->getMessage())->toContain('5 redirects');
+    }
+
+    // Initial request + 5 followed hops = 6 attempts before Guzzle refuses the 6th redirect.
+    expect($hop)->toBe(6);
+});
+
+it('re-decides the allowlist on each Guzzle-followed hop', function (): void {
+    Http::fake([
+        'https://api.internal.test/start' => Http::response('', 302, [
+            'Location' => 'https://other.internal.test/next',
+        ]),
+        'https://other.internal.test/next' => function (Illuminate\Http\Client\Request $request) {
+            expect($request->header(RequestId::HEADER))->toBe(['mesh-request-id']);
+
+            return Http::response('next', 200);
+        },
+    ]);
+
+    $propagator = makePropagator(['api.internal.test', 'other.internal.test']);
+    $response = $propagator->applyTo(Http::withOptions(['allow_redirects' => true]))
+        ->get('https://api.internal.test/start');
 
     expect($response->body())->toBe('next');
 });
