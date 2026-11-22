@@ -120,3 +120,20 @@ it('normalises and drops unsafe resolver origins before HandleCors (review B2)',
     // Browsers only accept ACAO that exactly equals the request Origin.
     expect($evil['headers']['access-control-allow-origin'] ?? null)->not->toBe('https://evil.com');
 });
+
+it('purges credentialed patterns when the resolver overrides the origins (re-review R1)', function (): void {
+    config()->set('http-basics.cors.validate_on_boot', false);
+
+    $resolver = new class implements AllowedOriginsResolver
+    {
+        public function origins(Request $request): ?array
+        {
+            return ['https://app.example.com'];
+        }
+    };
+
+    $response = corsPreflight(['allowed_origins_patterns' => ['#.*#']], 'https://evil.com', $resolver);
+
+    expect(config('cors.allowed_origins_patterns'))->toBe([])
+        ->and($response['headers']['access-control-allow-origin'] ?? null)->toBe('https://app.example.com');
+});

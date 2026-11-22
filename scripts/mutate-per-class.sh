@@ -77,7 +77,7 @@ SIBLING_FILES=(
   'src/Idempotency/NullCredentialBucketResolver.php'
   'src/Idempotency/IdempotencyRecord.php'
   'src/Cors/AllowedOriginsResolver.php'
-  'src/Cors/ConfigAllowedOriginsResolver.php'
+  'src/Cors/NullAllowedOriginsResolver.php'
   'src/Cors/CorsHeaderCatalog.php'
   'src/Contracts/CredentialBucketResolver.php'
   'src/Contracts/IdempotencyStore.php'

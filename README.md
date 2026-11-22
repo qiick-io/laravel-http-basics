@@ -190,8 +190,14 @@ stale `X-RateLimit-*` headers.
 Use Laravel's `HandleCors` (Fruitcake). Prepend
 `Qiick\HttpBasics\Cors\ConfigureCorsMiddleware` so a product
 `AllowedOriginsResolver` can overwrite `cors.allowed_origins` per request
-(externa's pattern). Boot validation rejects `*` origins or `*` in
-`exposed_headers` when `supports_credentials` is true.
+(externa's pattern). With `supports_credentials` true, boot validation rejects
+any origin containing `*` (subdomain wildcards such as `https://*.example.com`
+included: list each origin), any `allowed_origins_patterns` entry, and `*` in
+`exposed_headers`. The middleware applies the same guard at runtime on every
+credentialed request, to resolver output and to config alike, so turning
+`validate_on_boot` off never re-enables a reflecting wildcard. Resolver
+responses get `Vary: Origin`, merged into every existing `Vary` line; a shared
+cache in front must honour it.
 
 Merge `CorsHeaderCatalog::exposedHeaders()` / `allowedRequestHeaders()` into
 `config/cors.php`. Catalog includes `X-Request-Id`, `X-RateLimit-*`,

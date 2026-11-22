@@ -28,7 +28,7 @@ it('rejects non-string origins and invalid concrete origins', function (): void 
     expect(fn () => $validator->validate([
         'supports_credentials' => false,
         'allowed_origins' => ['https://evil.test/path'],
-    ]))->toThrow(InvalidArgumentException::class);
+    ]))->toThrow(InvalidArgumentException::class, 'cors.allowed_origins contains an invalid origin: https://evil.test/path');
 });
 
 it('rejects credentialed patterns and exposed wildcards', function (): void {
