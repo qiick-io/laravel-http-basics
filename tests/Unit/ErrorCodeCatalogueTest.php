@@ -8,6 +8,9 @@ use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Validation\ValidationException;
 use Qiick\HttpBasics\Errors\ErrorCode;
 use Qiick\HttpBasics\Errors\FrameworkErrorCodeResolver;
+use Qiick\HttpBasics\Idempotency\IdempotencyRejection;
+use Qiick\HttpBasics\Idempotency\IdempotencyStoreException;
+use Qiick\HttpBasics\Idempotency\PayloadTooLargeException;
 use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 use Symfony\Component\HttpKernel\Exception\MethodNotAllowedHttpException;
@@ -73,4 +76,76 @@ it('maps every register framework exception to a documented ErrorCode', function
         ->and($resolver->resolve(new RuntimeException('boom')))->toBe(ErrorCode::ServerError);
 
     expect(ErrorCode::tryFrom($resolver->forException(new RuntimeException('boom'))))->toBe(ErrorCode::ServerError);
+});
+
+/**
+ * Every concrete Throwable declared under src/, by PSR-4 path.
+ *
+ * @return list<class-string<Throwable>>
+ */
+function packageExceptionClasses(): array
+{
+    $sourceRoot = dirname(__DIR__, 2).'/src';
+    $exceptionClasses = [];
+    $sourceFiles = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($sourceRoot, FilesystemIterator::SKIP_DOTS));
+
+    foreach ($sourceFiles as $sourceFile) {
+        // PSR-4 class files start upper-case; `functions.php` must not be autoloaded twice.
+        if (! ctype_upper($sourceFile->getFilename()[0])) {
+            continue;
+        }
+
+        $relativePath = substr((string) $sourceFile, strlen($sourceRoot) + 1, -strlen('.php'));
+        $className = 'Qiick\\HttpBasics\\'.str_replace('/', '\\', $relativePath);
+
+        if (class_exists($className) && is_subclass_of($className, Throwable::class) && ! (new ReflectionClass($className))->isAbstract()) {
+            $exceptionClasses[] = $className;
+        }
+    }
+
+    return $exceptionClasses;
+}
+
+it('gives every exception the package lets escape a documented fleet code', function (): void {
+    $docs = (string) file_get_contents(dirname(__DIR__, 2).'/docs/error-codes.md');
+    $middlewareSource = (string) file_get_contents(dirname(__DIR__, 2).'/src/Idempotency/HandleIdempotencyMiddleware.php');
+    $resolver = new FrameworkErrorCodeResolver;
+
+    // Thrown and caught inside HandleIdempotencyMiddleware, which answers with an IdempotencyRejection.
+    $internalExceptionClasses = [IdempotencyStoreException::class, PayloadTooLargeException::class];
+
+    $idempotencyCodes = array_values(array_filter(
+        ErrorCode::cases(),
+        static fn (ErrorCode $code): bool => str_starts_with($code->value, 'idempotency_'),
+    ));
+
+    /** @var array<class-string<Throwable>, list<array{Throwable, ErrorCode}>> $samplesByExceptionClass */
+    $samplesByExceptionClass = [
+        IdempotencyRejection::class => array_map(
+            static fn (ErrorCode $code): array => [new IdempotencyRejection($code, 409), $code],
+            $idempotencyCodes,
+        ),
+    ];
+
+    expect($idempotencyCodes)->not->toBe([]);
+
+    foreach ($internalExceptionClasses as $internalExceptionClass) {
+        expect($middlewareSource)->toContain('catch ('.class_basename($internalExceptionClass).')');
+    }
+
+    foreach (packageExceptionClasses() as $exceptionClass) {
+        if (in_array($exceptionClass, $internalExceptionClasses, true)) {
+            continue;
+        }
+
+        expect(array_key_exists($exceptionClass, $samplesByExceptionClass))
+            ->toBeTrue("{$exceptionClass} has no fleet error code: add its cases to ErrorCode and docs/error-codes.md, then a sample here.");
+    }
+
+    foreach ($samplesByExceptionClass as $samples) {
+        foreach ($samples as [$exception, $expectedCode]) {
+            expect($resolver->resolve($exception))->toBe($expectedCode)
+                ->and($docs)->toContain('| `'.$expectedCode->value.'` |');
+        }
+    }
 });

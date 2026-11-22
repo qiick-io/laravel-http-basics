@@ -67,6 +67,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `FrameworkErrorCodeResolver`, `ErrorCodeAugmentor` (JSON ≥400 only, never
   overwrites `error`), `ExceptionRespondBinder`, `ExceptionErrorCodeAugmenter`,
   and `MachineDoorJson::whenCallback` (Illuminate-only; no Foundation types).
+  `FrameworkErrorCodeResolver` keeps an `IdempotencyRejection`'s own code, and a
+  Pest test fails when an exception the package lets escape has no documented code.
 - Idempotency: `HandleIdempotencyMiddleware`, `Fingerprinter`, `CacheIdempotencyStore`,
   `DatabaseIdempotencyStore`, `AnonymousBucketResolver`, `FleetErrorRenderer`,
   `IdempotencyRejection`, contract seams (`CredentialBucketResolver`, `IdempotencyStore`,
