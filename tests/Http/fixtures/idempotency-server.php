@@ -97,8 +97,12 @@ Route::get('/ping', function () {
 });
 
 $handlerCountFile = $cachePath.DIRECTORY_SEPARATOR.'handler_count';
+$handlerEnteredFile = $cachePath.DIRECTORY_SEPARATOR.'handler_entered';
 
-Route::post('/api/items', function (Request $request) use ($handlerCountFile) {
+Route::post('/api/items', function (Request $request) use ($handlerCountFile, $handlerEnteredFile) {
+    // Signal that the claim succeeded and the handler is running (for concurrency tests).
+    file_put_contents($handlerEnteredFile, (string) time());
+
     $sleepMs = (int) $request->query('sleep_ms', 0);
     if ($sleepMs <= 0) {
         $sleepMs = (int) ($request->headers->get('X-Sleep-Ms') ?? 0);

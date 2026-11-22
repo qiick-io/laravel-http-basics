@@ -117,35 +117,72 @@ it('returns in-progress 409 for a concurrent duplicate Idempotency-Key over real
         'Content-Type' => 'application/json',
         'Accept' => 'application/json',
     ];
+    $headerLines = array_map(
+        static fn (string $name, string $value): string => "{$name}: {$value}",
+        array_keys($headers),
+        array_values($headers),
+    );
+    // Same path on both so fingerprints match; conflict never reaches the handler.
+    $path = '/api/items?sleep_ms=1200';
+    $enteredFile = $idempotencyHttpState->cachePath.DIRECTORY_SEPARATOR.'handler_entered';
+    @unlink($enteredFile);
 
-    // Overlap on two php -S workers: A sleeps after claiming; B should hit the held lock.
-    $slowHeaders = $headers + ['X-Sleep-Ms' => '800'];
-    [$first, $second] = realHttpRequestPool(
-        [
-            'port' => $idempotencyHttpState->portA,
-            'path' => '/api/items',
-            'method' => 'POST',
-            'headers' => $slowHeaders,
-            'body' => $body,
-        ],
-        [
-            'port' => $idempotencyHttpState->portB,
-            'path' => '/api/items',
-            'method' => 'POST',
-            'headers' => $headers,
-            'body' => $body,
-        ],
+    // Start A first and wait until its handler is entered (claim held) before B.
+    $multi = curl_multi_init();
+    $slow = curl_init("http://127.0.0.1:{$idempotencyHttpState->portA}{$path}");
+    curl_setopt_array($slow, [
+        CURLOPT_CUSTOMREQUEST => 'POST',
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_HEADER => true,
+        CURLOPT_HTTPHEADER => $headerLines,
+        CURLOPT_POSTFIELDS => $body,
+        CURLOPT_TIMEOUT => 15,
+        CURLOPT_FOLLOWLOCATION => false,
+    ]);
+    curl_multi_add_handle($multi, $slow);
+
+    $running = null;
+    $deadline = microtime(true) + 3.0;
+
+    do {
+        curl_multi_exec($multi, $running);
+        if (is_file($enteredFile)) {
+            break;
+        }
+        curl_multi_select($multi, 0.05);
+    } while (microtime(true) < $deadline);
+
+    expect(is_file($enteredFile))->toBeTrue();
+
+    $conflict = realHttpRequest(
+        $idempotencyHttpState->portB,
+        $path,
+        'POST',
+        $headers,
+        $body,
     );
 
-    $statuses = [$first['status'], $second['status']];
-    sort($statuses);
+    do {
+        $status = curl_multi_exec($multi, $running);
+        if ($running) {
+            curl_multi_select($multi, 0.2);
+        }
+    } while ($running && $status === CURLM_OK);
 
-    expect($statuses)->toBe([201, 409]);
+    $raw = curl_multi_getcontent($slow);
+    if ($raw === false || $raw === null) {
+        throw new RuntimeException('slow concurrent request failed: '.curl_error($slow));
+    }
+    $winnerStatus = (int) curl_getinfo($slow, CURLINFO_RESPONSE_CODE);
+    $parts = explode("\r\n\r\n", $raw, 2);
+    $winnerBody = $parts[1] ?? '';
+    curl_multi_remove_handle($multi, $slow);
+    curl_close($slow);
+    curl_multi_close($multi);
 
-    $conflict = $first['status'] === 409 ? $first : $second;
-    $winner = $first['status'] === 201 ? $first : $second;
-
-    expect(json_decode($winner['body'], true)['created'] ?? null)->toBeTrue()
+    expect($winnerStatus)->toBe(201)
+        ->and($conflict['status'])->toBe(409)
+        ->and(json_decode($winnerBody, true)['created'] ?? null)->toBeTrue()
         ->and(json_decode($conflict['body'], true)['error'] ?? null)->toBe(IdempotencyErrorCode::InProgress->value)
         ->and($conflict['headers'])->toHaveKey('retry-after');
 
