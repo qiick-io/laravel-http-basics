@@ -230,11 +230,13 @@ it('accepts an honest archive within its inflation budget', function (): void {
     expect(floorOutcome(new ArrayUploadPolicy(maxUncompressedRatio: 10), $honestZip, 'bundle.zip'))->toBe('accepted');
 });
 
-it('skips the archive check for non-archives and when no ratio is set', function (): void {
+it('skips the archive check for non-archives and when no limit is set', function (): void {
     $bomb = floorZip(['pad.bin' => str_repeat("\0", 1024 * 1024)]);
 
     expect(floorOutcome(new ArrayUploadPolicy(maxUncompressedRatio: 10), floorFile(floorPng()), 'shot.png'))->toBe('accepted')
-        ->and(floorOutcome(new ArrayUploadPolicy, $bomb, 'bomb.zip'))->toBe('accepted');
+        ->and(floorOutcome(new ArrayUploadPolicy, $bomb, 'bomb.zip'))->toBe('accepted')
+        // With neither limit set the product opted out of archive inspection entirely.
+        ->and(floorOutcome(new ArrayUploadPolicy, floorZip(['../evil.php' => 'x']), 'a.zip'))->toBe('accepted');
 });
 
 it('rejects an archive whose entries together exceed the budget', function (): void {
@@ -286,4 +288,92 @@ it('only ever appends a short alphanumeric storage extension', function (): void
     foreach (DetectedMimeExtension::map() as $storageExtension) {
         expect($storageExtension)->toMatch('/\A[a-z0-9]{1,10}\z/');
     }
+});
+
+/**
+ * Overwrites `$replacement` at `$offset` from the given ZIP signature, in every
+ * record that carries it.
+ */
+function floorPatchZip(string $zipPath, string $signature, int $offset, string $replacement): void
+{
+    $bytes = (string) file_get_contents($zipPath);
+    $recordOffset = strpos($bytes, $signature);
+    expect($recordOffset)->toBeInt();
+    file_put_contents($zipPath, substr_replace($bytes, $replacement, (int) $recordOffset + $offset, strlen($replacement)));
+}
+
+it('refuses a corrupt deflate stream instead of failing with a 500 (re-review U-R2)', function (): void {
+    $zipPath = floorZip(['a.txt' => str_repeat('hello world ', 2000)]);
+    $bytes = (string) file_get_contents($zipPath);
+    // The compressed data starts after the 30-byte local header and the 5-byte name.
+    file_put_contents($zipPath, substr_replace($bytes, str_repeat("\xFF", 16), 35, 16));
+
+    expect(floorOutcome(new ArrayUploadPolicy(maxUncompressedRatio: 1000), $zipPath, 'a.zip'))->toBe('upload_content_mismatch');
+});
+
+it('refuses an archive whose CRC does not match its data (re-review U-R2)', function (): void {
+    $zipPath = floorZip(['a.txt' => 'hello world']);
+    floorPatchZip($zipPath, "PK\x03\x04", 14, "\0\0\0\0");
+    floorPatchZip($zipPath, "PK\x01\x02", 16, "\0\0\0\0");
+
+    expect(floorOutcome(new ArrayUploadPolicy(maxUncompressedRatio: 1000), $zipPath, 'a.zip'))->toBe('upload_content_mismatch');
+});
+
+it('refuses a PDF+ZIP polyglot libzip cannot open as an archive (re-review U-R3)', function (): void {
+    $zipPath = floorZip(['pad.bin' => str_repeat("\0", 1024 * 1024)]);
+    $polyglot = floorFile("%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n".file_get_contents($zipPath));
+    @unlink($zipPath);
+
+    $archive = new ZipArchive;
+    expect($archive->open($polyglot, ZipArchive::RDONLY))->toBe(ZipArchive::ER_NOZIP);
+
+    expect(floorOutcome(new ArrayUploadPolicy(maxUncompressedRatio: 10), $polyglot, 'report.pdf'))->toBe('upload_content_mismatch');
+});
+
+it('looks for an end-of-central-directory record only where a ZIP reader does', function (): void {
+    // 22 bytes of record plus the longest comment (65 535) is as far back as a reader searches.
+    $withinReach = floorFile("PK\x05\x06".str_repeat('a', 65_557 - 4));
+    $outOfReach = floorFile("PK\x05\x06".str_repeat('a', 65_558 - 4));
+    $policy = new ArrayUploadPolicy(maxUncompressedRatio: 10);
+
+    expect(floorOutcome($policy, $withinReach, 'note.txt'))->toBe('upload_content_mismatch')
+        ->and(floorOutcome($policy, $outOfReach, 'note.txt'))->toBe('accepted');
+});
+
+it('applies max_uncompressed_bytes even when no ratio is set', function (): void {
+    $policy = new ArrayUploadPolicy(maxUncompressedBytes: 1000);
+
+    expect(floorOutcome($policy, floorZip(['a.txt' => str_repeat('a', 1001)]), 'a.zip'))->toBe('upload_too_large')
+        ->and(floorOutcome($policy, floorZip(['a.txt' => str_repeat('a', 1000)]), 'a.zip'))->toBe('accepted');
+});
+
+it('fails closed on a zero or negative archive budget', function (ArrayUploadPolicy $policy): void {
+    expect(floorOutcome($policy, floorZip(['a.txt' => 'x']), 'a.zip'))->toBe('upload_too_large');
+})->with([
+    'negative ratio' => [new ArrayUploadPolicy(maxUncompressedRatio: -1)],
+    'zero ceiling' => [new ArrayUploadPolicy(maxUncompressedRatio: 10, maxUncompressedBytes: 0)],
+    'negative ceiling' => [new ArrayUploadPolicy(maxUncompressedBytes: -5)],
+]);
+
+it('refuses archive entries whose names escape or hide', function (string $entryName): void {
+    expect(floorOutcome(new ArrayUploadPolicy(maxUncompressedRatio: 10), floorZip([$entryName => 'x']), 'a.zip'))->toBe('upload_forbidden_type');
+})->with([
+    'parent traversal' => '../../../../etc/cron.d/evil',
+    'traversal inside' => 'docs/../../evil.php',
+    'absolute' => '/abs/evil.php',
+    'windows traversal' => '..\\..\\win.php',
+    'windows drive' => 'C:\\evil.php',
+    'control character' => "evil\x07.txt",
+]);
+
+it('accepts ordinary nested entry names', function (): void {
+    $zipPath = floorZip(['docs/readme.txt' => 'x', 'docs/v1..v2/notes.txt' => 'y', 'img/' => '']);
+
+    expect(floorOutcome(new ArrayUploadPolicy(maxUncompressedRatio: 10), $zipPath, 'a.zip'))->toBe('accepted');
+});
+
+it('puts the previous error handler back after measuring an archive', function (): void {
+    floorOutcome(new ArrayUploadPolicy(maxUncompressedRatio: 10), floorZip(['a.txt' => 'x']), 'a.zip');
+
+    expect(fn () => trigger_error('unrelated warning', E_USER_WARNING))->toThrow(ErrorException::class, 'unrelated warning');
 });

@@ -219,11 +219,17 @@ never the client suffix.
 Archive budget: any file libzip opens as a ZIP (docx, jar and polyglots
 included) is inflated in streaming and its real bytes are counted, because the
 sizes in its headers are attacker-controlled. Reading stops at `size ×
-max_uncompressed_ratio`, capped by `max_uncompressed_bytes`, and an archive over
-10 000 entries is refused before any entry is read. Corrupt or encrypted
-archives cannot be measured and are refused. Nested archives are counted by
-their compressed bytes and are not opened: a product that unpacks them must
-check each level again.
+max_uncompressed_ratio`, capped by `max_uncompressed_bytes`; either limit works
+alone, a zero or negative limit allows nothing, and leaving both `null` turns
+archive inspection off. An archive over 10 000 entries is refused before any
+entry is read. A corrupt archive, a CRC mismatch, an encrypted entry, or a file
+libzip cannot open but whose last 64 KiB hold a ZIP directory (data prepended to
+an archive, which unzip still extracts) is refused with `upload_content_mismatch`.
+Entry names with a `..` segment, an absolute or drive path, or a control
+character are refused with `upload_forbidden_type`. Nested archives are counted
+by their compressed bytes and are not opened. The floor does not check entry
+names against the extension floor (`shell.php` inside a zip passes): a product
+that unpacks an archive must validate every extracted file as its own upload.
 
 A floor cannot catch polyglots (`GIF89a<?php …`, a PNG header followed by
 HTML). Serve uploads with `X-Content-Type-Options: nosniff` and

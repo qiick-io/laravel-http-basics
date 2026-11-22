@@ -186,19 +186,25 @@ final class UploadValidator
      * Inflates every ZIP entry in streaming and counts the real bytes, because the
      * sizes in the local and central headers are attacker-controlled. Reading stops
      * at the budget (`size × max_uncompressed_ratio`, capped by
-     * `max_uncompressed_bytes`), so a bomb is refused after at most budget + 1
-     * inflated bytes. Any file libzip opens as an archive is measured, whatever its
-     * sniffed MIME (docx, jar and PDF/ZIP polyglots included). Nested archives count
-     * by their compressed bytes only; they are not opened.
+     * `max_uncompressed_bytes`; either limit alone applies, and a zero or negative
+     * limit allows nothing), so a bomb is refused after at most budget + 1 inflated
+     * bytes. Any file libzip opens as an archive is measured, whatever its sniffed
+     * MIME (docx, jar and PDF/ZIP polyglots included); a file libzip cannot open but
+     * that still ends in a ZIP directory is refused. Entry names that climb out of
+     * the extraction directory are refused. Nested archives count by their
+     * compressed bytes only; they are not opened.
      *
      * @throws UploadRejectedException `upload_too_large` over budget, `upload_content_mismatch`
-     *                                 for an archive that cannot be read (corrupt or encrypted)
+     *                                 for an archive that cannot be read (corrupt, bad CRC,
+     *                                 encrypted, hidden behind leading data), `upload_forbidden_type`
+     *                                 for an unsafe entry name
      */
     private function assertArchiveWithinBudget(string $absolutePath, int $sizeBytes, UploadPolicy $policy, string $safeName): void
     {
         $ratio = $policy->maxUncompressedRatio();
+        $ceiling = $policy->maxUncompressedBytes();
 
-        if ($ratio === null) {
+        if ($ratio === null && $ceiling === null) {
             return;
         }
 
@@ -210,6 +216,8 @@ final class UploadValidator
         $openResult = $archive->open($absolutePath, \ZipArchive::RDONLY);
 
         if ($openResult === \ZipArchive::ER_NOZIP) {
+            $this->assertNoHiddenArchive($absolutePath, $sizeBytes, $safeName);
+
             return;
         }
 
@@ -223,23 +231,64 @@ final class UploadValidator
             throw UploadRejectedException::tooLarge($safeName);
         }
 
-        $budget = min($sizeBytes * $ratio, $policy->maxUncompressedBytes() ?? PHP_INT_MAX);
+        $budget = max(0, min($ratio === null ? PHP_INT_MAX : $sizeBytes * $ratio, $ceiling ?? PHP_INT_MAX));
         $inflatedBytes = 0;
         $byteCounter = hash_init('crc32b');
 
-        // Each entry stream, and the read-only archive, is released as soon as it goes out of scope.
-        for ($entryIndex = 0; $entryIndex < $archive->count(); $entryIndex++) {
-            $entryStream = $archive->getStreamIndex($entryIndex);
+        // libzip reports a broken deflate stream or a CRC mismatch as a warning while
+        // reading; it is a refusal, not a server error.
+        set_error_handler(static function () use ($safeName): never {
+            throw UploadRejectedException::contentMismatch($safeName);
+        });
 
-            if (! is_resource($entryStream)) {
-                throw UploadRejectedException::contentMismatch($safeName);
+        try {
+            // Each entry stream, and the read-only archive, is released as soon as it goes out of scope.
+            for ($entryIndex = 0; $entryIndex < $archive->count(); $entryIndex++) {
+                // Raw bytes: libzip would otherwise decode a non-UTF-8 name from CP437 and hide its controls.
+                $entryName = $archive->getNameIndex($entryIndex, \ZipArchive::FL_ENC_RAW);
+
+                if (! is_string($entryName) || ! $this->isSafeEntryName($entryName)) {
+                    throw UploadRejectedException::forbiddenType($safeName);
+                }
+
+                $entryStream = $archive->getStreamIndex($entryIndex);
+
+                if (! is_resource($entryStream)) {
+                    throw UploadRejectedException::contentMismatch($safeName);
+                }
+
+                $inflatedBytes += hash_update_stream($byteCounter, $entryStream, $budget - $inflatedBytes);
+
+                if (is_string(fgetc($entryStream))) {
+                    throw UploadRejectedException::tooLarge($safeName);
+                }
             }
+        } finally {
+            restore_error_handler();
+        }
+    }
 
-            $inflatedBytes += hash_update_stream($byteCounter, $entryStream, $budget - $inflatedBytes);
+    /**
+     * Zip slip: a `..` segment, an absolute or drive path, or a control character.
+     * Backslashes count as separators, as Windows extractors treat them.
+     */
+    private function isSafeEntryName(string $entryName): bool
+    {
+        return preg_match('#(^|[/\\\\])\.\.([/\\\\]|$)|^[/\\\\]|^[a-z]:|[\x00-\x1F\x7F]#i', $entryName) !== 1;
+    }
 
-            if (is_string(fgetc($entryStream))) {
-                throw UploadRejectedException::tooLarge($safeName);
-            }
+    /**
+     * Other ZIP readers (unzip, Python's zipfile) accept data in front of an archive
+     * that libzip refuses, so a file whose tail holds an end-of-central-directory
+     * record is refused rather than passed as "not an archive". Readers search back
+     * 22 bytes of record plus the longest comment (65 535), and so does this.
+     */
+    private function assertNoHiddenArchive(string $absolutePath, int $sizeBytes, string $safeName): void
+    {
+        $tail = file_get_contents($absolutePath, offset: max(0, $sizeBytes - 65_557));
+
+        if (! is_string($tail) || str_contains($tail, "PK\x05\x06")) {
+            throw UploadRejectedException::contentMismatch($safeName);
         }
     }
 }
