@@ -6,11 +6,12 @@ namespace Qiick\HttpBasics\Console;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Qiick\HttpBasics\Idempotency\IdempotencyRecord;
 
 /**
  * Deletes expired idempotency rows (`expires_at` in the past).
  *
- * Prefer scheduling `model:prune` on {@see \Qiick\HttpBasics\Idempotency\IdempotencyRecord} when Eloquent is
+ * Prefer scheduling `model:prune` on {@see IdempotencyRecord} when Eloquent is
  * available; this command is the package-namespaced entry point.
  */
 final class PruneIdempotencyRecordsCommand extends Command
