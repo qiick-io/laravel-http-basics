@@ -24,12 +24,19 @@ return [
          */
         'contexts' => [
             'files' => [
-                'allowed_extensions' => null,
-                'allowed_mime_types' => null,
-                'max_bytes' => null,
+                'allowed_extensions' => ['pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'txt'],
+                'allowed_mime_types' => [
+                    'application/pdf',
+                    'image/png',
+                    'image/jpeg',
+                    'image/gif',
+                    'image/webp',
+                    'text/plain',
+                ],
+                'max_bytes' => 10 * 1024 * 1024,
                 'allows_svg' => false,
                 'content_type_mismatch' => 'reject',
-                'max_uncompressed_ratio' => null,
+                'max_uncompressed_ratio' => 100,
             ],
         ],
     ],

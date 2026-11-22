@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Qiick\HttpBasics\Testing\FixedIdGenerator;
 use Qiick\HttpBasics\Uploads\ArrayUploadPolicy;
+use Qiick\HttpBasics\Uploads\DetectedMimeExtension;
 use Qiick\HttpBasics\Uploads\FileNameSanitizer;
 use Qiick\HttpBasics\Uploads\HardFloor;
 use Qiick\HttpBasics\Uploads\NullMalwareScanner;
@@ -40,6 +41,27 @@ it('rejects every hard-floor suffix including middle ones like invoice.php.pdf',
     expect($floor->isBlocked('invoice.php.pdf'))->toBeTrue()
         ->and($floor->isBlocked('photo.JPG'))->toBeFalse()
         ->and($floor->suffixes('a.php.jpg'))->toBe(['php', 'jpg']);
+
+    foreach (HardFloor::EXTENSIONS as $extension) {
+        expect($floor->isBlocked('payload.'.$extension))->toBeTrue("floor must block .{$extension}");
+    }
+
+    foreach (HardFloor::SVG_EXTENSIONS as $extension) {
+        expect($floor->isSvg('icon.'.$extension))->toBeTrue();
+    }
+
+    expect($floor->isBlockedMime('text/html', false))->toBeTrue()
+        ->and($floor->isBlockedMime('image/svg+xml', false))->toBeTrue()
+        ->and($floor->isBlockedMime('image/svg+xml', true))->toBeFalse()
+        ->and($floor->isBlockedMime('image/png', false))->toBeFalse();
+});
+
+it('maps sniffed MIME types to canonical storage extensions', function (): void {
+    $map = new DetectedMimeExtension;
+
+    expect($map->extensionFor('image/jpeg'))->toBe('jpg')
+        ->and($map->extensionFor('IMAGE/PNG'))->toBe('png')
+        ->and($map->extensionFor('application/octet-stream'))->toBeNull();
 });
 
 it('rejects unsafe client names', function (): void {
@@ -53,10 +75,11 @@ it('rejects unsafe client names', function (): void {
 it('validates a png path and marks the scan as not_scanned', function (): void {
     $png = tempnam(sys_get_temp_dir(), 'hb-png-');
     expect($png)->toBeString();
-    file_put_contents($png, hex2bin('89504E470D0A1A0A00000000') ?: '');
+    file_put_contents($png, base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==') ?: '');
 
     $validator = uploadValidatorFor(new ArrayUploadPolicy(
         allowedExtensions: ['png'],
+        allowedMimeTypes: ['image/png'],
         maxBytes: 1024,
         magicSignatures: ['png' => ['89504E470D0A1A0A']],
     ));

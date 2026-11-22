@@ -48,4 +48,14 @@ final class UploadRejectedException extends HttpException
     {
         return new self('upload_name_invalid', 'The uploaded file name is invalid.');
     }
+
+    public static function infected(string $name): self
+    {
+        return new self('upload_infected', 'The uploaded file failed the malware scan.');
+    }
+
+    public static function scanFailed(string $name): self
+    {
+        return new self('upload_scan_failed', 'The malware scanner could not inspect this file.');
+    }
 }

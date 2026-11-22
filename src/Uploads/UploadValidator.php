@@ -9,6 +9,10 @@ use Qiick\HttpBasics\Contracts\IdGenerator;
 
 /**
  * @api Validates an UploadedFile or an assembled path against the upload floor.
+ *
+ * Enforces the hard floor (suffix + sniffed MIME), size, allowlists, magic
+ * bytes, ZIP uncompressed ratio, and a package-owned storage extension derived
+ * from the sniffed MIME (never the raw client suffix).
  */
 final class UploadValidator
 {
@@ -18,6 +22,7 @@ final class UploadValidator
         private HardFloor $hardFloor,
         private MalwareScanner $scanner,
         private IdGenerator $ids,
+        private DetectedMimeExtension $mimeExtensions = new DetectedMimeExtension,
     ) {}
 
     public function validate(UploadedFile $file, string $context, string $field = 'file'): ValidatedUpload
@@ -55,14 +60,15 @@ final class UploadValidator
         }
 
         $suffixes = $this->hardFloor->suffixes($safeName);
-        $extension = $suffixes === [] ? '' : $suffixes[array_key_last($suffixes)];
+        $clientExtension = $suffixes === [] ? '' : $suffixes[array_key_last($suffixes)];
+        $clientExtension = preg_match('/\A[a-z0-9]{1,10}\z/', $clientExtension) === 1 ? $clientExtension : '';
 
         $allowedExtensions = $policy->allowedExtensions();
 
         if ($allowedExtensions !== null) {
             $allowed = array_map(strtolower(...), $allowedExtensions);
 
-            if ($extension === '' || ! in_array($extension, $allowed, true)) {
+            if ($clientExtension === '' || ! in_array($clientExtension, $allowed, true)) {
                 throw UploadRejectedException::typeNotAllowed($safeName);
             }
         }
@@ -76,7 +82,7 @@ final class UploadValidator
         }
 
         $header = $this->readHeader($absolutePath);
-        $this->assertMagic($extension, $header, $policy, $safeName);
+        $this->assertMagic($clientExtension, $header, $policy, $safeName);
 
         $finfo = new \finfo(FILEINFO_MIME_TYPE);
         $detected = $finfo->file($absolutePath);
@@ -84,10 +90,24 @@ final class UploadValidator
             ? strtolower(trim(explode(';', $detected, 2)[0]))
             : 'application/octet-stream';
 
+        if ($this->hardFloor->isBlockedMime($detectedMime, $policy->allowsSvg())) {
+            throw UploadRejectedException::forbiddenType($safeName);
+        }
+
         $allowedMimes = $policy->allowedMimeTypes();
 
         if ($allowedMimes !== null && ! in_array($detectedMime, array_map(strtolower(...), $allowedMimes), true)) {
             throw UploadRejectedException::typeNotAllowed($safeName);
+        }
+
+        $storageExtension = $this->mimeExtensions->extensionFor($detectedMime);
+
+        if ($allowedExtensions !== null) {
+            $allowed = array_map(strtolower(...), $allowedExtensions);
+
+            if ($storageExtension === null || ! in_array($storageExtension, $allowed, true)) {
+                throw UploadRejectedException::typeNotAllowed($safeName);
+            }
         }
 
         if ($declaredMime !== null && $declaredMime !== '') {
@@ -98,13 +118,20 @@ final class UploadValidator
             }
         }
 
+        $this->assertZipRatio($absolutePath, $detectedMime, $policy, $safeName);
+
         $scan = $this->scanner->scanPath($absolutePath);
 
-        if ($scan === ScanResult::Infected || $scan === ScanResult::Failed) {
-            throw UploadRejectedException::forbiddenType($safeName);
+        if ($scan === ScanResult::Infected) {
+            throw UploadRejectedException::infected($safeName);
+        }
+
+        if ($scan === ScanResult::Failed) {
+            throw UploadRejectedException::scanFailed($safeName);
         }
 
         $publicId = $this->ids->generate();
+        $extension = $storageExtension ?? '';
         $storageName = $publicId.($extension !== '' ? '.'.$extension : '');
         $hash = hash_file('sha256', $absolutePath);
 
@@ -164,5 +191,57 @@ final class UploadValidator
         }
 
         throw UploadRejectedException::contentMismatch($safeName);
+    }
+
+    private function assertZipRatio(string $absolutePath, string $detectedMime, UploadPolicy $policy, string $safeName): void
+    {
+        $ratio = $policy->maxUncompressedRatio();
+
+        if ($ratio === null || $ratio <= 0) {
+            return;
+        }
+
+        if (! in_array($detectedMime, ['application/zip', 'application/x-zip-compressed'], true)) {
+            return;
+        }
+
+        if (! class_exists(\ZipArchive::class)) {
+            throw UploadRejectedException::forbiddenType($safeName);
+        }
+
+        $archive = new \ZipArchive;
+        $opened = $archive->open($absolutePath);
+
+        if ($opened !== true) {
+            throw UploadRejectedException::contentMismatch($safeName);
+        }
+
+        try {
+            $compressedSize = filesize($absolutePath);
+            $compressedBytes = is_int($compressedSize) && $compressedSize > 0 ? $compressedSize : 1;
+            $uncompressedTotal = 0;
+            $entryCount = $archive->numFiles;
+
+            if ($entryCount > 10_000) {
+                throw UploadRejectedException::tooLarge($safeName);
+            }
+
+            for ($index = 0; $index < $entryCount; $index++) {
+                $stat = $archive->statIndex($index);
+
+                if (! is_array($stat)) {
+                    continue;
+                }
+
+                $entrySize = $stat['size'] ?? 0;
+                $uncompressedTotal += is_int($entrySize) ? $entrySize : 0;
+
+                if ($uncompressedTotal > $compressedBytes * $ratio) {
+                    throw UploadRejectedException::tooLarge($safeName);
+                }
+            }
+        } finally {
+            $archive->close();
+        }
     }
 }

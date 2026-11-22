@@ -25,6 +25,11 @@ CLASSES=(
   'Qiick\HttpBasics\Idempotency\DatabaseIdempotencyStore'
   'Qiick\HttpBasics\Idempotency\HandleIdempotencyMiddleware'
   'Qiick\HttpBasics\Idempotency\IdempotencyRejection'
+  'Qiick\HttpBasics\Uploads\HardFloor'
+  'Qiick\HttpBasics\Uploads\FileNameSanitizer'
+  'Qiick\HttpBasics\Uploads\UploadValidator'
+  'Qiick\HttpBasics\Uploads\ConfigUploadPolicyResolver'
+  'Qiick\HttpBasics\Uploads\DetectedMimeExtension'
 )
 
 CLASS_FILES=(
@@ -41,9 +46,14 @@ CLASS_FILES=(
   'src/Idempotency/DatabaseIdempotencyStore.php'
   'src/Idempotency/HandleIdempotencyMiddleware.php'
   'src/Idempotency/IdempotencyRejection.php'
+  'src/Uploads/HardFloor.php'
+  'src/Uploads/FileNameSanitizer.php'
+  'src/Uploads/UploadValidator.php'
+  'src/Uploads/ConfigUploadPolicyResolver.php'
+  'src/Uploads/DetectedMimeExtension.php'
 )
 
-# Extra files under RequestId\ / Locale\ / Security\ / Idempotency\ prefixes that are not mutation targets.
+# Extra files under RequestId\ / Locale\ / Security\ / Idempotency\ / Uploads\ prefixes that are not mutation targets.
 SIBLING_FILES=(
   'src/RequestId/RequestIdAcceptFrom.php'
   'src/RequestId/RequestIdSource.php'
@@ -70,6 +80,16 @@ SIBLING_FILES=(
   'src/Idempotency/ReplayHeaderSanitizer.php'
   'src/Idempotency/NullCredentialBucketResolver.php'
   'src/Idempotency/IdempotencyRecord.php'
+  'src/Uploads/ArrayUploadPolicy.php'
+  'src/Uploads/MismatchMode.php'
+  'src/Uploads/MalwareScanner.php'
+  'src/Uploads/NullMalwareScanner.php'
+  'src/Uploads/SafeUpload.php'
+  'src/Uploads/ScanResult.php'
+  'src/Uploads/UploadPolicy.php'
+  'src/Uploads/UploadPolicyResolver.php'
+  'src/Uploads/UploadRejectedException.php'
+  'src/Uploads/ValidatedUpload.php'
   'src/Contracts/CredentialBucketResolver.php'
   'src/Contracts/IdempotencyStore.php'
   'src/Contracts/ErrorRenderer.php'
