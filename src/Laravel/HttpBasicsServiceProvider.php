@@ -309,7 +309,10 @@ final class HttpBasicsServiceProvider extends ServiceProvider
         $this->app->singleton(ErrorRenderer::class, function (Application $app): ErrorRenderer {
             $url = $this->config($app)->get('http-basics.idempotency.documentation_url');
 
-            return new FleetErrorRenderer(is_string($url) ? $url : null);
+            return new FleetErrorRenderer(
+                is_string($url) ? $url : null,
+                $app->make('translator'),
+            );
         });
 
         $this->app->singleton(IdempotencyStore::class, function (Application $app): IdempotencyStore {
@@ -362,6 +365,14 @@ final class HttpBasicsServiceProvider extends ServiceProvider
                 static fn (mixed $method): bool => is_string($method) && $method !== '',
             ));
 
+            $replayHeaderRaw = $config->get(
+                'http-basics.idempotency.replay_header',
+                HandleIdempotencyMiddleware::DEFAULT_REPLAY_HEADER,
+            );
+            $replayHeader = is_string($replayHeaderRaw) && $replayHeaderRaw !== ''
+                ? $replayHeaderRaw
+                : null;
+
             return new HandleIdempotencyMiddleware(
                 $app->make(IdempotencyStore::class),
                 $app->make(Fingerprinter::class),
@@ -381,6 +392,7 @@ final class HttpBasicsServiceProvider extends ServiceProvider
                 $this->configInt($config, 'http-basics.idempotency.lock_ttl_seconds', 60),
                 $this->configInt($config, 'http-basics.idempotency.max_handler_seconds', 55),
                 $this->configInt($config, 'http-basics.idempotency.stale_after_seconds', 60),
+                $replayHeader,
             );
         });
     }
@@ -389,10 +401,20 @@ final class HttpBasicsServiceProvider extends ServiceProvider
     {
         $this->validateIdempotencyConfig();
 
+        $this->loadTranslationsFrom(__DIR__.'/../../lang', 'http-basics');
+
         if ($this->app->runningInConsole()) {
             $this->publishes([
                 __DIR__.'/../../config/http-basics.php' => config_path('http-basics.php'),
             ], 'http-basics-config');
+
+            $this->publishes([
+                __DIR__.'/../../database/migrations/2026_11_22_000001_create_idempotency_records_table.php' => database_path('migrations/2026_11_22_000001_create_idempotency_records_table.php'),
+            ], 'http-basics-migrations');
+
+            $this->publishes([
+                __DIR__.'/../../lang' => $this->app->langPath('vendor/http-basics'),
+            ], 'http-basics-lang');
 
             $this->commands([
                 PruneIdempotencyRecordsCommand::class,

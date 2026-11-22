@@ -665,7 +665,9 @@ it('seals unreplayable when the response exceeds max_response_bytes', function (
         return response(str_repeat('y', 64), 201);
     });
 
-    expect($first->getStatusCode())->toBe(503)->and($runs)->toBe(1);
+    expect($first->getStatusCode())->toBe(201)
+        ->and($first->getContent())->toBe(str_repeat('y', 64))
+        ->and($runs)->toBe(1);
 
     $second = $middleware->handle($request, static function () use (&$runs) {
         $runs++;
@@ -676,6 +678,21 @@ it('seals unreplayable when the response exceeds max_response_bytes', function (
     expect($second->getStatusCode())->toBe(409)
         ->and($second->getData(true)['error'])->toBe(IdempotencyErrorCode::NotReplayable->value)
         ->and($runs)->toBe(1);
+});
+
+it('sets Idempotent-Replayed on cache replays', function (): void {
+    $middleware = makeIdempotencyMiddleware($this->store, new FakeCredentialBucketResolver('tenant:1'));
+    $key = '550e8400-e29b-41d4-a716-446655440093';
+    $request = idempotencyRequest();
+    $request->headers->set('Idempotency-Key', $key);
+
+    $first = $middleware->handle($request, static fn () => response('ok', 201, ['Content-Type' => 'text/plain']));
+    $second = $middleware->handle($request, static fn () => response('nope', 201));
+
+    expect($first->headers->get('Idempotent-Replayed'))->toBeNull()
+        ->and($second->getStatusCode())->toBe(201)
+        ->and($second->getContent())->toBe('ok')
+        ->and($second->headers->get('Idempotent-Replayed'))->toBe('true');
 });
 
 it('enforces max_handler_seconds and seals unreplayable after a slow handler', function (): void {

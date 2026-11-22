@@ -112,6 +112,11 @@ return [
         'max_body_bytes' => (int) env('HTTP_BASICS_IDEMPOTENCY_MAX_BODY_BYTES', 1048576),
         'max_response_bytes' => (int) env('HTTP_BASICS_IDEMPOTENCY_MAX_RESPONSE_BYTES', 1048576),
         /*
+         * Header set on replayed responses (Stripe: Idempotent-Replayed: true).
+         * Empty string or null disables it. Never stored in headers_json.
+         */
+        'replay_header' => env('HTTP_BASICS_IDEMPOTENCY_REPLAY_HEADER', 'Idempotent-Replayed'),
+        /*
          * @var list<string>
          */
         'methods' => ['POST', 'PATCH'],

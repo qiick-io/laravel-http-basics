@@ -282,7 +282,8 @@ it('does not re-run the handler when an oversized response is sealed unreplayabl
         ];
 
         $first = realHttpRequest($port, '/api/large', 'POST', $headers, '{}');
-        expect($first['status'])->toBe(503);
+        expect($first['status'])->toBe(201)
+            ->and(strlen($first['body']))->toBeGreaterThan(64);
 
         $second = realHttpRequest($port, '/api/large', 'POST', $headers, '{}');
         expect($second['status'])->toBe(409)

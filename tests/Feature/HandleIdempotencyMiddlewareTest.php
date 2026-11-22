@@ -132,7 +132,7 @@ it('renders in progress refusals with retry-after on the json payload', function
         ['Retry-After' => '30'],
     );
 
-    $response = app(ErrorRenderer::class)->render($rejection);
+    $response = app(ErrorRenderer::class)->render($rejection, request());
 
     expect($response->getStatusCode())->toBe(409)
         ->and($response->headers->get('Retry-After'))->toBe('30')

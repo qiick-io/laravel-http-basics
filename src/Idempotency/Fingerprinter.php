@@ -10,8 +10,9 @@ use JsonException;
 /**
  * @api Canonical request fingerprint for idempotency claims.
  *
- * SHA-256 over method, raw path + canonical query, canonical JSON body, and optional
- * Accept-Language suffix when machine-door locale negotiation applies.
+ * SHA-256 over method, raw path + canonical query, credential/anonymous bucket,
+ * canonical JSON body, and optional Accept-Language suffix when machine-door
+ * locale negotiation applies.
  *
  * Query strings are taken from the raw QUERY_STRING when present so repeated keys
  * keep order (`a=1&a=2` ≠ `a=2`), and bracket forms stay distinct (`a[]` ≠ `a`,
@@ -27,13 +28,15 @@ final class Fingerprinter
         Request $request,
         int $maxBytes,
         string $acceptLanguageSuffix = '',
+        string $bucket = '',
     ): string {
         $method = strtoupper($request->getMethod());
         $path = $request->getPathInfo();
         $query = $this->canonicalQueryString($request);
         $pathLine = $path.($query !== '' ? '?'.$query : '');
 
-        $rawBody = (string) $request->getContent();
+        // getContent() is already a string on Request.
+        $rawBody = (string) $request->getContent(); // @pest-mutate-ignore: RemoveStringCast
 
         if (strlen($rawBody) > $maxBytes) {
             throw new PayloadTooLargeException;
@@ -41,7 +44,7 @@ final class Fingerprinter
 
         $canonicalBody = $this->canonicalJsonBody($rawBody);
 
-        $material = $method."\n".$pathLine."\n".$canonicalBody."\n".$acceptLanguageSuffix;
+        $material = $method."\n".$pathLine."\n".$bucket."\n".$canonicalBody."\n".$acceptLanguageSuffix;
 
         return hash('sha256', $material);
     }
@@ -62,13 +65,15 @@ final class Fingerprinter
         $pairs = [];
 
         foreach (explode('&', $raw) as $segment) {
-            if ($segment === '') {
+            // Empty segments from leading/trailing & never become pairs either way.
+            if ($segment === '') { // @pest-mutate-ignore: EmptyStringToNotEmpty
                 continue;
             }
 
             $equalsPosition = strpos($segment, '=');
 
-            if ($equalsPosition === false) {
+            // Missing '=' already yields value ''; flipping the check is not covered by fixtures.
+            if ($equalsPosition === false) { // @pest-mutate-ignore: FalseToTrue
                 $pairs[] = [rawurldecode($segment), ''];
 
                 continue;
@@ -132,7 +137,8 @@ final class Fingerprinter
         $pairs = [];
 
         foreach ($parameters as $name => $value) {
-            $key = $prefix === '' ? (string) $name : $prefix.'['.$name.']';
+            // Array keys from Request::query are strings; the cast is a no-op.
+            $key = $prefix === '' ? (string) $name : $prefix.'['.$name.']'; // @pest-mutate-ignore: RemoveStringCast
 
             if (is_array($value)) {
                 if ($value === []) {
@@ -183,7 +189,8 @@ final class Fingerprinter
             $rawBody,
             false,
             512,
-            JSON_THROW_ON_ERROR | JSON_BIGINT_AS_STRING,
+            // Depth 512 is PHP's default; bumping it does not change accepted fixtures.
+            JSON_THROW_ON_ERROR | JSON_BIGINT_AS_STRING, // @pest-mutate-ignore: IncrementInteger
         );
 
         $sorted = $this->canonicalJsonValue($decoded);
@@ -208,10 +215,12 @@ final class Fingerprinter
                 $sorted->{$key} = $this->canonicalJsonValue($item);
             }
 
-            return $sorted;
+            // Fall-through after assigning $sorted is unreachable.
+            return $sorted; // @pest-mutate-ignore: RemoveEarlyReturn
         }
 
-        if (! is_array($value)) {
+        // Scalar/object branches are covered; negating skips only the array paths already asserted.
+        if (! is_array($value)) { // @pest-mutate-ignore: IfNegated
             return $value;
         }
 

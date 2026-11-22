@@ -69,6 +69,7 @@ SIBLING_FILES=(
   'src/Idempotency/PayloadTooLargeException.php'
   'src/Idempotency/ReplayHeaderSanitizer.php'
   'src/Idempotency/NullCredentialBucketResolver.php'
+  'src/Idempotency/IdempotencyRecord.php'
   'src/Contracts/CredentialBucketResolver.php'
   'src/Contracts/IdempotencyStore.php'
   'src/Contracts/ErrorRenderer.php'

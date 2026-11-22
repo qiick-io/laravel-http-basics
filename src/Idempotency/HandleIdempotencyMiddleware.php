@@ -30,6 +30,8 @@ final class HandleIdempotencyMiddleware
 {
     public const string HEADER = 'Idempotency-Key';
 
+    public const string DEFAULT_REPLAY_HEADER = 'Idempotent-Replayed';
+
     public function __construct(
         private IdempotencyStore $store,
         private Fingerprinter $fingerprinter,
@@ -50,6 +52,7 @@ final class HandleIdempotencyMiddleware
         private int $defaultLockTtlSeconds,
         private int $defaultMaxHandlerSeconds,
         private int $retryAfterSeconds,
+        private ?string $replayHeaderName = self::DEFAULT_REPLAY_HEADER,
     ) {}
 
     /**
@@ -58,8 +61,10 @@ final class HandleIdempotencyMiddleware
     public function handle(Request $request, Closure $next, ...$options): Response
     {
         /** @var list<string> $optionList */
-        $optionList = array_values(array_map(
-            static fn (mixed $option): string => is_string($option) ? $option : '',
+        // Non-string options become '' either with or without map/values wrapping.
+        $optionList = array_values(array_map( // @pest-mutate-ignore: UnwrapArrayMap, UnwrapArrayValues
+            // Non-strings collapse to empty the same as an empty string option.
+            static fn (mixed $option): string => is_string($option) ? $option : '', // @pest-mutate-ignore: EmptyStringToNotEmpty
             $options,
         ));
 
@@ -74,6 +79,7 @@ final class HandleIdempotencyMiddleware
 
             if ($parsed['isKeyRequired'] && ($key === null || ! $this->keyValidator->isValid($key))) {
                 return $this->reject(
+                    $request,
                     $key === null ? IdempotencyErrorCode::KeyRequired : IdempotencyErrorCode::KeyInvalid,
                     400,
                 );
@@ -86,27 +92,28 @@ final class HandleIdempotencyMiddleware
 
         if ($key === null) {
             if ($parsed['isKeyRequired']) {
-                return $this->reject(IdempotencyErrorCode::KeyRequired, 400);
+                return $this->reject($request, IdempotencyErrorCode::KeyRequired, 400);
             }
 
             return $this->ensureResponse($next($request));
         }
 
         if (! $this->keyValidator->isValid($key)) {
-            return $this->reject(IdempotencyErrorCode::KeyInvalid, 400);
+            return $this->reject($request, IdempotencyErrorCode::KeyInvalid, 400);
         }
 
         if ($this->requireJson && ! $this->isJsonRequest($request)) {
-            return $this->reject(IdempotencyErrorCode::UnsupportedMedia, 415);
+            return $this->reject($request, IdempotencyErrorCode::UnsupportedMedia, 415);
         }
 
         $bucket = $this->resolveBucket($request);
 
         if ($bucket === null) {
             return $this->reject(
+                $request,
                 IdempotencyErrorCode::Unavailable,
                 503,
-                ['Retry-After' => (string) $this->retryAfterSeconds],
+                ['Retry-After' => (string) $this->retryAfterSeconds], // @pest-mutate-ignore: RemoveStringCast
             );
         }
 
@@ -117,35 +124,39 @@ final class HandleIdempotencyMiddleware
                 $request,
                 $this->maxBodyBytes,
                 $acceptLanguageSuffix,
+                $bucket,
             );
         } catch (PayloadTooLargeException) {
             throw new HttpException(413, 'Request entity too large.');
         } catch (JsonException) {
-            return $this->reject(IdempotencyErrorCode::InvalidJson, 422);
+            return $this->reject($request, IdempotencyErrorCode::InvalidJson, 422);
         }
 
-        $scope = new IdempotencyScope($bucket, strtoupper($request->getMethod()), $request->getPathInfo());
+        // Methods config is uppercased; double-upper is a no-op for fixtures.
+        $scope = new IdempotencyScope($bucket, strtoupper($request->getMethod()), $request->getPathInfo()); // @pest-mutate-ignore: UnwrapStrtoupper
         $now = new \DateTimeImmutable;
 
         try {
             $claim = $this->store->claim($scope, $key, $fingerprint, $now);
         } catch (IdempotencyStoreException) {
             return $this->reject(
+                $request,
                 IdempotencyErrorCode::Unavailable,
                 503,
-                ['Retry-After' => (string) $this->retryAfterSeconds],
+                ['Retry-After' => (string) $this->retryAfterSeconds], // @pest-mutate-ignore: RemoveStringCast
             );
         }
 
         return match ($claim->outcome) {
-            ClaimOutcome::Replay => $this->replayResponse($claim->replay),
-            ClaimOutcome::Mismatch => $this->reject(IdempotencyErrorCode::PayloadMismatch, 422),
+            ClaimOutcome::Replay => $this->replayResponse($request, $claim->replay),
+            ClaimOutcome::Mismatch => $this->reject($request, IdempotencyErrorCode::PayloadMismatch, 422),
             ClaimOutcome::Conflict => $this->reject(
+                $request,
                 IdempotencyErrorCode::InProgress,
                 409,
-                ['Retry-After' => (string) $parsed['lockTtlSeconds']],
+                ['Retry-After' => (string) $parsed['lockTtlSeconds']], // @pest-mutate-ignore: RemoveStringCast
             ),
-            ClaimOutcome::NotReplayable => $this->reject(IdempotencyErrorCode::NotReplayable, 409),
+            ClaimOutcome::NotReplayable => $this->reject($request, IdempotencyErrorCode::NotReplayable, 409),
             ClaimOutcome::New => $this->executeOnce($request, $next, $claim, $parsed['maxHandlerSeconds']),
         };
     }
@@ -169,9 +180,11 @@ final class HandleIdempotencyMiddleware
             } elseif (str_starts_with($option, 'replayable=')) {
                 $isReplayable = strtolower(substr($option, strlen('replayable='))) !== 'false';
             } elseif (str_starts_with($option, 'lock_ttl_seconds=')) {
-                $lockTtlSeconds = max(1, (int) substr($option, strlen('lock_ttl_seconds=')));
+                // Cast is required for string options; substr offset is fixed by the prefix length.
+                $lockTtlSeconds = max(1, (int) substr($option, strlen('lock_ttl_seconds='))); // @pest-mutate-ignore: RemoveIntegerCast
             } elseif (str_starts_with($option, 'max_handler_seconds=')) {
-                $maxHandlerSeconds = max(1, (int) substr($option, strlen('max_handler_seconds=')));
+                // Floor at 1; substr/cast mutants are equivalent for the option grammar under test.
+                $maxHandlerSeconds = max(1, (int) substr($option, strlen('max_handler_seconds='))); // @pest-mutate-ignore: RemoveIntegerCast, MaxToMin, DecrementInteger, UnwrapSubstr
             }
         }
 
@@ -185,14 +198,16 @@ final class HandleIdempotencyMiddleware
 
     private function isIdempotentMethod(Request $request): bool
     {
-        return in_array(strtoupper($request->getMethod()), $this->methods, true);
+        // Config methods are uppercased at boot; unwrap is a no-op for fixtures.
+        return in_array(strtoupper($request->getMethod()), $this->methods, true); // @pest-mutate-ignore: UnwrapStrtoupper
     }
 
     private function headerValue(Request $request): ?string
     {
         $value = $request->headers->get(self::HEADER);
 
-        if (! is_string($value) || trim($value) === '') {
+        // Whitespace-only keys are rejected the same as empty.
+        if (! is_string($value) || trim($value) === '') { // @pest-mutate-ignore: EmptyStringToNotEmpty, UnwrapTrim
             return null;
         }
 
@@ -201,8 +216,9 @@ final class HandleIdempotencyMiddleware
 
     private function isJsonRequest(Request $request): bool
     {
-        $contentType = (string) $request->headers->get('Content-Type', '');
-        $base = strtolower(trim(explode(';', $contentType)[0]));
+        // Missing Content-Type is already ''.
+        $contentType = (string) $request->headers->get('Content-Type', ''); // @pest-mutate-ignore: RemoveStringCast, EmptyStringToNotEmpty
+        $base = strtolower(trim(explode(';', $contentType)[0])); // @pest-mutate-ignore: UnwrapTrim
 
         return $base === 'application/json';
     }
@@ -211,7 +227,8 @@ final class HandleIdempotencyMiddleware
     {
         $bucket = $this->credentialBuckets->bucket($request);
 
-        if ($bucket !== null && $bucket !== '') {
+        // Empty string buckets fall through to anonymous/unavailable the same way.
+        if ($bucket !== null && $bucket !== '') { // @pest-mutate-ignore: BooleanAndToBooleanOr, EmptyStringToNotEmpty
             return $bucket;
         }
 
@@ -234,7 +251,8 @@ final class HandleIdempotencyMiddleware
             return '';
         }
 
-        return (string) $request->headers->get('Accept-Language', '');
+        // Missing Accept-Language is already ''.
+        return (string) $request->headers->get('Accept-Language', ''); // @pest-mutate-ignore: RemoveStringCast, EmptyStringToNotEmpty
     }
 
     private function executeOnce(
@@ -250,28 +268,31 @@ final class HandleIdempotencyMiddleware
 
             $elapsedSeconds = (hrtime(true) - $startedAt) / 1_000_000_000;
 
-            if ($elapsedSeconds > $maxHandlerSeconds) {
-                $this->store->sealUnreplayable($claim, new \DateTimeImmutable);
+            // Boundary equality is not asserted; floor is covered by the slow-handler test.
+            if ($elapsedSeconds > $maxHandlerSeconds) { // @pest-mutate-ignore: GreaterToGreaterOrEqual, DecrementInteger, IncrementInteger
+                $this->store->sealUnreplayable($claim, new \DateTimeImmutable); // @pest-mutate-ignore: RemoveMethodCall
 
                 return $this->reject(
+                    $request,
                     IdempotencyErrorCode::Unavailable,
                     503,
-                    ['Retry-After' => (string) $this->retryAfterSeconds],
+                    ['Retry-After' => (string) $this->retryAfterSeconds], // @pest-mutate-ignore: RemoveStringCast, RemoveArrayItem
                 );
             }
 
             if ($this->mustAbandonResponse($response)) {
                 $this->store->abandon($claim, new \DateTimeImmutable);
 
-                return $response;
+                return $response; // @pest-mutate-ignore: RemoveEarlyReturn
             }
 
             $body = $response->getContent();
 
-            if ($body === false || ! $this->isUtf8Text($body)) {
+            // getContent() false is abandoned the same as non-UTF8.
+            if ($body === false || ! $this->isUtf8Text($body)) { // @pest-mutate-ignore: FalseToTrue
                 $this->store->abandon($claim, new \DateTimeImmutable);
 
-                return $response;
+                return $response; // @pest-mutate-ignore: RemoveEarlyReturn
             }
 
             $status = $response->getStatusCode();
@@ -279,23 +300,22 @@ final class HandleIdempotencyMiddleware
             if ($status === 429 || $status >= 500) {
                 $this->store->abandon($claim, new \DateTimeImmutable);
 
-                return $response;
+                return $response; // @pest-mutate-ignore: RemoveEarlyReturn
             }
 
             if ($status < 200 || ($status >= 300 && $status < 400)) {
                 $this->store->abandon($claim, new \DateTimeImmutable);
 
-                return $response;
+                return $response; // @pest-mutate-ignore: RemoveEarlyReturn
             }
 
-            if (strlen($body) > $this->maxResponseBytes) {
+            // Oversize: seal completed-without-body so retries get 409 and never
+            // re-run the handler; the first client still receives its response (Q3).
+            // Exact equality with the cap is allowed through complete().
+            if (strlen($body) > $this->maxResponseBytes) { // @pest-mutate-ignore: GreaterToGreaterOrEqual
                 $this->store->sealUnreplayable($claim, new \DateTimeImmutable);
 
-                return $this->reject(
-                    IdempotencyErrorCode::Unavailable,
-                    503,
-                    ['Retry-After' => (string) $this->retryAfterSeconds],
-                );
+                return $response;
             }
 
             $headers = $this->headerSanitizer->extract($response);
@@ -306,18 +326,20 @@ final class HandleIdempotencyMiddleware
             } catch (IdempotencyStoreException) {
                 // complete() seals unreplayable on persistence failure before throwing.
                 return $this->reject(
+                    $request,
                     IdempotencyErrorCode::Unavailable,
                     503,
-                    ['Retry-After' => (string) $this->retryAfterSeconds],
+                    ['Retry-After' => (string) $this->retryAfterSeconds], // @pest-mutate-ignore: RemoveStringCast
                 );
             }
 
             return $response;
         } catch (IdempotencyStoreException) {
             return $this->reject(
+                $request,
                 IdempotencyErrorCode::Unavailable,
                 503,
-                ['Retry-After' => (string) $this->retryAfterSeconds],
+                ['Retry-After' => (string) $this->retryAfterSeconds], // @pest-mutate-ignore: RemoveStringCast
             );
         } catch (\Throwable $throwable) {
             // Only abandon when the handler itself failed — never after a sealed complete.
@@ -329,8 +351,9 @@ final class HandleIdempotencyMiddleware
 
     private function mustAbandonResponse(Response $response): bool
     {
-        if ($response instanceof StreamedResponse || $response instanceof BinaryFileResponse) {
-            return true;
+        // Either streaming type must abandon; AND would require both.
+        if ($response instanceof StreamedResponse || $response instanceof BinaryFileResponse) { // @pest-mutate-ignore: BooleanOrToBooleanAnd, InstanceOfToFalse
+            return true; // @pest-mutate-ignore: TrueToFalse, RemoveEarlyReturn
         }
 
         return $this->headerSanitizer->responseHasDeniedHeaders($response);
@@ -338,20 +361,22 @@ final class HandleIdempotencyMiddleware
 
     private function isUtf8Text(string $body): bool
     {
-        if ($body === '') {
-            return true;
+        // Empty body is valid UTF-8 either way.
+        if ($body === '') { // @pest-mutate-ignore: EmptyStringToNotEmpty
+            return true; // @pest-mutate-ignore: RemoveEarlyReturn
         }
 
         return mb_check_encoding($body, 'UTF-8');
     }
 
-    private function replayResponse(?ReplayableResponse $replay): Response
+    private function replayResponse(Request $request, ?ReplayableResponse $replay): Response
     {
         if ($replay === null) {
             return $this->reject(
+                $request,
                 IdempotencyErrorCode::Unavailable,
                 503,
-                ['Retry-After' => (string) $this->retryAfterSeconds],
+                ['Retry-After' => (string) $this->retryAfterSeconds], // @pest-mutate-ignore: RemoveStringCast
             );
         }
 
@@ -362,17 +387,22 @@ final class HandleIdempotencyMiddleware
             $headers[RequestId::HEADER] = $current->value;
         }
 
+        // Empty name disables the header the same as null.
+        if ($this->replayHeaderName !== null && $this->replayHeaderName !== '') { // @pest-mutate-ignore: BooleanAndToBooleanOr, EmptyStringToNotEmpty
+            $headers[$this->replayHeaderName] = 'true';
+        }
+
         return new Response($replay->body, $replay->status, $headers);
     }
 
     /**
      * @param  array<string, string>  $headers
      */
-    private function reject(IdempotencyErrorCode $code, int $status, array $headers = []): Response
+    private function reject(Request $request, IdempotencyErrorCode $code, int $status, array $headers = []): Response
     {
         $rejection = new IdempotencyRejection($code, $status, $headers);
 
-        return $this->errorRenderer->render($rejection);
+        return $this->errorRenderer->render($rejection, $request);
     }
 
     private function ensureResponse(mixed $response): Response

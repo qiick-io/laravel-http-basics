@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 use Illuminate\Cache\ArrayStore;
 use Illuminate\Cache\Repository;
-use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Database\Migrations\Migration;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Qiick\HttpBasics\Idempotency\ClaimOutcome;
@@ -15,23 +15,9 @@ use Qiick\HttpBasics\Idempotency\ReplayableResponse;
 
 beforeEach(function (): void {
     Schema::dropIfExists('idempotency_records');
-    Schema::create('idempotency_records', function (Blueprint $table): void {
-        $table->string('bucket', 128);
-        $table->char('key_hash', 64);
-        $table->string('method', 8);
-        $table->string('path', 512);
-        $table->char('fingerprint', 64);
-        $table->char('lease', 64);
-        $table->string('status');
-        $table->unsignedSmallInteger('status_code')->nullable();
-        $table->text('headers_json')->nullable();
-        $table->longText('body')->nullable();
-        $table->timestamp('created_at');
-        $table->timestamp('updated_at');
-        $table->timestamp('expires_at')->nullable();
-        $table->unique(['bucket', 'key_hash']);
-        $table->index('expires_at');
-    });
+    /** @var Migration $migration */
+    $migration = require dirname(__DIR__, 2).'/database/migrations/2026_11_22_000001_create_idempotency_records_table.php';
+    $migration->up();
 });
 
 function failClosedStore(): DatabaseIdempotencyStore
@@ -47,16 +33,49 @@ function failClosedStore(): DatabaseIdempotencyStore
 }
 
 it('complete() seals unreplayable on QueryException so a retry never re-claims New', function (): void {
-    // Simulate MySQL TEXT overflow: SQLite has no hard TEXT cap, so abort large body updates.
-    DB::statement('
-        CREATE TRIGGER idempotency_reject_large_body
-        BEFORE UPDATE ON idempotency_records
-        FOR EACH ROW
-        WHEN NEW.body IS NOT NULL AND length(NEW.body) > 100
-        BEGIN
-            SELECT RAISE(ABORT, \'Data too long for column body\');
-        END
-    ');
+    // Abort updates that try to store a large body (simulates MySQL TEXT overflow / write failure).
+    $driver = DB::connection()->getDriverName();
+
+    if ($driver === 'sqlite') {
+        DB::statement('
+            CREATE TRIGGER idempotency_reject_large_body
+            BEFORE UPDATE ON idempotency_records
+            FOR EACH ROW
+            WHEN NEW.body IS NOT NULL AND length(NEW.body) > 100
+            BEGIN
+                SELECT RAISE(ABORT, \'Data too long for column body\');
+            END
+        ');
+    } elseif (in_array($driver, ['mysql', 'mariadb'], true)) {
+        DB::unprepared('
+            CREATE TRIGGER idempotency_reject_large_body
+            BEFORE UPDATE ON idempotency_records
+            FOR EACH ROW
+            BEGIN
+                IF NEW.body IS NOT NULL AND CHAR_LENGTH(NEW.body) > 100 THEN
+                    SIGNAL SQLSTATE \'45000\' SET MESSAGE_TEXT = \'Data too long for column body\';
+                END IF;
+            END
+        ');
+    } elseif ($driver === 'pgsql') {
+        DB::unprepared('
+            CREATE OR REPLACE FUNCTION idempotency_reject_large_body() RETURNS trigger AS $$
+            BEGIN
+                IF NEW.body IS NOT NULL AND length(NEW.body) > 100 THEN
+                    RAISE EXCEPTION \'Data too long for column body\';
+                END IF;
+                RETURN NEW;
+            END;
+            $$ LANGUAGE plpgsql;
+        ');
+        DB::unprepared('
+            CREATE TRIGGER idempotency_reject_large_body
+            BEFORE UPDATE ON idempotency_records
+            FOR EACH ROW EXECUTE FUNCTION idempotency_reject_large_body();
+        ');
+    } else {
+        $this->markTestSkipped('No overflow trigger for driver '.$driver);
+    }
 
     $store = failClosedStore();
     $scope = new IdempotencyScope('bucket', 'POST', '/api/items');

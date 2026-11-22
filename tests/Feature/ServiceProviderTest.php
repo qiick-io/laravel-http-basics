@@ -18,6 +18,19 @@ it('merges the package defaults into the http-basics config', function (): void 
     expect(config('http-basics.idempotency.anonymous.enabled'))->toBeFalse();
     expect(config('http-basics.idempotency.lock_ttl_seconds'))->toBe(60);
     expect(config('http-basics.idempotency.max_handler_seconds'))->toBe(55);
+    expect(config('http-basics.idempotency.max_response_bytes'))->toBe(1048576);
+    expect(config('http-basics.idempotency.replay_header'))->toBe('Idempotent-Replayed');
+});
+
+it('publishes the idempotency migration under http-basics-migrations', function (): void {
+    $paths = ServiceProvider::pathsToPublish(HttpBasicsServiceProvider::class, 'http-basics-migrations');
+    expect($paths)->not->toBeEmpty();
+
+    $source = array_key_first($paths);
+    expect($source)->toBeString()
+        ->and(realpath((string) $source))->toBe(realpath(
+            dirname(__DIR__, 1).'/../database/migrations/2026_11_22_000001_create_idempotency_records_table.php',
+        ));
 });
 
 it('publishes the config source into a temporary directory outside vendor', function (): void {

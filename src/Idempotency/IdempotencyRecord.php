@@ -9,9 +9,9 @@ use Illuminate\Database\Eloquent\MassPrunable;
 use Illuminate\Database\Eloquent\Model;
 
 /**
- * Optional Eloquent model for the idempotency table products create themselves.
+ * Optional Eloquent model for the published idempotency migration.
  *
- * The package does not publish migrations; configure the table name via
+ * Publish with `--tag=http-basics-migrations`. Configure the table name via
  * `http-basics.idempotency.database.table` (default `idempotency_records`).
  *
  * @property string|null $expires_at
@@ -19,12 +19,6 @@ use Illuminate\Database\Eloquent\Model;
 class IdempotencyRecord extends Model
 {
     use MassPrunable;
-
-    public $incrementing = false;
-
-    public $timestamps = true;
-
-    protected $primaryKey = null;
 
     /**
      * @var list<string>

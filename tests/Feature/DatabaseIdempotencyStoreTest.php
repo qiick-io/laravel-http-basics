@@ -6,8 +6,8 @@ use Illuminate\Cache\ArrayStore;
 use Illuminate\Cache\Repository;
 use Illuminate\Contracts\Cache\Store;
 use Illuminate\Database\ConnectionInterface;
+use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\QueryException;
-use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Qiick\HttpBasics\Idempotency\ClaimOutcome;
@@ -19,23 +19,9 @@ use Qiick\HttpBasics\Idempotency\ReplayableResponse;
 
 beforeEach(function (): void {
     Schema::dropIfExists('idempotency_records');
-    Schema::create('idempotency_records', function (Blueprint $table): void {
-        $table->string('bucket', 128);
-        $table->char('key_hash', 64);
-        $table->string('method', 8);
-        $table->string('path', 512);
-        $table->char('fingerprint', 64);
-        $table->char('lease', 64);
-        $table->string('status');
-        $table->unsignedSmallInteger('status_code')->nullable();
-        $table->text('headers_json')->nullable();
-        $table->longText('body')->nullable();
-        $table->timestamp('created_at');
-        $table->timestamp('updated_at');
-        $table->timestamp('expires_at')->nullable();
-        $table->unique(['bucket', 'key_hash']);
-        $table->index('expires_at');
-    });
+    /** @var Migration $migration */
+    $migration = require dirname(__DIR__, 2).'/database/migrations/2026_11_22_000001_create_idempotency_records_table.php';
+    $migration->up();
 });
 
 function databaseIdempotencyStore(
@@ -225,6 +211,11 @@ it('replays completed rows with defensive header and status parsing', function (
 });
 
 it('defaults replay status and headers when the completed row is sparse', function (): void {
+    // MySQL/pgsql reject non-numeric smallints; SQLite stores the defensive fixtures as text.
+    if (DB::connection()->getDriverName() !== 'sqlite') {
+        $this->markTestSkipped('Sparse status_code/headers fixtures require SQLite column affinity.');
+    }
+
     $store = databaseIdempotencyStore();
     $scope = new IdempotencyScope('bucket-a', 'POST', '/items');
     $now = new DateTimeImmutable('2026-01-01T00:00:00Z');
@@ -500,6 +491,11 @@ it('requires missing-lease failures on complete to use the dedicated message', f
 });
 
 it('parses datetime objects and invalid timestamp strings when judging staleness', function (): void {
+    // Invalid datetime strings are rejected by MySQL/pgsql; SQLite accepts them as text.
+    if (DB::connection()->getDriverName() !== 'sqlite') {
+        $this->markTestSkipped('Invalid timestamp string fixtures require SQLite.');
+    }
+
     $cache = new Repository(new ArrayStore);
     $store = databaseIdempotencyStore(staleAfterSeconds: 5, cache: $cache);
     $scope = new IdempotencyScope('bucket-a', 'POST', '/items');

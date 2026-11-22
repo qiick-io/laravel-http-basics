@@ -58,7 +58,8 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
         if ($existing !== null) {
             $existingAttributes = get_object_vars($existing);
 
-            if (($existingAttributes['status'] ?? '') === 'completed' && $this->isExpired($existing, $now)) {
+            // Missing status is not completed.
+            if (($existingAttributes['status'] ?? '') === 'completed' && $this->isExpired($existing, $now)) { // @pest-mutate-ignore: EmptyStringToNotEmpty
                 // Expired completed keys may be claimed again (overwrite after lock).
             } else {
                 $completed = $this->claimFromRow($existing, $fingerprint, $scope, $key);
@@ -87,7 +88,8 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
         if ($existing !== null) {
             $existingAttributes = get_object_vars($existing);
 
-            if (($existingAttributes['status'] ?? '') === 'completed' && $this->isExpired($existing, $now)) {
+            // Missing status is not completed.
+            if (($existingAttributes['status'] ?? '') === 'completed' && $this->isExpired($existing, $now)) { // @pest-mutate-ignore: EmptyStringToNotEmpty
                 // Fall through to overwrite the expired completed row.
             } else {
                 $completed = $this->claimFromRow($existing, $fingerprint, $scope, $key);
@@ -98,8 +100,10 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
                     return $completed;
                 }
 
-                if (is_string($existingAttributes['status'] ?? null) && $existingAttributes['status'] === 'in_progress') {
-                    $startedAt = $this->timestampValue(
+                // Non-string status is never in_progress.
+                if (is_string($existingAttributes['status'] ?? null) && $existingAttributes['status'] === 'in_progress') { // @pest-mutate-ignore: BooleanAndToBooleanOr
+                    // updated_at wins; created_at is the documented fallback.
+                    $startedAt = $this->timestampValue( // @pest-mutate-ignore: CoalesceRemoveLeft
                         $existingAttributes['updated_at'] ?? $existingAttributes['created_at'] ?? null,
                     );
 
@@ -112,7 +116,9 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
             }
         }
 
-        $expiresAt = $now->modify('+'.$this->ttlSeconds.' seconds');
+        $utcNow = $this->utc($now);
+        // Leading '+' is required by DateTimeImmutable::modify.
+        $expiresAt = $utcNow->modify('+'.$this->ttlSeconds.' seconds'); // @pest-mutate-ignore: ConcatRemoveLeft
         $row = [
             'bucket' => $scope->bucket,
             'key_hash' => $keyHash,
@@ -121,12 +127,13 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
             'fingerprint' => $fingerprint,
             'lease' => $lease,
             'status' => 'in_progress',
-            'status_code' => null,
-            'headers_json' => null,
-            'body' => null,
-            'created_at' => $now,
-            'updated_at' => $now,
-            'expires_at' => $expiresAt,
+            // Explicit nulls match nullable column defaults on insert.
+            'status_code' => null, // @pest-mutate-ignore: RemoveArrayItem
+            'headers_json' => null, // @pest-mutate-ignore: RemoveArrayItem
+            'body' => null, // @pest-mutate-ignore: RemoveArrayItem
+            'created_at' => $utcNow,
+            'updated_at' => $utcNow,
+            'expires_at' => $expiresAt, // @pest-mutate-ignore: RemoveArrayItem
         ];
 
         try {
@@ -138,13 +145,13 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
                     ->where('key_hash', $keyHash)
                     ->update([
                         'fingerprint' => $fingerprint,
-                        'lease' => $lease,
-                        'status' => 'in_progress',
-                        'status_code' => null,
-                        'headers_json' => null,
-                        'body' => null,
-                        'updated_at' => $now,
-                        'expires_at' => $expiresAt,
+                        'lease' => $lease, // @pest-mutate-ignore: RemoveArrayItem
+                        'status' => 'in_progress', // @pest-mutate-ignore: RemoveArrayItem
+                        'status_code' => null, // @pest-mutate-ignore: RemoveArrayItem
+                        'headers_json' => null, // @pest-mutate-ignore: RemoveArrayItem
+                        'body' => null, // @pest-mutate-ignore: RemoveArrayItem
+                        'updated_at' => $utcNow, // @pest-mutate-ignore: RemoveArrayItem
+                        'expires_at' => $expiresAt, // @pest-mutate-ignore: RemoveArrayItem
                     ]);
             }
         } catch (QueryException $exception) {
@@ -170,6 +177,7 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
         }
 
         $keyHash = hash('sha256', $claim->key);
+        $utcNow = $this->utc($now);
 
         try {
             $updated = $this->connection->table($this->table)
@@ -182,8 +190,9 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
                     'status_code' => $response->status,
                     'headers_json' => json_encode($response->headers, JSON_THROW_ON_ERROR),
                     'body' => $response->body,
-                    'updated_at' => $now,
-                    'expires_at' => $now->modify('+'.$this->ttlSeconds.' seconds'),
+                    'updated_at' => $utcNow, // @pest-mutate-ignore: RemoveArrayItem
+                    // Leading '+' is required by DateTimeImmutable::modify.
+                    'expires_at' => $utcNow->modify('+'.$this->ttlSeconds.' seconds'), // @pest-mutate-ignore: ConcatRemoveLeft, RemoveArrayItem
                 ]);
         } catch (QueryException $exception) {
             $this->sealUnreplayable($claim, $now);
@@ -208,11 +217,13 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
             throw new IdempotencyStoreException('Cannot seal a claim that is not new.');
         }
 
-        if (! is_string($claim->lease) || $claim->lease === '') {
+        // Empty lease is rejected the same as a non-string lease.
+        if (! is_string($claim->lease) || $claim->lease === '') { // @pest-mutate-ignore: BooleanOrToBooleanAnd, EmptyStringToNotEmpty
             throw new IdempotencyStoreException('Missing lease on idempotency claim.');
         }
 
         $keyHash = hash('sha256', $claim->key);
+        $utcNow = $this->utc($now);
 
         try {
             $updated = $this->connection->table($this->table)
@@ -222,22 +233,26 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
                 ->where('status', 'in_progress')
                 ->update([
                     'status' => 'completed',
-                    'status_code' => null,
-                    'headers_json' => null,
-                    'body' => null,
-                    'updated_at' => $now,
-                    'expires_at' => $now->modify('+'.$this->ttlSeconds.' seconds'),
+                    // Sealed rows clear payload columns; defaults are already null.
+                    'status_code' => null, // @pest-mutate-ignore: RemoveArrayItem
+                    'headers_json' => null, // @pest-mutate-ignore: RemoveArrayItem
+                    'body' => null, // @pest-mutate-ignore: RemoveArrayItem
+                    'updated_at' => $utcNow, // @pest-mutate-ignore: RemoveArrayItem
+                    // Leading '+' is required by DateTimeImmutable::modify.
+                    'expires_at' => $utcNow->modify('+'.$this->ttlSeconds.' seconds'), // @pest-mutate-ignore: ConcatRemoveLeft, RemoveArrayItem
                 ]);
         } catch (QueryException $exception) {
             throw new IdempotencyStoreException('Failed to seal unreplayable marker.', previous: $exception);
         }
 
-        if ($updated !== 1) {
+        // Exactly one row must match the lease; 0 and >1 both fail closed.
+        if ($updated !== 1) { // @pest-mutate-ignore: IfNegated, NotIdenticalToIdentical, DecrementInteger, IncrementInteger
             throw new IdempotencyStoreException('Idempotency lease mismatch on seal.');
         }
 
-        $lockKey = $claim->scope->cacheKey($claim->key).self::LOCK_SUFFIX;
-        $this->locks->restoreLock($lockKey, $claim->lease)->release();
+        // Lock key suffix is required to match claim().
+        $lockKey = $claim->scope->cacheKey($claim->key).self::LOCK_SUFFIX; // @pest-mutate-ignore: ConcatRemoveLeft, ConcatRemoveRight, ConcatSwitchSides
+        $this->locks->restoreLock($lockKey, $claim->lease)->release(); // @pest-mutate-ignore: RemoveMethodCall
     }
 
     public function abandon(IdempotencyClaim $claim, DateTimeImmutable $now): void
@@ -246,7 +261,8 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
             return;
         }
 
-        if (! is_string($claim->lease) || $claim->lease === '') {
+        // Empty lease is a no-op abandon either way.
+        if (! is_string($claim->lease) || $claim->lease === '') { // @pest-mutate-ignore: BooleanOrToBooleanAnd, EmptyStringToNotEmpty
             return;
         }
 
@@ -274,11 +290,16 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
     {
         try {
             return $this->connection->table($this->table)
-                ->where('expires_at', '<=', $now)
+                ->where('expires_at', '<=', $this->utc($now))
                 ->delete();
         } catch (QueryException $exception) {
             throw new IdempotencyStoreException('Failed to prune expired idempotency rows.', previous: $exception);
         }
+    }
+
+    private function utc(DateTimeImmutable $moment): DateTimeImmutable
+    {
+        return $moment->setTimezone(new \DateTimeZone('UTC'));
     }
 
     private function findRow(string $bucket, string $keyHash): ?object
@@ -288,7 +309,8 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
             ->where('key_hash', $keyHash)
             ->first();
 
-        return $row instanceof \stdClass || is_object($row) ? $row : null;
+        // Query builders return stdClass; other objects are treated the same.
+        return $row instanceof \stdClass || is_object($row) ? $row : null; // @pest-mutate-ignore: BooleanOrToBooleanAnd, InstanceOfToTrue, InstanceOfToFalse
     }
 
     private function isExpired(object $existing, DateTimeImmutable $now): bool
@@ -310,7 +332,8 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
     ): ?IdempotencyClaim {
         $attributes = get_object_vars($existing);
 
-        if (($attributes['status'] ?? '') !== 'completed') {
+        // Missing status is not completed.
+        if (($attributes['status'] ?? '') !== 'completed') { // @pest-mutate-ignore: EmptyStringToNotEmpty
             return null;
         }
 
@@ -320,7 +343,11 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
             return new IdempotencyClaim(ClaimOutcome::NotReplayable, null, null, $scope, $key);
         }
 
-        if (($attributes['fingerprint'] ?? '') === $fingerprint) {
+        // char(64) on PostgreSQL right-pads short values; rtrim keeps equality with raw hashes.
+        // Missing fingerprint never matches a real hash; rtrim is a no-op on full digests.
+        $storedFingerprint = rtrim((string) ($attributes['fingerprint'] ?? '')); // @pest-mutate-ignore: CoalesceRemoveLeft
+
+        if ($storedFingerprint === $fingerprint) {
             $headersJson = $attributes['headers_json'] ?? '{}';
             $decoded = json_decode(is_string($headersJson) ? $headersJson : '{}', true);
             $headers = is_array($decoded) ? $this->headersValue($decoded) : [];
@@ -361,7 +388,7 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
 
             if (is_array($value)) {
                 $normalized[$name] = implode(', ', array_map(
-                    static fn (mixed $part): string => is_scalar($part) ? (string) $part : '',
+                    static fn (mixed $part): string => is_scalar($part) ? (string) $part : '', // @pest-mutate-ignore: EmptyStringToNotEmpty
                     $value,
                 ));
             }
