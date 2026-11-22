@@ -459,12 +459,8 @@ final class HttpBasicsServiceProvider extends ServiceProvider
 
     private function validateCorsConfig(): void
     {
+        // Always on: a security guard has no switch to turn it off.
         $config = $this->config($this->app);
-
-        if (! (bool) $config->get('http-basics.cors.validate_on_boot', true)) {
-            return;
-        }
-
         $cors = $config->get('cors', []);
 
         if (! is_array($cors)) {
