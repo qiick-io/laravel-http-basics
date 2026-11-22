@@ -210,7 +210,7 @@ it('treats replayable=FALSE as disabled case-insensitively', function (): void {
     expect($again->getContent())->toBe('twice');
 });
 
-it('clamps lock ttl and max handler seconds to at least one', function (): void {
+it('clamps max handler seconds to at least one and uses the store lock for Conflict Retry-After', function (): void {
     $store = new class implements IdempotencyStore
     {
         public function claim(IdempotencyScope $scope, string $key, string $fingerprint, DateTimeImmutable $now): IdempotencyClaim
@@ -229,11 +229,50 @@ it('clamps lock ttl and max handler seconds to at least one', function (): void 
     $response = $middleware->handle(
         idempotencyRequest(),
         static fn () => response('x'),
-        'lock_ttl_seconds=0',
         'max_handler_seconds=-5',
     );
 
-    expect($response->headers->get('Retry-After'))->toBe('1');
+    expect($response->getStatusCode())->toBe(409)
+        ->and($response->headers->get('Retry-After'))->toBe('60');
+});
+
+it('rejects the lock_ttl_seconds middleware option', function (): void {
+    $middleware = makeIdempotencyMiddleware($this->store, new FakeCredentialBucketResolver('tenant:1'));
+
+    expect(fn () => $middleware->handle(
+        idempotencyRequest(),
+        static fn () => response('x'),
+        'lock_ttl_seconds=9',
+    ))->toThrow(InvalidArgumentException::class);
+});
+
+it('rejects max_handler_seconds that meet or exceed the store lock TTL before running the handler', function (): void {
+    $runs = 0;
+    $middleware = makeIdempotencyMiddleware($this->store, new FakeCredentialBucketResolver('tenant:1'));
+
+    expect(fn () => $middleware->handle(
+        idempotencyRequest(),
+        static function () use (&$runs) {
+            $runs++;
+
+            return response('x');
+        },
+        'max_handler_seconds=60',
+    ))->toThrow(InvalidArgumentException::class);
+
+    expect($runs)->toBe(0);
+
+    expect(fn () => $middleware->handle(
+        idempotencyRequest(),
+        static function () use (&$runs) {
+            $runs++;
+
+            return response('x');
+        },
+        'max_handler_seconds=120',
+    ))->toThrow(InvalidArgumentException::class);
+
+    expect($runs)->toBe(0);
 });
 
 it('abandons status boundaries around the completable window', function (): void {
@@ -293,7 +332,7 @@ it('rejects missing keys on required non-replayable routes and passes valid keys
     expect($middleware->handle($valid, static fn () => response('once', 201), 'required', 'replayable=false')->getContent())->toBe('once');
 });
 
-it('parses lock ttl and max handler options for conflict retry-after', function (): void {
+it('uses the store lock TTL for Conflict Retry-After regardless of max_handler_seconds', function (): void {
     $store = new class implements IdempotencyStore
     {
         public function claim(IdempotencyScope $scope, string $key, string $fingerprint, DateTimeImmutable $now): IdempotencyClaim
@@ -312,13 +351,12 @@ it('parses lock ttl and max handler options for conflict retry-after', function 
     $response = $middleware->handle(
         idempotencyRequest(),
         static fn () => response('nope'),
-        'lock_ttl_seconds=9',
         'max_handler_seconds=3',
         'required',
     );
 
     expect($response->getStatusCode())->toBe(409)
-        ->and($response->headers->get('Retry-After'))->toBe('9');
+        ->and($response->headers->get('Retry-After'))->toBe('60');
 });
 
 it('rejects when credentials and anonymous buckets are unavailable', function (): void {

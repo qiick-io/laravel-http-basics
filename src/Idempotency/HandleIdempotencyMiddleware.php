@@ -24,7 +24,9 @@ use Symfony\Component\HttpKernel\Exception\HttpException;
  * @api Per-route idempotency after throttle, auth, scope and cost.
  *
  * Middleware params: `required`|`optional`, `replayable=true|false`, optional
- * `lock_ttl_seconds=N`, `max_handler_seconds=N`.
+ * `max_handler_seconds=N` (must be strictly less than the store lock TTL).
+ * Conflict `Retry-After` always uses the configured store lock TTL; there is no
+ * per-route `lock_ttl_seconds=` override (that would not change the store lock).
  */
 final class HandleIdempotencyMiddleware
 {
@@ -154,7 +156,8 @@ final class HandleIdempotencyMiddleware
                 $request,
                 IdempotencyErrorCode::InProgress,
                 409,
-                ['Retry-After' => (string) $parsed['lockTtlSeconds']], // @pest-mutate-ignore: RemoveStringCast
+                // Store lock TTL is fixed at construction; route options cannot change it.
+                ['Retry-After' => (string) $this->defaultLockTtlSeconds], // @pest-mutate-ignore: RemoveStringCast
             ),
             ClaimOutcome::NotReplayable => $this->reject($request, IdempotencyErrorCode::NotReplayable, 409),
             ClaimOutcome::New => $this->executeOnce($request, $next, $claim, $parsed['maxHandlerSeconds']),
@@ -163,13 +166,12 @@ final class HandleIdempotencyMiddleware
 
     /**
      * @param  list<string>  $options
-     * @return array{isKeyRequired: bool, isReplayable: bool, lockTtlSeconds: int, maxHandlerSeconds: int}
+     * @return array{isKeyRequired: bool, isReplayable: bool, maxHandlerSeconds: int}
      */
     private function parseOptions(array $options): array
     {
         $isKeyRequired = true;
         $isReplayable = true;
-        $lockTtlSeconds = $this->defaultLockTtlSeconds;
         $maxHandlerSeconds = $this->defaultMaxHandlerSeconds;
 
         foreach ($options as $option) {
@@ -180,18 +182,26 @@ final class HandleIdempotencyMiddleware
             } elseif (str_starts_with($option, 'replayable=')) {
                 $isReplayable = strtolower(substr($option, strlen('replayable='))) !== 'false';
             } elseif (str_starts_with($option, 'lock_ttl_seconds=')) {
-                // Cast is required for string options; substr offset is fixed by the prefix length.
-                $lockTtlSeconds = max(1, (int) substr($option, strlen('lock_ttl_seconds='))); // @pest-mutate-ignore: RemoveIntegerCast
+                throw new \InvalidArgumentException(
+                    'lock_ttl_seconds middleware option is not supported; configure http-basics.idempotency.lock_ttl_seconds (store lock TTL also drives Conflict Retry-After).',
+                );
             } elseif (str_starts_with($option, 'max_handler_seconds=')) {
                 // Floor at 1; substr/cast mutants are equivalent for the option grammar under test.
                 $maxHandlerSeconds = max(1, (int) substr($option, strlen('max_handler_seconds='))); // @pest-mutate-ignore: RemoveIntegerCast, MaxToMin, DecrementInteger, UnwrapSubstr
             }
         }
 
+        // Handler budget must stay strictly under the store lock so the lease cannot
+        // expire mid-flight while the route still claims the request is within budget.
+        if ($maxHandlerSeconds >= $this->defaultLockTtlSeconds) {
+            throw new \InvalidArgumentException(
+                'max_handler_seconds must be less than the store lock TTL (http-basics.idempotency.lock_ttl_seconds).',
+            );
+        }
+
         return [
             'isKeyRequired' => $isKeyRequired,
             'isReplayable' => $isReplayable,
-            'lockTtlSeconds' => $lockTtlSeconds,
             'maxHandlerSeconds' => $maxHandlerSeconds,
         ];
     }

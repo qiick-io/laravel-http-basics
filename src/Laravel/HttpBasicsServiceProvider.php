@@ -443,9 +443,10 @@ final class HttpBasicsServiceProvider extends ServiceProvider
 
         $lockTtl = $this->configInt($config, 'http-basics.idempotency.lock_ttl_seconds', 60);
         $maxHandler = $this->configInt($config, 'http-basics.idempotency.max_handler_seconds', 55);
-        if ($lockTtl < $maxHandler) {
+        // Equal budgets leave no margin: the lock can expire while the handler is still allowed to run.
+        if ($lockTtl <= $maxHandler) {
             throw new \InvalidArgumentException(
-                'http-basics.idempotency.lock_ttl_seconds must be at least max_handler_seconds.',
+                'http-basics.idempotency.lock_ttl_seconds must be greater than max_handler_seconds.',
             );
         }
 

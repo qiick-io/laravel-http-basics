@@ -131,7 +131,7 @@ final class CacheIdempotencyStore implements IdempotencyStore
             throw new IdempotencyStoreException('Idempotency lease mismatch on complete.');
         }
 
-        $this->cache->put($recordKey, [
+        $payload = [
             'fingerprint' => $existing['fingerprint'] ?? '',
             'lease' => $claim->lease,
             'status' => 'completed',
@@ -140,7 +140,26 @@ final class CacheIdempotencyStore implements IdempotencyStore
             'body' => $response->body,
             'started_at' => $this->intValue($existing['started_at'] ?? $now->getTimestamp(), $now->getTimestamp()),
             'expires_at' => $now->getTimestamp() + $this->ttlSeconds,
-        ], $this->ttlSeconds);
+        ];
+
+        try {
+            $written = $this->cache->put($recordKey, $payload, $this->ttlSeconds);
+        } catch (\Throwable $exception) {
+            // Same fail-closed contract as DatabaseIdempotencyStore: after the handler ran,
+            // persistence failure must seal so a retry cannot claim New and re-execute.
+            $this->sealUnreplayable($claim, $now);
+
+            throw new IdempotencyStoreException(
+                'Failed to persist idempotent response; sealed unreplayable.',
+                previous: $exception,
+            );
+        }
+
+        if ($written === false) {
+            $this->sealUnreplayable($claim, $now);
+
+            throw new IdempotencyStoreException('Failed to persist idempotent response; sealed unreplayable.');
+        }
 
         $this->locks->restoreLock($lockKey, $claim->lease)->release();
     }

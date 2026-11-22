@@ -560,6 +560,84 @@ it('preserves fingerprint coalesce and lease match guards on complete', function
         ->and($record['lease'])->toBe($claim->lease);
 });
 
+it('seals unreplayable on complete() put failure so retries never re-run as New', function (): void {
+    $inner = new ArrayStore;
+    $repository = new class($inner) extends Repository
+    {
+        public bool $shouldFailCompletedBodyPuts = false;
+
+        public function put($key, $value, $seconds = null): bool
+        {
+            if (
+                $this->shouldFailCompletedBodyPuts
+                && is_array($value)
+                && ($value['status'] ?? '') === 'completed'
+                && array_key_exists('body', $value)
+                && $value['body'] !== null
+            ) {
+                throw new RuntimeException('simulated cache put failure');
+            }
+
+            return parent::put($key, $value, $seconds);
+        }
+    };
+
+    $store = new CacheIdempotencyStore($repository, 3600, 30, 5);
+    $scope = new IdempotencyScope('bucket', 'POST', '/items');
+    $now = new DateTimeImmutable('2026-01-01T00:00:00Z');
+    $key = '550e8400-e29b-41d4-a716-446655440302';
+    $claim = $store->claim($scope, $key, 'fp', $now);
+    $repository->shouldFailCompletedBodyPuts = true;
+
+    expect(fn () => $store->complete(
+        $claim,
+        new ReplayableResponse(201, [], '{"ok":true}'),
+        $now,
+    ))->toThrow(IdempotencyStoreException::class);
+
+    $again = $store->claim($scope, $key, 'fp', $now);
+    expect($again->outcome)->toBe(ClaimOutcome::NotReplayable);
+});
+
+it('seals unreplayable when complete() put returns false', function (): void {
+    $inner = new ArrayStore;
+    $repository = new class($inner) extends Repository
+    {
+        public bool $shouldFailCompletedBodyPuts = false;
+
+        public function put($key, $value, $seconds = null): bool
+        {
+            if (
+                $this->shouldFailCompletedBodyPuts
+                && is_array($value)
+                && ($value['status'] ?? '') === 'completed'
+                && array_key_exists('body', $value)
+                && $value['body'] !== null
+            ) {
+                return false;
+            }
+
+            return parent::put($key, $value, $seconds);
+        }
+    };
+
+    $store = new CacheIdempotencyStore($repository, 3600, 30, 5);
+    $scope = new IdempotencyScope('bucket', 'POST', '/items');
+    $now = new DateTimeImmutable('2026-01-01T00:00:00Z');
+    $key = '550e8400-e29b-41d4-a716-446655440303';
+    $claim = $store->claim($scope, $key, 'fp', $now);
+    $repository->shouldFailCompletedBodyPuts = true;
+
+    expect(fn () => $store->complete(
+        $claim,
+        new ReplayableResponse(201, [], '{"ok":true}'),
+        $now,
+    ))->toThrow(IdempotencyStoreException::class);
+
+    $again = $store->claim($scope, $key, 'fp', $now);
+    expect($again->outcome)->toBe(ClaimOutcome::NotReplayable);
+});
+
 it('seals unreplayable completed rows so retries never re-run as New', function (): void {
     [$store, $repository] = cacheIdempotencyStore(ttlSeconds: 120);
     $scope = new IdempotencyScope('bucket-a', 'POST', '/items');

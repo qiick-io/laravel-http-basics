@@ -23,3 +23,13 @@ it('fails boot when lock ttl is shorter than max handler seconds', function (): 
 
     expect(fn () => $provider->boot())->toThrow(InvalidArgumentException::class);
 });
+
+it('fails boot when lock ttl equals max handler seconds', function (): void {
+    config()->set('http-basics.idempotency.lock_ttl_seconds', 30);
+    config()->set('http-basics.idempotency.max_handler_seconds', 30);
+
+    /** @var HttpBasicsServiceProvider $provider */
+    $provider = $this->app->getProvider(HttpBasicsServiceProvider::class);
+
+    expect(fn () => $provider->boot())->toThrow(InvalidArgumentException::class);
+});

@@ -159,7 +159,7 @@ app()->bind(CredentialBucketResolver::class, MyCredentialBucketResolver::class);
 | --- | --- | --- |
 | `HTTP_BASICS_IDEMPOTENCY_STORE` | `cache` | `cache` or `database` (see `docs/reference-schema.md`). |
 | `HTTP_BASICS_IDEMPOTENCY_TTL` | `86400` | Completed record TTL from completion time. |
-| `HTTP_BASICS_IDEMPOTENCY_LOCK_TTL` | `60` | Must be ≥ `max_handler_seconds`. |
+| `HTTP_BASICS_IDEMPOTENCY_LOCK_TTL` | `60` | Must be > `max_handler_seconds`. |
 | `HTTP_BASICS_IDEMPOTENCY_KEY_FORMAT` | `uuid` | `uuid` or `sf-string`. |
 | `HTTP_BASICS_IDEMPOTENCY_ANON_ENABLED` | `false` | Public writes via HMAC bucket (`ip`, `user_agent`, `route`). |
 | `HTTP_BASICS_IDEMPOTENCY_ANON_SECRET` | — | Required ≥32 bytes when anon is enabled. |
