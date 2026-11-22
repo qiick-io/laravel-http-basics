@@ -70,7 +70,12 @@ for index in "${!CLASSES[@]}"; do
   set -e
 
   # Strip ANSI before parsing — pest colours the Score line.
-  score="$(sed $'s/\x1b\\[[0-9;]*m//g' "${output}" | rg -o 'Score:[[:space:]]+[0-9.]+%' | tail -1 | rg -o '[0-9.]+' | head -1 || true)"
+  # Prefer grep/sed (available on GitHub-hosted runners); rg is not installed there.
+  score="$(sed $'s/\x1b\\[[0-9;]*m//g' "${output}" \
+    | grep -Eo 'Score:[[:space:]]+[0-9.]+%' \
+    | tail -1 \
+    | grep -Eo '[0-9.]+' \
+    | head -1 || true)"
   if [[ -z "${score}" ]]; then
     score='?'
   fi
