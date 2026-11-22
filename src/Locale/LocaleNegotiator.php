@@ -22,7 +22,7 @@ final class LocaleNegotiator
      * RFC 7231 qvalue: 0[.0-3 digits] or 1[.0-3 zeros]. Rejects scientific
      * notation (`1e-1`) and leading-dot forms (`.5`).
      */
-    private const string Q_VALUE_PATTERN = '/^(?:0(?:\.[0-9]{0,3})?|1(?:\.0{0,3})?)$/';
+    private const string Q_VALUE_PATTERN = '/^(?:0(?:\.[0-9]{0,3})?|1(?:\.0{0,3})?)$/D';
 
     public function __construct(
         private SupportedLocales $supported,
@@ -119,7 +119,7 @@ final class LocaleNegotiator
     {
         // Empty locale fails isSupported the same as null (EmptyStringToNotEmpty equivalent).
         // BooleanOrToBooleanAnd is equivalent: non-objects never expose a string locale via isset.
-        if (! is_object($user) || ! isset($user->locale) || ! is_string($user->locale) || $user->locale === '') { // @pest-mutate-ignore: EmptyStringToNotEmpty, BooleanOrToBooleanAnd
+        if (! is_object($user) || ! isset($user->locale) || ! is_string($user->locale) || $user->locale === '') {
             return null;
         }
 

@@ -537,3 +537,28 @@ it('does not honour an empty language tag even when the empty string is supporte
     expect($negotiator->resolve($request)->locale)->toBe('de')
         ->and($negotiator->resolve($request)->source)->not->toBe(LocaleSource::Header);
 });
+
+it('anchors q-value matching with /D so a trailing newline cannot satisfy $', function (): void {
+    $pattern = (new ReflectionClass(LocaleNegotiator::class))->getReflectionConstant('Q_VALUE_PATTERN')?->getValue();
+    expect($pattern)->toBeString();
+
+    expect($pattern)->toEndWith('/D')
+        ->and(preg_match('/^(?:0(?:\.[0-9]{0,3})?|1(?:\.0{0,3})?)$/', "0.5\n"))->toBe(1)
+        ->and(preg_match($pattern, "0.5\n"))->toBe(0);
+});
+
+it('treats an empty-string principal locale as absent so cookie/default can win', function (): void {
+    $negotiator = makeNegotiator(['en', 'de']);
+    $user = new class
+    {
+        public string $locale = '';
+    };
+    $request = webRequest();
+    $request->setUserResolver(static fn () => $user);
+    $request->cookies->set('locale', 'de');
+
+    $resolution = $negotiator->resolve($request);
+
+    expect($resolution->locale)->toBe('de')
+        ->and($resolution->source)->toBe(LocaleSource::Cookie);
+});
