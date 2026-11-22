@@ -187,9 +187,17 @@ stale `X-RateLimit-*` headers.
 
 ## CORS (fleet)
 
-Products that expose these headers to browsers must list them in CORS
-`exposed_headers`: `X-Request-Id`, `X-RateLimit-*`, `Retry-After`, `Deprecation`,
-`Sunset`, `Content-Language`, and `Vary` (see fleet contracts).
+Use Laravel's `HandleCors` (Fruitcake). Prepend
+`Qiick\HttpBasics\Cors\ConfigureCorsMiddleware` so a product
+`AllowedOriginsResolver` can overwrite `cors.allowed_origins` per request
+(externa's pattern). Boot validation rejects `*` origins or `*` in
+`exposed_headers` when `supports_credentials` is true.
+
+Merge `CorsHeaderCatalog::exposedHeaders()` / `allowedRequestHeaders()` into
+`config/cors.php`. Catalog includes `X-Request-Id`, `X-RateLimit-*`,
+`Retry-After`, `Deprecation`, `Sunset`, `Content-Language`, `Vary`, `Link`,
+`Location`, and `Idempotent-Replayed`. Origin enforcement with API keys stays
+in the product.
 
 ## Development
 

@@ -11,6 +11,13 @@ declare(strict_types=1);
 
 return [
 
+    'cors' => [
+        /*
+         * When true, boot validates config('cors') against credentialed wildcards.
+         */
+        'validate_on_boot' => (bool) env('HTTP_BASICS_CORS_VALIDATE_ON_BOOT', true),
+    ],
+
     'request_id' => [
         /*
          * Optional dual-write aliases into hidden Context (e.g. externa).

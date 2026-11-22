@@ -17,6 +17,9 @@ use Qiick\HttpBasics\Contracts\IdempotencyStore;
 use Qiick\HttpBasics\Contracts\IdGenerator;
 use Qiick\HttpBasics\Contracts\SupportedLocales;
 use Qiick\HttpBasics\Contracts\TrustedProxyDetector;
+use Qiick\HttpBasics\Cors\AllowedOriginsResolver;
+use Qiick\HttpBasics\Cors\CorsConfigValidator;
+use Qiick\HttpBasics\Cors\NullAllowedOriginsResolver;
 use Qiick\HttpBasics\Idempotency\AnonymousBucketResolver;
 use Qiick\HttpBasics\Idempotency\CacheIdempotencyStore;
 use Qiick\HttpBasics\Idempotency\DatabaseIdempotencyStore;
@@ -306,6 +309,8 @@ final class HttpBasicsServiceProvider extends ServiceProvider
             return new ReplayHeaderSanitizer($replayHeaders, $deniedHeaders);
         });
 
+        $this->app->singleton(AllowedOriginsResolver::class, NullAllowedOriginsResolver::class);
+
         $this->app->singleton(ErrorRenderer::class, function (Application $app): ErrorRenderer {
             $url = $this->config($app)->get('http-basics.idempotency.documentation_url');
 
@@ -400,6 +405,7 @@ final class HttpBasicsServiceProvider extends ServiceProvider
     public function boot(): void
     {
         $this->validateIdempotencyConfig();
+        $this->validateCorsConfig();
 
         $this->loadTranslationsFrom(__DIR__.'/../../lang', 'http-basics');
 
@@ -420,6 +426,23 @@ final class HttpBasicsServiceProvider extends ServiceProvider
                 PruneIdempotencyRecordsCommand::class,
             ]);
         }
+    }
+
+    private function validateCorsConfig(): void
+    {
+        $config = $this->config($this->app);
+
+        if (! (bool) $config->get('http-basics.cors.validate_on_boot', true)) {
+            return;
+        }
+
+        $cors = $config->get('cors', []);
+
+        if (! is_array($cors)) {
+            return;
+        }
+
+        (new CorsConfigValidator)->validate($cors);
     }
 
     private function validateIdempotencyConfig(): void
