@@ -13,4 +13,5 @@ enum ClaimOutcome: string
     case Replay = 'replay';
     case Conflict = 'conflict';
     case Mismatch = 'mismatch';
+    case NotReplayable = 'not_replayable';
 }

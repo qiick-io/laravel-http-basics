@@ -176,7 +176,7 @@ it('replays completed records that store numeric strings and array headers', fun
         ],
         'body' => ['not-a-string'],
         'started_at' => '100',
-        'expires_at' => 200,
+        'expires_at' => $now->getTimestamp() + 3600,
     ], 60);
 
     $replay = $store->claim($scope, $key, 'fp', $now);

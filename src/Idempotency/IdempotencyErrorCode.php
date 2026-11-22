@@ -13,6 +13,8 @@ enum IdempotencyErrorCode: string
     case KeyInvalid = 'idempotency_key_invalid';
     case PayloadMismatch = 'idempotency_payload_mismatch';
     case InProgress = 'idempotency_in_progress';
+    case NotReplayable = 'idempotency_not_replayable';
     case Unavailable = 'idempotency_unavailable';
     case UnsupportedMedia = 'idempotency_unsupported_media';
+    case InvalidJson = 'validation_failed';
 }

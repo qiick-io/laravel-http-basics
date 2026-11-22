@@ -40,6 +40,7 @@ return [
 
     'suffixes' => [
         'Laravel' => 'ServiceProvider',
+        'Console' => 'Command',
     ],
 
     'controllerPublicMethods' => [],

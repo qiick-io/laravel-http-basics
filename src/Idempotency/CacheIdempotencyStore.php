@@ -25,6 +25,7 @@ final class CacheIdempotencyStore implements IdempotencyStore
         private int $staleAfterSeconds,
     ) {
         $store = $cache->getStore();
+
         if (! $store instanceof LockProvider) {
             throw new \InvalidArgumentException('The cache store must support atomic locks.');
         }
@@ -44,10 +45,16 @@ final class CacheIdempotencyStore implements IdempotencyStore
         $existingRaw = $this->cache->get($recordKey);
         /** @var array<string, mixed>|null $existing */
         $existing = is_array($existingRaw) ? $existingRaw : null;
+
         if ($existing !== null) {
-            $completed = $this->claimFromCompleted($existing, $fingerprint, $scope, $key);
-            if ($completed !== null) {
-                return $completed;
+            if (($existing['status'] ?? '') === 'completed' && $this->isExpired($existing, $now)) {
+                // Expired completed keys may be claimed again.
+            } else {
+                $completed = $this->claimFromCompleted($existing, $fingerprint, $scope, $key);
+
+                if ($completed !== null) {
+                    return $completed;
+                }
             }
         }
 
@@ -61,22 +68,27 @@ final class CacheIdempotencyStore implements IdempotencyStore
         $existingRaw = $this->cache->get($recordKey);
         /** @var array<string, mixed>|null $existing */
         $existing = is_array($existingRaw) ? $existingRaw : null;
+
         if ($existing !== null) {
-            $completed = $this->claimFromCompleted($existing, $fingerprint, $scope, $key);
-            if ($completed !== null) {
-                $lock->release();
+            if (($existing['status'] ?? '') === 'completed' && $this->isExpired($existing, $now)) {
+                // Fall through to overwrite.
+            } else {
+                $completed = $this->claimFromCompleted($existing, $fingerprint, $scope, $key);
 
-                return $completed;
-            }
-
-            // Missing status is never 'in_progress' whether coalesced to '' or a sentinel.
-            if (($existing['status'] ?? '') === 'in_progress') { // @pest-mutate-ignore: EmptyStringToNotEmpty
-                // started_at default ±1 cannot flip `now - started < stale` when started is missing at the stale boundary.
-                $startedAt = $this->intValue($existing['started_at'] ?? 0, 0); // @pest-mutate-ignore: DecrementInteger
-                if ($now->getTimestamp() - $startedAt < $this->staleAfterSeconds) {
+                if ($completed !== null) {
                     $lock->release();
 
-                    return new IdempotencyClaim(ClaimOutcome::Conflict, null, null, $scope, $key);
+                    return $completed;
+                }
+
+                if (($existing['status'] ?? '') === 'in_progress') {
+                    $startedAt = $this->intValue($existing['started_at'] ?? 0, 0);
+
+                    if ($now->getTimestamp() - $startedAt < $this->staleAfterSeconds) {
+                        $lock->release();
+
+                        return new IdempotencyClaim(ClaimOutcome::Conflict, null, null, $scope, $key);
+                    }
                 }
             }
         }
@@ -110,8 +122,7 @@ final class CacheIdempotencyStore implements IdempotencyStore
         $lockKey = $recordKey.self::LOCK_SUFFIX;
         $existing = $this->cache->get($recordKey);
 
-        // Missing lease is never equal to a real claim lease whether coalesced to '' or a sentinel.
-        if (! is_array($existing) || ($existing['lease'] ?? '') !== $claim->lease) { // @pest-mutate-ignore: EmptyStringToNotEmpty
+        if (! is_array($existing) || ($existing['lease'] ?? '') !== $claim->lease) {
             throw new IdempotencyStoreException('Idempotency lease mismatch on complete.');
         }
 
@@ -129,29 +140,68 @@ final class CacheIdempotencyStore implements IdempotencyStore
         $this->locks->restoreLock($lockKey, $claim->lease)->release();
     }
 
-    public function abandon(IdempotencyClaim $claim, DateTimeImmutable $now): void
+    public function sealUnreplayable(IdempotencyClaim $claim, DateTimeImmutable $now): void
     {
         if ($claim->outcome !== ClaimOutcome::New) {
-            return;
+            throw new IdempotencyStoreException('Cannot seal a claim that is not new.');
         }
 
-        // Non-string leases fail is_string; empty string fails the equality — OR vs AND both reject.
-        if (! is_string($claim->lease) || $claim->lease === '') { // @pest-mutate-ignore: BooleanOrToBooleanAnd, EmptyStringToNotEmpty
-            // Fall-through still no-ops: empty lease never matches a stored lease token.
-            return; // @pest-mutate-ignore: RemoveEarlyReturn
+        if (! is_string($claim->lease) || $claim->lease === '') {
+            throw new IdempotencyStoreException('Missing lease on idempotency claim.');
         }
 
         $recordKey = $claim->scope->cacheKey($claim->key);
         $lockKey = $recordKey.self::LOCK_SUFFIX;
         $existing = $this->cache->get($recordKey);
 
-        // Missing lease is never equal to a real claim lease whether coalesced to '' or a sentinel.
-        if (! is_array($existing) || ($existing['lease'] ?? '') !== $claim->lease) { // @pest-mutate-ignore: EmptyStringToNotEmpty
+        if (! is_array($existing) || ($existing['lease'] ?? '') !== $claim->lease) {
+            throw new IdempotencyStoreException('Idempotency lease mismatch on seal.');
+        }
+
+        $this->cache->put($recordKey, [
+            'fingerprint' => $existing['fingerprint'] ?? '',
+            'lease' => $claim->lease,
+            'status' => 'completed',
+            'status_code' => null,
+            'headers' => null,
+            'body' => null,
+            'started_at' => $this->intValue($existing['started_at'] ?? $now->getTimestamp(), $now->getTimestamp()),
+            'expires_at' => $now->getTimestamp() + $this->ttlSeconds,
+        ], $this->ttlSeconds);
+
+        $this->locks->restoreLock($lockKey, $claim->lease)->release();
+    }
+
+    public function abandon(IdempotencyClaim $claim, DateTimeImmutable $now): void
+    {
+        if ($claim->outcome !== ClaimOutcome::New) {
+            return;
+        }
+
+        if (! is_string($claim->lease) || $claim->lease === '') {
+            return;
+        }
+
+        $recordKey = $claim->scope->cacheKey($claim->key);
+        $lockKey = $recordKey.self::LOCK_SUFFIX;
+        $existing = $this->cache->get($recordKey);
+
+        if (! is_array($existing) || ($existing['lease'] ?? '') !== $claim->lease) {
             return;
         }
 
         $this->cache->forget($recordKey);
         $this->locks->restoreLock($lockKey, $claim->lease)->release();
+    }
+
+    /**
+     * @param  array<string, mixed>  $existing
+     */
+    private function isExpired(array $existing, DateTimeImmutable $now): bool
+    {
+        $expiresAt = $this->intValue($existing['expires_at'] ?? 0, 0);
+
+        return $expiresAt > 0 && $expiresAt < $now->getTimestamp();
     }
 
     /**
@@ -163,19 +213,21 @@ final class CacheIdempotencyStore implements IdempotencyStore
         IdempotencyScope $scope,
         string $key,
     ): ?IdempotencyClaim {
-        // Missing status is never 'completed' whether coalesced to '' or a sentinel.
-        if (($existing['status'] ?? '') !== 'completed') { // @pest-mutate-ignore: EmptyStringToNotEmpty
+        if (($existing['status'] ?? '') !== 'completed') {
             return null;
         }
 
-        // Missing fingerprint is never equal to a real fingerprint whether coalesced to '' or a sentinel.
-        if (($existing['fingerprint'] ?? '') === $fingerprint) { // @pest-mutate-ignore: EmptyStringToNotEmpty
+        if (! array_key_exists('body', $existing) || $existing['body'] === null) {
+            if (($existing['status_code'] ?? null) === null) {
+                return new IdempotencyClaim(ClaimOutcome::NotReplayable, null, null, $scope, $key);
+            }
+        }
+
+        if (($existing['fingerprint'] ?? '') === $fingerprint) {
             $replay = new ReplayableResponse(
-                // Default 199/201 only apply when status_code is absent; completed rows always store an int.
-                $this->intValue($existing['status_code'] ?? 200, 200), // @pest-mutate-ignore: IncrementInteger, DecrementInteger
+                $this->intValue($existing['status_code'] ?? 200, 200),
                 $this->headersValue($existing['headers'] ?? []),
-                // Missing body is already '' via stringValue(null); coalescing to a sentinel still yields ''.
-                $this->stringValue($existing['body'] ?? ''), // @pest-mutate-ignore: EmptyStringToNotEmpty
+                $this->stringValue($existing['body'] ?? ''),
             );
 
             return new IdempotencyClaim(ClaimOutcome::Replay, $replay, null, $scope, $key);
@@ -190,8 +242,7 @@ final class CacheIdempotencyStore implements IdempotencyStore
             return $value;
         }
 
-        // Non-string numerics are handled by is_int above; non-numeric strings must not cast.
-        if (is_string($value) && is_numeric($value)) { // @pest-mutate-ignore: BooleanAndToBooleanOr
+        if (is_string($value) && is_numeric($value)) {
             return (int) $value;
         }
 
@@ -213,9 +264,9 @@ final class CacheIdempotencyStore implements IdempotencyStore
         }
 
         $normalized = [];
+
         foreach ($headers as $name => $value) {
             if (! is_string($name)) {
-                // Remaining keys are still processed; break would drop later string names (tested) — keep continue.
                 continue;
             }
 
@@ -226,10 +277,8 @@ final class CacheIdempotencyStore implements IdempotencyStore
             }
 
             if (is_array($value)) {
-                // array_map builds the string list; unwrap would implode the raw parts differently for objects.
-                $normalized[$name] = implode(', ', array_map( // @pest-mutate-ignore: UnwrapArrayMap
-                    // Non-scalars become '' either as '' or a sentinel for implode joining.
-                    static fn (mixed $part): string => is_scalar($part) ? (string) $part : '', // @pest-mutate-ignore: RemoveStringCast, EmptyStringToNotEmpty
+                $normalized[$name] = implode(', ', array_map(
+                    static fn (mixed $part): string => is_scalar($part) ? (string) $part : '',
                     $value,
                 ));
             }

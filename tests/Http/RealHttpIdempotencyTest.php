@@ -41,9 +41,9 @@ beforeAll(function () use ($idempotencyHttpState): void {
 
     $environment = [
         'HTTP_BASICS_CACHE_PATH' => $idempotencyHttpState->cachePath,
-        'HTTP_BASICS_IDEMPOTENCY_LOCK_TTL' => '2',
+        'HTTP_BASICS_IDEMPOTENCY_LOCK_TTL' => '5',
         'HTTP_BASICS_IDEMPOTENCY_STALE_AFTER' => '1',
-        'HTTP_BASICS_IDEMPOTENCY_MAX_HANDLER' => '1',
+        'HTTP_BASICS_IDEMPOTENCY_MAX_HANDLER' => '4',
     ];
 
     $idempotencyHttpState->procA = startPhpBuiltInServer(
@@ -119,12 +119,13 @@ it('returns in-progress 409 for a concurrent duplicate Idempotency-Key over real
     ];
 
     // Overlap on two php -S workers: A sleeps after claiming; B should hit the held lock.
+    $slowHeaders = $headers + ['X-Sleep-Ms' => '800'];
     [$first, $second] = realHttpRequestPool(
         [
             'port' => $idempotencyHttpState->portA,
-            'path' => '/api/items?sleep_ms=800',
+            'path' => '/api/items',
             'method' => 'POST',
-            'headers' => $headers,
+            'headers' => $slowHeaders,
             'body' => $body,
         ],
         [
@@ -147,6 +148,10 @@ it('returns in-progress 409 for a concurrent duplicate Idempotency-Key over real
     expect(json_decode($winner['body'], true)['created'] ?? null)->toBeTrue()
         ->and(json_decode($conflict['body'], true)['error'] ?? null)->toBe(IdempotencyErrorCode::InProgress->value)
         ->and($conflict['headers'])->toHaveKey('retry-after');
+
+    $countResponse = realHttpRequest($idempotencyHttpState->portA, '/api/handler-count', 'GET');
+    expect($countResponse['status'])->toBe(200)
+        ->and(json_decode($countResponse['body'], true)['count'] ?? null)->toBe(1);
 })->group('http-server');
 
 it('rejects replay with a different body as 422 idempotency_payload_mismatch over real HTTP', function () use ($idempotencyHttpState): void {
@@ -214,4 +219,46 @@ it('allows lock-expiry takeover after stale_after when the lock is gone over rea
     curl_multi_remove_handle($multi, $slow);
     curl_close($slow);
     curl_multi_close($multi);
+})->group('http-server');
+
+it('does not re-run the handler when an oversized response is sealed unreplayable over real HTTP', function (): void {
+    $server = __DIR__.'/fixtures/idempotency-server.php';
+    $root = dirname(__DIR__, 1);
+    $cachePath = sys_get_temp_dir().'/http-basics-idempotency-large-'.getmypid().'-'.bin2hex(random_bytes(4));
+    mkdir($cachePath, 0777, true);
+    $port = 9400 + random_int(0, 100);
+    $environment = [
+        'HTTP_BASICS_CACHE_PATH' => $cachePath,
+        'HTTP_BASICS_IDEMPOTENCY_LOCK_TTL' => '5',
+        'HTTP_BASICS_IDEMPOTENCY_STALE_AFTER' => '5',
+        'HTTP_BASICS_IDEMPOTENCY_MAX_HANDLER' => '4',
+        'HTTP_BASICS_IDEMPOTENCY_MAX_RESPONSE' => '64',
+    ];
+    $proc = startPhpBuiltInServer($port, $server, $root, '127.0.0.1', $environment);
+
+    try {
+        $key = '550e8400-e29b-41d4-a716-446655440301';
+        $headers = [
+            HandleIdempotencyMiddleware::HEADER => $key,
+            'Content-Type' => 'application/json',
+            'Accept' => 'application/json',
+        ];
+
+        $first = realHttpRequest($port, '/api/large', 'POST', $headers, '{}');
+        expect($first['status'])->toBe(503);
+
+        $second = realHttpRequest($port, '/api/large', 'POST', $headers, '{}');
+        expect($second['status'])->toBe(409)
+            ->and(json_decode($second['body'], true)['error'] ?? null)->toBe(IdempotencyErrorCode::NotReplayable->value);
+
+        $countResponse = realHttpRequest($port, '/api/handler-count', 'GET');
+        expect(json_decode($countResponse['body'], true)['count'] ?? null)->toBe(1);
+    } finally {
+        stopPhpBuiltInServer($proc);
+        // best-effort cleanup
+        foreach (glob($cachePath.'/*') ?: [] as $file) {
+            @unlink($file);
+        }
+        @rmdir($cachePath);
+    }
 })->group('http-server');

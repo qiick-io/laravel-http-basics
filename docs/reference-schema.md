@@ -13,11 +13,18 @@ use the cache + lock store).
 | `fingerprint` | `char(64)` | Request fingerprint |
 | `lease` | `char(64)` | Opaque owner token |
 | `status` | enum `in_progress` / `completed` | |
-| `status_code` | `smallint` null | Completed responses only |
+| `status_code` | `smallint` null | Completed replayable responses only |
 | `headers_json` | `text` null | Allowlisted replay headers |
-| `body` | `text` null | Capped by `max_body_bytes` |
+| `body` | `longText` null | Capped by `max_response_bytes` (request bodies use `max_body_bytes`) |
 | `created_at` | datetime | |
 | `updated_at` | datetime | |
-| `expires_at` | datetime | Index `(expires_at)` |
+| `expires_at` | datetime | Enforced on read; index `(expires_at)` for prune |
 
 **Unique** `(bucket, key_hash)`.
+
+Completed rows with `body` and `status_code` both null are **unreplayable**: the
+handler ran but the response could not be stored. Retries return
+`409 idempotency_not_replayable` and never re-execute the handler.
+
+Schedule prune via `php artisan http-basics:prune-idempotency` or Laravel's
+`model:prune` on `Qiick\HttpBasics\Idempotency\IdempotencyRecord`.

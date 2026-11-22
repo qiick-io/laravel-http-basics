@@ -40,9 +40,13 @@ final class InMemoryIdempotencyStore implements IdempotencyStore
 
         $existing = $this->records[$recordKey] ?? null;
         if (is_array($existing)) {
-            $completed = $this->claimFromCompleted($existing, $fingerprint, $scope, $key);
-            if ($completed !== null) {
-                return $completed;
+            if (($existing['status'] ?? '') === 'completed' && $this->isExpired($existing, $now)) {
+                // Expired completed keys may be claimed again.
+            } else {
+                $completed = $this->claimFromCompleted($existing, $fingerprint, $scope, $key);
+                if ($completed !== null) {
+                    return $completed;
+                }
             }
         }
 
@@ -55,19 +59,23 @@ final class InMemoryIdempotencyStore implements IdempotencyStore
 
         $existing = $this->records[$recordKey] ?? null;
         if (is_array($existing)) {
-            $completed = $this->claimFromCompleted($existing, $fingerprint, $scope, $key);
-            if ($completed !== null) {
-                $this->releaseLock($lockKey, $lease);
-
-                return $completed;
-            }
-
-            if (($existing['status'] ?? '') === 'in_progress') {
-                $startedAt = $this->intValue($existing['started_at'] ?? 0, 0);
-                if ($now->getTimestamp() - $startedAt < $this->staleAfterSeconds) {
+            if (($existing['status'] ?? '') === 'completed' && $this->isExpired($existing, $now)) {
+                // Fall through to overwrite.
+            } else {
+                $completed = $this->claimFromCompleted($existing, $fingerprint, $scope, $key);
+                if ($completed !== null) {
                     $this->releaseLock($lockKey, $lease);
 
-                    return new IdempotencyClaim(ClaimOutcome::Conflict, null, null, $scope, $key);
+                    return $completed;
+                }
+
+                if (($existing['status'] ?? '') === 'in_progress') {
+                    $startedAt = $this->intValue($existing['started_at'] ?? 0, 0);
+                    if ($now->getTimestamp() - $startedAt < $this->staleAfterSeconds) {
+                        $this->releaseLock($lockKey, $lease);
+
+                        return new IdempotencyClaim(ClaimOutcome::Conflict, null, null, $scope, $key);
+                    }
                 }
             }
         }
@@ -118,6 +126,38 @@ final class InMemoryIdempotencyStore implements IdempotencyStore
         $this->releaseLock($lockKey, $claim->lease);
     }
 
+    public function sealUnreplayable(IdempotencyClaim $claim, DateTimeImmutable $now): void
+    {
+        if ($claim->outcome !== ClaimOutcome::New) {
+            throw new IdempotencyStoreException('Cannot seal a claim that is not new.');
+        }
+
+        if (! is_string($claim->lease) || $claim->lease === '') {
+            throw new IdempotencyStoreException('Missing lease on idempotency claim.');
+        }
+
+        $recordKey = $claim->scope->cacheKey($claim->key);
+        $lockKey = $recordKey.':lock';
+        $existing = $this->records[$recordKey] ?? null;
+
+        if (! is_array($existing) || ($existing['lease'] ?? '') !== $claim->lease) {
+            throw new IdempotencyStoreException('Idempotency lease mismatch on seal.');
+        }
+
+        $this->records[$recordKey] = [
+            'fingerprint' => $existing['fingerprint'] ?? '',
+            'lease' => $claim->lease,
+            'status' => 'completed',
+            'status_code' => null,
+            'headers' => null,
+            'body' => null,
+            'started_at' => $this->intValue($existing['started_at'] ?? $now->getTimestamp(), $now->getTimestamp()),
+            'expires_at' => $now->getTimestamp() + $this->ttlSeconds,
+        ];
+
+        $this->releaseLock($lockKey, $claim->lease);
+    }
+
     public function abandon(IdempotencyClaim $claim, DateTimeImmutable $now): void
     {
         if ($claim->outcome !== ClaimOutcome::New) {
@@ -153,6 +193,11 @@ final class InMemoryIdempotencyStore implements IdempotencyStore
             return null;
         }
 
+        if ((! array_key_exists('body', $existing) || $existing['body'] === null)
+            && ($existing['status_code'] ?? null) === null) {
+            return new IdempotencyClaim(ClaimOutcome::NotReplayable, null, null, $scope, $key);
+        }
+
         if (($existing['fingerprint'] ?? '') === $fingerprint) {
             $replay = new ReplayableResponse(
                 $this->intValue($existing['status_code'] ?? 200, 200),
@@ -164,6 +209,16 @@ final class InMemoryIdempotencyStore implements IdempotencyStore
         }
 
         return new IdempotencyClaim(ClaimOutcome::Mismatch, null, null, $scope, $key);
+    }
+
+    /**
+     * @param  array<string, mixed>  $existing
+     */
+    private function isExpired(array $existing, DateTimeImmutable $now): bool
+    {
+        $expiresAt = $this->intValue($existing['expires_at'] ?? 0, 0);
+
+        return $expiresAt > 0 && $expiresAt < $now->getTimestamp();
     }
 
     private function isLockHeld(string $lockKey, DateTimeImmutable $now): bool

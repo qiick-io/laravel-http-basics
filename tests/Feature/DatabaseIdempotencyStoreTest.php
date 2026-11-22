@@ -29,7 +29,7 @@ beforeEach(function (): void {
         $table->string('status');
         $table->unsignedSmallInteger('status_code')->nullable();
         $table->text('headers_json')->nullable();
-        $table->text('body')->nullable();
+        $table->longText('body')->nullable();
         $table->timestamp('created_at');
         $table->timestamp('updated_at');
         $table->timestamp('expires_at')->nullable();

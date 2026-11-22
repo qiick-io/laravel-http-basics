@@ -25,14 +25,24 @@ interface IdempotencyStore
     /**
      * Writes the completed record only when the claim lease still matches.
      *
-     * @throws IdempotencyStoreException When the
-     *                                   lease is missing, mismatched, or persistence fails (fail closed).
+     * @throws IdempotencyStoreException When the lease is missing, mismatched, or
+     *                                   persistence fails after the handler (fail closed:
+     *                                   the marker is sealed unreplayable so retries never
+     *                                   re-execute the handler).
      */
     public function complete(
         IdempotencyClaim $claim,
         ReplayableResponse $response,
         DateTimeImmutable $now,
     ): void;
+
+    /**
+     * Marks a New claim completed without a replay body (oversized response, handler
+     * deadline exceeded, or persistence failure). Retries receive NotReplayable.
+     *
+     * @throws IdempotencyStoreException When the lease is missing or mismatched.
+     */
+    public function sealUnreplayable(IdempotencyClaim $claim, DateTimeImmutable $now): void;
 
     /**
      * Drops an in-progress marker when the lease matches (handler failure / abandon).

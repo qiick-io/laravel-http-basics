@@ -76,8 +76,8 @@ it('includes accept language suffix when provided', function (): void {
     $withGerman = $fingerprinter->fingerprint($request, 1048576, 'de-DE,de;q=0.9,en;q=0.8');
 
     expect($withGerman)->not->toBe($without)
-        ->and($withGerman)->toBe(hash('sha256', "POST\n/api/widgets\n[]\nde-DE,de;q=0.9,en;q=0.8"))
-        ->and($without)->toBe(hash('sha256', "POST\n/api/widgets\n[]\n"));
+        ->and($withGerman)->toBe(hash('sha256', "POST\n/api/widgets\n{}\nde-DE,de;q=0.9,en;q=0.8"))
+        ->and($without)->toBe(hash('sha256', "POST\n/api/widgets\n{}\n"));
 });
 
 it('rejects oversize bodies', function (): void {
@@ -92,7 +92,7 @@ it('uppercases the method and joins path with a sorted query marker', function (
     $request = Request::create('/items?b=2&a=1', 'post', [], [], [], [], '{}');
 
     expect($fingerprinter->fingerprint($request, 1048576))
-        ->toBe(hash('sha256', "POST\n/items?a=1&b=2\n[]\n"));
+        ->toBe(hash('sha256', "POST\n/items?a=1&b=2\n{}\n"));
 });
 
 it('omits the query marker when the query string is empty', function (): void {
@@ -100,7 +100,7 @@ it('omits the query marker when the query string is empty', function (): void {
     $request = Request::create('/items', 'POST', [], [], [], [], '{}');
 
     expect($fingerprinter->fingerprint($request, 1048576))
-        ->toBe(hash('sha256', "POST\n/items\n[]\n"));
+        ->toBe(hash('sha256', "POST\n/items\n{}\n"));
 });
 
 it('rejects bodies that equal the max byte limit only when over', function (): void {
@@ -123,7 +123,7 @@ it('encodes scalar and non-scalar query values', function (): void {
     ]);
 
     expect($fingerprinter->fingerprint($request, 1048576))
-        ->toBe(hash('sha256', "POST\n/items?list=a&list=&object=&plain=x%20y\n[]\n"));
+        ->toBe(hash('sha256', "POST\n/items?list=a&list=&object=&plain=x%20y\n{}\n"));
 });
 
 it('returns an empty canonical body for empty content', function (): void {
@@ -174,7 +174,7 @@ it('uppercases methods that the request object leaves lowercase', function (): v
     $request->server->set('REQUEST_URI', '/items');
 
     expect($fingerprinter->fingerprint($request, 1048576))
-        ->toBe(hash('sha256', "POST\n/items\n[]\n"));
+        ->toBe(hash('sha256', "POST\n/items\n{}\n"));
 });
 
 it('stringifies integer query values in the canonical query', function (): void {
@@ -187,7 +187,7 @@ it('stringifies integer query values in the canonical query', function (): void 
     ]);
 
     expect($fingerprinter->fingerprint($request, 1048576))
-        ->toBe(hash('sha256', "POST\n/items?n=2&tags=1&tags=2\n[]\n"));
+        ->toBe(hash('sha256', "POST\n/items?n=2&tags=1&tags=2\n{}\n"));
 });
 
 it('keeps unicode and slashes unescaped in the canonical json body', function (): void {

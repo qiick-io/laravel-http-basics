@@ -9,6 +9,7 @@ use Illuminate\Contracts\Cache\Factory as CacheFactory;
 use Illuminate\Contracts\Config\Repository as ConfigRepository;
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Support\ServiceProvider;
+use Qiick\HttpBasics\Console\PruneIdempotencyRecordsCommand;
 use Qiick\HttpBasics\Contracts\CredentialBucketResolver;
 use Qiick\HttpBasics\Contracts\DefaultLocaleResolver;
 use Qiick\HttpBasics\Contracts\ErrorRenderer;
@@ -376,6 +377,7 @@ final class HttpBasicsServiceProvider extends ServiceProvider
                 $methodList,
                 (bool) $config->get('http-basics.idempotency.require_json', true),
                 $this->configInt($config, 'http-basics.idempotency.max_body_bytes', 1048576),
+                $this->configInt($config, 'http-basics.idempotency.max_response_bytes', 1048576),
                 $this->configInt($config, 'http-basics.idempotency.lock_ttl_seconds', 60),
                 $this->configInt($config, 'http-basics.idempotency.max_handler_seconds', 55),
                 $this->configInt($config, 'http-basics.idempotency.stale_after_seconds', 60),
@@ -391,6 +393,10 @@ final class HttpBasicsServiceProvider extends ServiceProvider
             $this->publishes([
                 __DIR__.'/../../config/http-basics.php' => config_path('http-basics.php'),
             ], 'http-basics-config');
+
+            $this->commands([
+                PruneIdempotencyRecordsCommand::class,
+            ]);
         }
     }
 
@@ -406,6 +412,11 @@ final class HttpBasicsServiceProvider extends ServiceProvider
         $maxBody = $this->configInt($config, 'http-basics.idempotency.max_body_bytes', 1048576);
         if ($maxBody <= 0) {
             throw new \InvalidArgumentException('http-basics.idempotency.max_body_bytes must be greater than 0.');
+        }
+
+        $maxResponse = $this->configInt($config, 'http-basics.idempotency.max_response_bytes', 1048576);
+        if ($maxResponse <= 0) {
+            throw new \InvalidArgumentException('http-basics.idempotency.max_response_bytes must be greater than 0.');
         }
 
         $lockTtl = $this->configInt($config, 'http-basics.idempotency.lock_ttl_seconds', 60);

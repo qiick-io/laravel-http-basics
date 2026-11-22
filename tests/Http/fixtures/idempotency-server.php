@@ -46,6 +46,7 @@ if (! is_dir($cachePath) && ! mkdir($cachePath, 0777, true) && ! is_dir($cachePa
 $lockTtl = (int) (getenv('HTTP_BASICS_IDEMPOTENCY_LOCK_TTL') ?: '2');
 $staleAfter = (int) (getenv('HTTP_BASICS_IDEMPOTENCY_STALE_AFTER') ?: '1');
 $maxHandler = (int) (getenv('HTTP_BASICS_IDEMPOTENCY_MAX_HANDLER') ?: '1');
+$maxResponse = (int) (getenv('HTTP_BASICS_IDEMPOTENCY_MAX_RESPONSE') ?: '1048576');
 
 $app = Application::create(
     basePath: null,
@@ -76,6 +77,7 @@ $config->set('http-basics.idempotency.lock_ttl_seconds', max(1, $lockTtl));
 $config->set('http-basics.idempotency.stale_after_seconds', max(1, $staleAfter));
 $config->set('http-basics.idempotency.max_handler_seconds', max(1, min($maxHandler, $lockTtl)));
 $config->set('http-basics.idempotency.ttl_seconds', 86400);
+$config->set('http-basics.idempotency.max_response_bytes', max(1, $maxResponse));
 $config->set('http-basics.idempotency.anonymous.enabled', false);
 
 // Re-bind store/middleware after config overrides (provider registered with defaults).
@@ -94,13 +96,34 @@ Route::get('/ping', function () {
     return response('pong', 200);
 });
 
-Route::post('/api/items', function (Request $request) {
+$handlerCountFile = $cachePath.DIRECTORY_SEPARATOR.'handler_count';
+
+Route::post('/api/items', function (Request $request) use ($handlerCountFile) {
     $sleepMs = (int) $request->query('sleep_ms', 0);
+    if ($sleepMs <= 0) {
+        $sleepMs = (int) ($request->headers->get('X-Sleep-Ms') ?? 0);
+    }
     if ($sleepMs > 0) {
         usleep($sleepMs * 1000);
     }
 
+    $count = is_file($handlerCountFile) ? (int) file_get_contents($handlerCountFile) : 0;
+    file_put_contents($handlerCountFile, (string) ($count + 1), LOCK_EX);
+
     return response()->json(['created' => true, 'name' => $request->input('name')], 201);
+})->middleware(HandleIdempotencyMiddleware::class);
+
+Route::get('/api/handler-count', function () use ($handlerCountFile) {
+    $count = is_file($handlerCountFile) ? (int) file_get_contents($handlerCountFile) : 0;
+
+    return response()->json(['count' => $count]);
+});
+
+Route::post('/api/large', function () use ($handlerCountFile) {
+    $count = is_file($handlerCountFile) ? (int) file_get_contents($handlerCountFile) : 0;
+    file_put_contents($handlerCountFile, (string) ($count + 1), LOCK_EX);
+
+    return response(str_repeat('Z', 80_000), 201, ['Content-Type' => 'application/json']);
 })->middleware(HandleIdempotencyMiddleware::class);
 
 $request = Request::capture();

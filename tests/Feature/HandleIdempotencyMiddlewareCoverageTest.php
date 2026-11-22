@@ -12,6 +12,7 @@ use Qiick\HttpBasics\Idempotency\Fingerprinter;
 use Qiick\HttpBasics\Idempotency\FleetErrorRenderer;
 use Qiick\HttpBasics\Idempotency\HandleIdempotencyMiddleware;
 use Qiick\HttpBasics\Idempotency\IdempotencyClaim;
+use Qiick\HttpBasics\Idempotency\IdempotencyErrorCode;
 use Qiick\HttpBasics\Idempotency\IdempotencyKeyFormat;
 use Qiick\HttpBasics\Idempotency\IdempotencyKeyValidator;
 use Qiick\HttpBasics\Idempotency\IdempotencyScope;
@@ -88,6 +89,7 @@ function makeIdempotencyMiddleware(
         $methods,
         $requireJson,
         $maxBodyBytes,
+        1048576,
         60,
         55,
         $retryAfterSeconds,
@@ -218,6 +220,8 @@ it('clamps lock ttl and max handler seconds to at least one', function (): void 
 
         public function complete(IdempotencyClaim $claim, ReplayableResponse $response, DateTimeImmutable $now): void {}
 
+        public function sealUnreplayable(IdempotencyClaim $claim, DateTimeImmutable $now): void {}
+
         public function abandon(IdempotencyClaim $claim, DateTimeImmutable $now): void {}
     };
 
@@ -299,6 +303,8 @@ it('parses lock ttl and max handler options for conflict retry-after', function 
 
         public function complete(IdempotencyClaim $claim, ReplayableResponse $response, DateTimeImmutable $now): void {}
 
+        public function sealUnreplayable(IdempotencyClaim $claim, DateTimeImmutable $now): void {}
+
         public function abandon(IdempotencyClaim $claim, DateTimeImmutable $now): void {}
     };
 
@@ -354,6 +360,8 @@ it('maps store claim failures to unavailable', function (): void {
 
         public function complete(IdempotencyClaim $claim, ReplayableResponse $response, DateTimeImmutable $now): void {}
 
+        public function sealUnreplayable(IdempotencyClaim $claim, DateTimeImmutable $now): void {}
+
         public function abandon(IdempotencyClaim $claim, DateTimeImmutable $now): void {}
     };
 
@@ -380,6 +388,8 @@ it('replays completed claims and overlays the current request id', function (): 
 
         public function complete(IdempotencyClaim $claim, ReplayableResponse $response, DateTimeImmutable $now): void {}
 
+        public function sealUnreplayable(IdempotencyClaim $claim, DateTimeImmutable $now): void {}
+
         public function abandon(IdempotencyClaim $claim, DateTimeImmutable $now): void {}
     };
 
@@ -403,6 +413,8 @@ it('treats a null replay payload as unavailable', function (): void {
 
         public function complete(IdempotencyClaim $claim, ReplayableResponse $response, DateTimeImmutable $now): void {}
 
+        public function sealUnreplayable(IdempotencyClaim $claim, DateTimeImmutable $now): void {}
+
         public function abandon(IdempotencyClaim $claim, DateTimeImmutable $now): void {}
     };
 
@@ -422,6 +434,8 @@ it('maps mismatch claims to payload mismatch', function (): void {
         }
 
         public function complete(IdempotencyClaim $claim, ReplayableResponse $response, DateTimeImmutable $now): void {}
+
+        public function sealUnreplayable(IdempotencyClaim $claim, DateTimeImmutable $now): void {}
 
         public function abandon(IdempotencyClaim $claim, DateTimeImmutable $now): void {}
     };
@@ -512,6 +526,8 @@ it('maps complete failures to unavailable after the handler succeeds', function 
             throw new IdempotencyStoreException('cannot complete');
         }
 
+        public function sealUnreplayable(IdempotencyClaim $claim, DateTimeImmutable $now): void {}
+
         public function abandon(IdempotencyClaim $claim, DateTimeImmutable $now): void {}
     };
 
@@ -582,4 +598,193 @@ it('includes accept-language in the fingerprint for machine doors', function ():
     $second = $middleware->handle($withoutLanguage, static fn () => response('second', 200));
 
     expect($second->getStatusCode())->toBe(422);
+});
+
+it('returns 409 not_replayable for sealed completed-without-body claims', function (): void {
+    $store = new InMemoryIdempotencyStore;
+    $scope = new IdempotencyScope('tenant:1', 'POST', '/api/widgets');
+    $now = new DateTimeImmutable;
+    $key = '550e8400-e29b-41d4-a716-446655440090';
+    $claim = $store->claim($scope, $key, app(Fingerprinter::class)->fingerprint(idempotencyRequest(), 1048576), $now);
+    $store->sealUnreplayable($claim, $now);
+
+    $this->app->instance(IdempotencyStore::class, $store);
+    $middleware = makeIdempotencyMiddleware($store, new FakeCredentialBucketResolver('tenant:1'));
+    $request = idempotencyRequest();
+    $request->headers->set('Idempotency-Key', $key);
+
+    $response = $middleware->handle($request, static function (): never {
+        throw new RuntimeException('handler must not run');
+    });
+
+    expect($response->getStatusCode())->toBe(409)
+        ->and($response->getData(true)['error'])->toBe(IdempotencyErrorCode::NotReplayable->value);
+});
+
+it('seals unreplayable when the response exceeds max_response_bytes', function (): void {
+    $middleware = makeIdempotencyMiddleware(
+        $this->store,
+        new FakeCredentialBucketResolver('tenant:1'),
+        maxBodyBytes: 1048576,
+    );
+
+    // Rebuild with tiny max_response_bytes
+    $middleware = new HandleIdempotencyMiddleware(
+        $this->store,
+        new Fingerprinter,
+        new IdempotencyKeyValidator(IdempotencyKeyFormat::Uuid),
+        new FakeCredentialBucketResolver('tenant:1'),
+        new AnonymousBucketResolver(str_repeat('s', 32), ['ip', 'route']),
+        false,
+        new FleetErrorRenderer,
+        new ReplayHeaderSanitizer(['Content-Type'], ['Set-Cookie']),
+        app(RequestIdResolver::class),
+        $doors = new MachineDoorClassifier(['api/*']),
+        new LocaleNegotiator(
+            new ConfigSupportedLocales(['en', 'it']),
+            new ConfigDefaultLocaleResolver('en'),
+            $doors,
+        ),
+        ['POST', 'PATCH'],
+        true,
+        1048576,
+        16,
+        60,
+        55,
+        30,
+    );
+
+    $key = '550e8400-e29b-41d4-a716-446655440091';
+    $request = idempotencyRequest();
+    $request->headers->set('Idempotency-Key', $key);
+    $runs = 0;
+
+    $first = $middleware->handle($request, static function () use (&$runs) {
+        $runs++;
+
+        return response(str_repeat('y', 64), 201);
+    });
+
+    expect($first->getStatusCode())->toBe(503)->and($runs)->toBe(1);
+
+    $second = $middleware->handle($request, static function () use (&$runs) {
+        $runs++;
+
+        return response('nope', 201);
+    });
+
+    expect($second->getStatusCode())->toBe(409)
+        ->and($second->getData(true)['error'])->toBe(IdempotencyErrorCode::NotReplayable->value)
+        ->and($runs)->toBe(1);
+});
+
+it('enforces max_handler_seconds and seals unreplayable after a slow handler', function (): void {
+    $middleware = new HandleIdempotencyMiddleware(
+        $this->store,
+        new Fingerprinter,
+        new IdempotencyKeyValidator(IdempotencyKeyFormat::Uuid),
+        new FakeCredentialBucketResolver('tenant:1'),
+        new AnonymousBucketResolver(str_repeat('s', 32), ['ip', 'route']),
+        false,
+        new FleetErrorRenderer,
+        new ReplayHeaderSanitizer(['Content-Type'], ['Set-Cookie']),
+        app(RequestIdResolver::class),
+        $doors = new MachineDoorClassifier(['api/*']),
+        new LocaleNegotiator(
+            new ConfigSupportedLocales(['en', 'it']),
+            new ConfigDefaultLocaleResolver('en'),
+            $doors,
+        ),
+        ['POST', 'PATCH'],
+        true,
+        1048576,
+        1048576,
+        60,
+        55,
+        30,
+    );
+
+    $key = '550e8400-e29b-41d4-a716-446655440092';
+    $request = idempotencyRequest();
+    $request->headers->set('Idempotency-Key', $key);
+    $runs = 0;
+
+    $first = $middleware->handle($request, static function () use (&$runs) {
+        $runs++;
+        usleep(1_200_000);
+
+        return response('ok', 201);
+    }, 'max_handler_seconds=1');
+
+    expect($first->getStatusCode())->toBe(503)->and($runs)->toBe(1);
+
+    $second = $middleware->handle($request, static function () use (&$runs) {
+        $runs++;
+
+        return response('again', 201);
+    }, 'max_handler_seconds=1');
+
+    expect($second->getStatusCode())->toBe(409)->and($runs)->toBe(1);
+});
+
+it('accepts application/json content type case-insensitively with parameters', function (): void {
+    $middleware = makeIdempotencyMiddleware($this->store, new FakeCredentialBucketResolver('tenant:1'));
+    $request = Request::create(
+        '/api/widgets',
+        'POST',
+        [],
+        [],
+        [],
+        [
+            'HTTP_Idempotency-Key' => '550e8400-e29b-41d4-a716-446655440093',
+            'CONTENT_TYPE' => 'Application/JSON; charset=utf-8',
+        ],
+        '{}',
+    );
+
+    expect($middleware->handle($request, static fn () => response('ok', 200))->getContent())->toBe('ok');
+});
+
+it('falls through empty credential buckets to anonymous when enabled', function (): void {
+    $middleware = makeIdempotencyMiddleware(
+        $this->store,
+        new FakeCredentialBucketResolver(''),
+        anonymousEnabled: true,
+    );
+
+    $response = $middleware->handle(idempotencyRequest(), static fn () => response('anon', 201));
+
+    expect($response->getContent())->toBe('anon');
+});
+
+it('maps claim QueryException-equivalent store failures to 503 with Retry-After', function (): void {
+    $store = new class implements IdempotencyStore
+    {
+        public function claim(IdempotencyScope $scope, string $key, string $fingerprint, DateTimeImmutable $now): IdempotencyClaim
+        {
+            throw new IdempotencyStoreException('Failed to read idempotency marker.');
+        }
+
+        public function complete(IdempotencyClaim $claim, ReplayableResponse $response, DateTimeImmutable $now): void {}
+
+        public function sealUnreplayable(IdempotencyClaim $claim, DateTimeImmutable $now): void {}
+
+        public function abandon(IdempotencyClaim $claim, DateTimeImmutable $now): void {}
+    };
+
+    $middleware = makeIdempotencyMiddleware($store, new FakeCredentialBucketResolver('tenant:1'), retryAfterSeconds: 9);
+    $response = $middleware->handle(idempotencyRequest(), static fn () => response('x'));
+
+    expect($response->getStatusCode())->toBe(503)
+        ->and($response->headers->get('Retry-After'))->toBe('9')
+        ->and($response->getData(true)['error'])->toBe(IdempotencyErrorCode::Unavailable->value);
+});
+
+it('renders malformed JSON through ErrorRenderer as validation_failed', function (): void {
+    $middleware = makeIdempotencyMiddleware($this->store, new FakeCredentialBucketResolver('tenant:1'));
+    $response = $middleware->handle(idempotencyRequest('{not-json'), static fn () => response('x'));
+
+    expect($response->getStatusCode())->toBe(422)
+        ->and($response->getData(true)['error'])->toBe('validation_failed')
+        ->and($response->getData(true)['message'])->toBe('The given data was invalid.');
 });

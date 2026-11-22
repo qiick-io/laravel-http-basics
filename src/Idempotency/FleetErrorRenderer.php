@@ -41,8 +41,10 @@ final class FleetErrorRenderer implements ErrorRenderer
             IdempotencyErrorCode::KeyInvalid => 'Idempotency-Key header is invalid.',
             IdempotencyErrorCode::PayloadMismatch => 'Request payload does not match the original idempotent request.',
             IdempotencyErrorCode::InProgress => 'An idempotent request with this key is already in progress.',
+            IdempotencyErrorCode::NotReplayable => 'The idempotent request completed but cannot be replayed.',
             IdempotencyErrorCode::Unavailable => 'Idempotency store is temporarily unavailable.',
             IdempotencyErrorCode::UnsupportedMedia => 'Idempotent routes require Content-Type: application/json.',
+            IdempotencyErrorCode::InvalidJson => 'The given data was invalid.',
         };
     }
 }

@@ -110,6 +110,7 @@ return [
         'key_format' => env('HTTP_BASICS_IDEMPOTENCY_KEY_FORMAT', 'uuid'),
         'max_key_length' => 128,
         'max_body_bytes' => (int) env('HTTP_BASICS_IDEMPOTENCY_MAX_BODY_BYTES', 1048576),
+        'max_response_bytes' => (int) env('HTTP_BASICS_IDEMPOTENCY_MAX_RESPONSE_BYTES', 1048576),
         /*
          * @var list<string>
          */
