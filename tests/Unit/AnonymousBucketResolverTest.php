@@ -53,6 +53,15 @@ it('includes the client ip in the hmac material', function (): void {
         ->and($resolver->bucket($withoutIp))->toBe('anon:'.hash_hmac('sha256', '', $secret));
 });
 
+it('includes the user agent in the hmac material', function (): void {
+    $secret = str_repeat('s', 32);
+    $resolver = new AnonymousBucketResolver($secret, ['user_agent']);
+
+    $request = Request::create('/api/public', 'POST', server: ['HTTP_USER_AGENT' => 'curl/8.5']);
+
+    expect($resolver->bucket($request))->toBe('anon:'.hash_hmac('sha256', 'curl/8.5', $secret));
+});
+
 it('casts a missing user agent to an empty string', function (): void {
     $secret = str_repeat('s', 32);
     $resolver = new AnonymousBucketResolver($secret, ['user_agent']);

@@ -237,3 +237,28 @@ it('canonicalizes nested query bags when QUERY_STRING is absent', function (): v
     expect($fingerprinter->fingerprint($request, 1048576))
         ->toBe(hash('sha256', "POST\n/items?a%5Bb%5D=1&a%5Bc%5D%5Bd%5D=2&empty=&list=x&list%5By%5D=z\n\n{}\n"));
 });
+
+it('skips empty raw query segments and treats a bare key as an empty value', function (): void {
+    $fingerprinter = new Fingerprinter;
+    $fingerprintFor = static fn (string $uri): string => $fingerprinter->fingerprint(Request::create($uri, 'POST', [], [], [], [], '{}'), 1048576);
+
+    expect($fingerprintFor('/items?&flag&&a=1&'))
+        ->toBe(hash('sha256', "POST\n/items?a=1&flag=\n\n{}\n"))
+        ->and($fingerprintFor('/items?flag'))->toBe($fingerprintFor('/items?flag='));
+});
+
+it('keeps walking the query bag after an empty array, a nested list item and a numeric key', function (): void {
+    $fingerprinter = new Fingerprinter;
+    $request = Request::create('/items', 'POST', [], [], [], [], '{}');
+    $request->server->remove('QUERY_STRING');
+    $queryParameters = new ReflectionProperty($request->query, 'parameters');
+    $queryParameters->setValue($request->query, [
+        0 => 'zero',
+        'empty' => [],
+        'list' => [['y' => 'z'], 'x'],
+        'tail' => 't',
+    ]);
+
+    expect($fingerprinter->fingerprint($request, 1048576))
+        ->toBe(hash('sha256', "POST\n/items?0=zero&empty=&list=x&list%5By%5D=z&tail=t\n\n{}\n"));
+});

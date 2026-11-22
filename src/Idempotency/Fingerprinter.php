@@ -35,8 +35,7 @@ final class Fingerprinter
         $query = $this->canonicalQueryString($request);
         $pathLine = $path.($query !== '' ? '?'.$query : '');
 
-        // getContent() is already a string on Request.
-        $rawBody = (string) $request->getContent(); // @pest-mutate-ignore: RemoveStringCast
+        $rawBody = $request->getContent();
 
         if (strlen($rawBody) > $maxBytes) {
             throw new PayloadTooLargeException;
@@ -65,21 +64,18 @@ final class Fingerprinter
         $pairs = [];
 
         foreach (explode('&', $raw) as $segment) {
-            // Empty segments from leading/trailing & never become pairs either way.
-            if ($segment === '') { // @pest-mutate-ignore: EmptyStringToNotEmpty
-                // Breaking would skip the rest of the query string; continue is required.
-                continue; // @pest-mutate-ignore: ContinueToBreak
+            // `a=1&&b=2` and a trailing `&` fingerprint like `a=1&b=2`.
+            if ($segment === '') {
+                continue;
             }
 
             $equalsPosition = strpos($segment, '=');
 
-            // Missing '=' already yields value ''; flipping the check is not covered by fixtures.
-            if ($equalsPosition === false) { // @pest-mutate-ignore: FalseToTrue
-                // Both slots are required by encodeSortedPairs; empty value is intentional.
-                $pairs[] = [rawurldecode($segment), '']; // @pest-mutate-ignore: RemoveArrayItem, EmptyStringToNotEmpty
+            // A bare key (`?flag`) fingerprints like an empty value (`?flag=`).
+            if ($equalsPosition === false) {
+                $pairs[] = [rawurldecode($segment), ''];
 
-                // Breaking would drop later segments.
-                continue; // @pest-mutate-ignore: ContinueToBreak
+                continue;
             }
 
             $pairs[] = [
@@ -140,40 +136,38 @@ final class Fingerprinter
         $pairs = [];
 
         foreach ($parameters as $name => $value) {
-            // Array keys from Request::query are strings; the cast is a no-op.
-            $key = $prefix === '' ? (string) $name : $prefix.'['.$name.']'; // @pest-mutate-ignore: RemoveStringCast
+            // A numeric query key (`?0=a`) arrives as an int array key.
+            $key = $prefix === '' ? (string) $name : $prefix.'['.$name.']';
 
             if (is_array($value)) {
                 if ($value === []) {
                     // Empty array still contributes a key= pair for collision resistance.
-                    $pairs[] = [$key, '']; // @pest-mutate-ignore: RemoveArrayItem, EmptyStringToNotEmpty
+                    $pairs[] = [$key, ''];
 
-                    continue; // @pest-mutate-ignore: ContinueToBreak
+                    continue;
                 }
 
                 if (array_is_list($value)) {
-                    // Empty lists never enter; covered by empty-array branch above.
-                    foreach ($value as $item) { // @pest-mutate-ignore: ForeachEmptyIterable
+                    foreach ($value as $item) {
                         if (is_array($item)) {
                             foreach ($this->flattenQueryPairs($item, $key) as $nested) {
                                 $pairs[] = $nested;
                             }
 
-                            continue; // @pest-mutate-ignore: ContinueToBreak
+                            continue;
                         }
 
                         $pairs[] = [$key, is_scalar($item) ? (string) $item : ''];
                     }
 
-                    continue; // @pest-mutate-ignore: ContinueToBreak
+                    continue;
                 }
 
-                // Associative nested maps always have keys when non-empty.
-                foreach ($this->flattenQueryPairs($value, $key) as $nested) { // @pest-mutate-ignore: ForeachEmptyIterable
+                foreach ($this->flattenQueryPairs($value, $key) as $nested) {
                     $pairs[] = $nested;
                 }
 
-                continue; // @pest-mutate-ignore: ContinueToBreak
+                continue;
             }
 
             $pairs[] = [$key, is_scalar($value) ? (string) $value : ''];
@@ -191,13 +185,8 @@ final class Fingerprinter
             return '';
         }
 
-        $decoded = json_decode(
-            $rawBody,
-            false,
-            // Depth 512 is PHP's default; fixtures stay under it either way.
-            512, // @pest-mutate-ignore: IncrementInteger
-            JSON_THROW_ON_ERROR | JSON_BIGINT_AS_STRING,
-        );
+        // Objects stay stdClass, so `{}` and `[]` keep apart and every PHP array is a list.
+        $decoded = json_decode($rawBody, flags: JSON_THROW_ON_ERROR | JSON_BIGINT_AS_STRING);
 
         $sorted = $this->canonicalJsonValue($decoded);
 
@@ -221,35 +210,9 @@ final class Fingerprinter
                 $sorted->{$key} = $this->canonicalJsonValue($item);
             }
 
-            // Fall-through after assigning $sorted is unreachable.
-            return $sorted; // @pest-mutate-ignore: RemoveEarlyReturn
+            return $sorted;
         }
 
-        // Scalars and objects already returned above; negating only re-enters array paths.
-        if (! is_array($value)) { // @pest-mutate-ignore: IfNegated
-            return $value;
-        }
-
-        // Lists and maps both recurse; fixtures cover both shapes.
-        if (array_is_list($value)) { // @pest-mutate-ignore: IfNegated
-            $sorted = [];
-
-            foreach ($value as $item) {
-                $sorted[] = $this->canonicalJsonValue($item);
-            }
-
-            // Fall-through would re-enter associative sorting on a list.
-            return $sorted; // @pest-mutate-ignore: RemoveEarlyReturn
-        }
-
-        // Key order is part of the fingerprint; empty maps never reach here.
-        ksort($value); // @pest-mutate-ignore: RemoveFunctionCall
-        $sorted = [];
-
-        foreach ($value as $key => $item) { // @pest-mutate-ignore: ForeachEmptyIterable
-            $sorted[$key] = $this->canonicalJsonValue($item);
-        }
-
-        return $sorted;
+        return is_array($value) ? array_map($this->canonicalJsonValue(...), $value) : $value;
     }
 }
