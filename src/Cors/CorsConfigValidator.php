@@ -14,7 +14,7 @@ namespace Qiick\HttpBasics\Cors;
 final class CorsConfigValidator
 {
     /**
-     * @param  array<string, mixed>  $cors
+     * @param  array<mixed, mixed>  $cors
      */
     public function validate(array $cors): void
     {
