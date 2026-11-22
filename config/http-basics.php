@@ -49,9 +49,19 @@ return [
 
     'locale' => [
         /*
+         * Empty → [app.locale, app.fallback_locale] (unique, non-empty).
+         * Comma-separated override via HTTP_BASICS_SUPPORTED_LOCALES.
+         *
          * @var list<string>
          */
-        'machine_doors' => ['api/*', 'mcp', 'mcp/*'],
+        'supported' => array_values(array_filter(array_map(
+            static fn (string $locale): string => trim($locale),
+            explode(',', (string) env('HTTP_BASICS_SUPPORTED_LOCALES', '')),
+        ))),
+        /*
+         * @var list<string>
+         */
+        'machine_doors' => ['api', 'api/*', 'mcp', 'mcp/*'],
         'cookie' => 'locale',
         'fallback' => env('APP_FALLBACK_LOCALE', 'en'),
         'max_header_bytes' => (int) env('HTTP_BASICS_LOCALE_MAX_HEADER_BYTES', 1024),

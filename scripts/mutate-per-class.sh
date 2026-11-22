@@ -17,6 +17,7 @@ CLASSES=(
   'Qiick\HttpBasics\RequestId\RequestIdPropagator'
   'Qiick\HttpBasics\RequestId\AssignRequestIdMiddleware'
   'Qiick\HttpBasics\RequestId\ConfigTrustedProxyDetector'
+  'Qiick\HttpBasics\Locale\LocaleNegotiator'
 )
 
 CLASS_FILES=(
@@ -25,13 +26,18 @@ CLASS_FILES=(
   'src/RequestId/RequestIdPropagator.php'
   'src/RequestId/AssignRequestIdMiddleware.php'
   'src/RequestId/ConfigTrustedProxyDetector.php'
+  'src/Locale/LocaleNegotiator.php'
 )
 
-# Extra files under the RequestId\ prefix that are not mutation targets.
+# Extra files under RequestId\ / Locale\ prefixes that are not mutation targets.
 SIBLING_FILES=(
   'src/RequestId/RequestIdAcceptFrom.php'
   'src/RequestId/RequestIdSource.php'
   'src/RequestId/UuidIdGenerator.php'
+  'src/Locale/ConfigDefaultLocaleResolver.php'
+  'src/Locale/ConfigSupportedLocales.php'
+  'src/Locale/MachineDoorClassifier.php'
+  'src/Locale/SetLocaleMiddleware.php'
 )
 
 MIN="${MUTATE_MIN:-95}"
@@ -70,7 +76,12 @@ for index in "${!CLASSES[@]}"; do
   set -e
 
   # Strip ANSI before parsing — pest colours the Score line.
-  score="$(sed $'s/\x1b\\[[0-9;]*m//g' "${output}" | rg -o 'Score:[[:space:]]+[0-9.]+%' | tail -1 | rg -o '[0-9.]+' | head -1 || true)"
+  # Prefer grep/sed (available on GitHub-hosted runners); rg is not installed there.
+  score="$(sed $'s/\x1b\\[[0-9;]*m//g' "${output}" \
+    | grep -Eo 'Score:[[:space:]]+[0-9.]+%' \
+    | tail -1 \
+    | grep -Eo '[0-9.]+' \
+    | head -1 || true)"
   if [[ -z "${score}" ]]; then
     score='?'
   fi
