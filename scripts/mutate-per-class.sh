@@ -25,6 +25,9 @@ CLASSES=(
   'Qiick\HttpBasics\Idempotency\DatabaseIdempotencyStore'
   'Qiick\HttpBasics\Idempotency\HandleIdempotencyMiddleware'
   'Qiick\HttpBasics\Idempotency\IdempotencyRejection'
+  'Qiick\HttpBasics\Cors\CorsConfigValidator'
+  'Qiick\HttpBasics\Cors\ConfigureCorsMiddleware'
+  'Qiick\HttpBasics\Cors\OriginNormalizer'
 )
 
 CLASS_FILES=(
@@ -41,9 +44,12 @@ CLASS_FILES=(
   'src/Idempotency/DatabaseIdempotencyStore.php'
   'src/Idempotency/HandleIdempotencyMiddleware.php'
   'src/Idempotency/IdempotencyRejection.php'
+  'src/Cors/CorsConfigValidator.php'
+  'src/Cors/ConfigureCorsMiddleware.php'
+  'src/Cors/OriginNormalizer.php'
 )
 
-# Extra files under RequestId\ / Locale\ / Security\ / Idempotency\ prefixes that are not mutation targets.
+# Extra files under RequestId\ / Locale\ / Security\ / Idempotency\ / Cors\ prefixes that are not mutation targets.
 SIBLING_FILES=(
   'src/RequestId/RequestIdAcceptFrom.php'
   'src/RequestId/RequestIdSource.php'
@@ -70,6 +76,9 @@ SIBLING_FILES=(
   'src/Idempotency/ReplayHeaderSanitizer.php'
   'src/Idempotency/NullCredentialBucketResolver.php'
   'src/Idempotency/IdempotencyRecord.php'
+  'src/Cors/AllowedOriginsResolver.php'
+  'src/Cors/ConfigAllowedOriginsResolver.php'
+  'src/Cors/CorsHeaderCatalog.php'
   'src/Contracts/CredentialBucketResolver.php'
   'src/Contracts/IdempotencyStore.php'
   'src/Contracts/ErrorRenderer.php'

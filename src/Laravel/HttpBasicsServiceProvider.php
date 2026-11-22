@@ -442,7 +442,8 @@ final class HttpBasicsServiceProvider extends ServiceProvider
             return;
         }
 
-        (new CorsConfigValidator)->validate($cors);
+        $normalized = (new CorsConfigValidator)->validate($cors);
+        $config->set('cors', $normalized);
     }
 
     private function validateIdempotencyConfig(): void

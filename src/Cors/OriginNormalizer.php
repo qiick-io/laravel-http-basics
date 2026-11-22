@@ -7,7 +7,8 @@ namespace Qiick\HttpBasics\Cors;
 /**
  * @api Normalises browser Origin values to scheme://host[:port].
  *
- * Rejects userinfo, path, query, fragment, and the string `null`.
+ * Rejects userinfo, path, query, fragment, the string `null`, trailing DNS
+ * dots, and non-positive ports.
  */
 final class OriginNormalizer
 {
@@ -40,7 +41,18 @@ final class OriginNormalizer
             return null;
         }
 
+        $host = rtrim($host, '.');
+
+        if ($host === '' || str_contains($host, '..')) {
+            return null;
+        }
+
         $port = isset($parts['port']) && is_int($parts['port']) ? $parts['port'] : null;
+
+        if ($port !== null && $port <= 0) {
+            return null;
+        }
+
         $defaultPort = $scheme === 'https' ? 443 : 80;
 
         if ($port === null || $port === $defaultPort) {
