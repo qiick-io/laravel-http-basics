@@ -346,8 +346,9 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
             return new IdempotencyClaim(ClaimOutcome::NotReplayable, null, null, $scope, $key);
         }
 
-        // Fingerprints are hex strings; rtrim/cast are no-ops on full digests, empty never matches.
-        $storedFingerprint = rtrim((string) ($attributes['fingerprint'] ?? '')); // @pest-mutate-ignore: CoalesceRemoveLeft, RemoveStringCast, EmptyStringToNotEmpty, UnwrapRtrim
+        // Fingerprints are hex strings; rtrim is a no-op on full digests, empty never matches.
+        $rawFingerprint = $attributes['fingerprint'] ?? '';
+        $storedFingerprint = rtrim(is_string($rawFingerprint) ? $rawFingerprint : ''); // @pest-mutate-ignore: CoalesceRemoveLeft, EmptyStringToNotEmpty, UnwrapRtrim
 
         if ($storedFingerprint === $fingerprint) {
             $headersJson = $attributes['headers_json'] ?? '{}';
