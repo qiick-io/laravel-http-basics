@@ -8,7 +8,8 @@ namespace Qiick\HttpBasics\Cors;
  * @api Boot-time CORS config checks for credentialed wildcards and origin shape.
  *
  * With `supports_credentials`, Fruitcake treats any `*` in an origin string and
- * any `allowed_origins_patterns` entry as a reflector; both are rejected here.
+ * any `allowed_origins_patterns` entry as a reflector, and echoes every requested
+ * header for `allowed_headers: ['*']`; all three are rejected here.
  * Concrete origins are normalised through {@see OriginNormalizer}.
  */
 final class CorsConfigValidator
@@ -67,6 +68,15 @@ final class CorsConfigValidator
         if ($supportsCredentials && is_array($patterns) && $patterns !== []) {
             throw new \InvalidArgumentException(
                 'cors.allowed_origins_patterns must be empty when supports_credentials is true (patterns are not host-anchored allowlists).',
+            );
+        }
+
+        $allowedHeaders = $cors['allowed_headers'] ?? [];
+
+        // Fruitcake answers `*` by echoing every requested header, `Authorization` included.
+        if ($supportsCredentials && is_array($allowedHeaders) && in_array('*', $allowedHeaders, true)) {
+            throw new \InvalidArgumentException(
+                'cors.allowed_headers must not contain * when supports_credentials is true.',
             );
         }
 
