@@ -89,11 +89,19 @@ jobs:
       - name: Pest
         run: vendor/bin/pest
 
-      # Mutation targets from the design §8. One comma-separated --class; empty
-      # list in the scaffold is a no-op until feature classes land.
+      # Mutation targets from the design §8. Per-class min 95; surface the table
+      # in the job summary. Bound the step so a hung php -S / mutate cannot burn
+      # the whole matrix cell.
       - name: Pest mutate (security-critical classes, per-class min 95)
         if: matrix.php == '8.4' && matrix.laravel == '12' && matrix.dependency-version == 'stable'
-        run: bash scripts/mutate-per-class.sh
+        timeout-minutes: 25
+        run: |
+          set -euo pipefail
+          output="$(mktemp)"
+          bash scripts/mutate-per-class.sh | tee "${output}"
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+            awk '/^## Per-class mutation scores$/{flag=1} flag{print}' "${output}" >> "${GITHUB_STEP_SUMMARY}"
+          fi
 
   # Real HTTP against php -S (middleware stack). Feature PRs fill the Pest group;
   # scaffold keeps the Laravel 12/13 cells so the matrix shape matches the fleet rule.
@@ -135,12 +143,15 @@ jobs:
 
       - name: Pest (real HTTP group)
         run: |
-          if vendor/bin/pest --list-tests 2>/dev/null | grep -q 'http-server'; then
-            vendor/bin/pest --group=http-server
-          else
-            echo "No http-server group yet (scaffold); feature PRs add the suite."
-            vendor/bin/pest
+          set -euo pipefail
+          junit="$(mktemp)"
+          vendor/bin/pest --group=http-server --log-junit "${junit}"
+          count="$(php -r '$xml = @simplexml_load_file($argv[1]); if ($xml === false) { fwrite(STDERR, "junit unreadable\n"); exit(2);} $tests = 0; foreach ($xml->xpath("//testsuite") ?: [] as $suite) { $tests = max($tests, (int) $suite["tests"]); } echo $tests;' "${junit}")"
+          if [ "${count}" -eq 0 ]; then
+            echo "::error::http-server Pest group is empty — real HTTP tests are required."
+            exit 1
           fi
+          echo "http-server junit tests=${count}"
 
   # no-dev cell: cache store must boot without illuminate/database (design §10).
   no-dev-cache:
