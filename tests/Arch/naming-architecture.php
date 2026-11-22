@@ -22,6 +22,9 @@ return [
             'Qiick\HttpBasics\Contracts\TrustedProxyDetector',
             'Qiick\HttpBasics\Contracts\SupportedLocales',
             'Qiick\HttpBasics\Contracts\DefaultLocaleResolver',
+            'Qiick\HttpBasics\Contracts\CredentialBucketResolver',
+            'Qiick\HttpBasics\Contracts\IdempotencyStore',
+            'Qiick\HttpBasics\Contracts\ErrorRenderer',
         ],
         'Enums' => [
             // Design §3.1 / §3.2 / §3.3: source enums without Enum suffix.
@@ -29,11 +32,15 @@ return [
             'Qiick\HttpBasics\RequestId\RequestIdAcceptFrom',
             'Qiick\HttpBasics\Locale\LocaleSource',
             'Qiick\HttpBasics\Security\CspMode',
+            'Qiick\HttpBasics\Idempotency\ClaimOutcome',
+            'Qiick\HttpBasics\Idempotency\IdempotencyErrorCode',
+            'Qiick\HttpBasics\Idempotency\IdempotencyKeyFormat',
         ],
     ],
 
     'suffixes' => [
         'Laravel' => 'ServiceProvider',
+        'Console' => 'Command',
     ],
 
     'controllerPublicMethods' => [],

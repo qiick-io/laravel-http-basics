@@ -8,8 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Idempotency: rebase onto security-headers re-review tip; strip blanket
+  `@pest-mutate-ignore` and keep only proven equivalents with one-line reasons;
+  raise per-class mutation score to 100% for the six design §8 targets.
+
 ### Added
 
+- Idempotency: `HandleIdempotencyMiddleware`, `Fingerprinter`, `CacheIdempotencyStore`,
+  `DatabaseIdempotencyStore`, `AnonymousBucketResolver`, `FleetErrorRenderer`,
+  `IdempotencyRejection`, contract seams (`CredentialBucketResolver`, `IdempotencyStore`,
+  `ErrorRenderer`), and testing helpers (`FixedClock`, `InMemoryIdempotencyStore`,
+  `FakeCredentialBucketResolver`, `assertIdempotentReplay`, `assertNoSensitiveBucketData`).
+  Per-route replay of 2xx/422 (not 429/5xx/Set-Cookie/streams); server-side buckets only;
+  boot validation for TTLs, key format, anon secret length, and lock/handler bounds.
 - Security headers: `SecurityHeaderBuilder`, `SetSecurityHeadersMiddleware`,
   `SecurityHeadersPolicy`, `CspMode`, `CspPolicyBuilder` /
   `ViteFriendlyCspPolicyBuilder`, and `assertSecurityHeaders`. Never clobbers

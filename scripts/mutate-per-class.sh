@@ -19,6 +19,12 @@ CLASSES=(
   'Qiick\HttpBasics\RequestId\ConfigTrustedProxyDetector'
   'Qiick\HttpBasics\Locale\LocaleNegotiator'
   'Qiick\HttpBasics\Security\SecurityHeaderBuilder'
+  'Qiick\HttpBasics\Idempotency\Fingerprinter'
+  'Qiick\HttpBasics\Idempotency\AnonymousBucketResolver'
+  'Qiick\HttpBasics\Idempotency\CacheIdempotencyStore'
+  'Qiick\HttpBasics\Idempotency\DatabaseIdempotencyStore'
+  'Qiick\HttpBasics\Idempotency\HandleIdempotencyMiddleware'
+  'Qiick\HttpBasics\Idempotency\IdempotencyRejection'
 )
 
 CLASS_FILES=(
@@ -29,9 +35,15 @@ CLASS_FILES=(
   'src/RequestId/ConfigTrustedProxyDetector.php'
   'src/Locale/LocaleNegotiator.php'
   'src/Security/SecurityHeaderBuilder.php'
+  'src/Idempotency/Fingerprinter.php'
+  'src/Idempotency/AnonymousBucketResolver.php'
+  'src/Idempotency/CacheIdempotencyStore.php'
+  'src/Idempotency/DatabaseIdempotencyStore.php'
+  'src/Idempotency/HandleIdempotencyMiddleware.php'
+  'src/Idempotency/IdempotencyRejection.php'
 )
 
-# Extra files under RequestId\ / Locale\ / Security\ prefixes that are not mutation targets.
+# Extra files under RequestId\ / Locale\ / Security\ / Idempotency\ prefixes that are not mutation targets.
 SIBLING_FILES=(
   'src/RequestId/RequestIdAcceptFrom.php'
   'src/RequestId/RequestIdSource.php'
@@ -45,6 +57,25 @@ SIBLING_FILES=(
   'src/Security/CspPolicyBuilder.php'
   'src/Security/ViteFriendlyCspPolicyBuilder.php'
   'src/Security/SetSecurityHeadersMiddleware.php'
+  'src/Idempotency/ClaimOutcome.php'
+  'src/Idempotency/IdempotencyClaim.php'
+  'src/Idempotency/IdempotencyScope.php'
+  'src/Idempotency/ReplayableResponse.php'
+  'src/Idempotency/IdempotencyErrorCode.php'
+  'src/Idempotency/FleetErrorRenderer.php'
+  'src/Idempotency/IdempotencyKeyValidator.php'
+  'src/Idempotency/IdempotencyKeyFormat.php'
+  'src/Idempotency/IdempotencyStoreException.php'
+  'src/Idempotency/PayloadTooLargeException.php'
+  'src/Idempotency/ReplayHeaderSanitizer.php'
+  'src/Idempotency/NullCredentialBucketResolver.php'
+  'src/Idempotency/IdempotencyRecord.php'
+  'src/Contracts/CredentialBucketResolver.php'
+  'src/Contracts/IdempotencyStore.php'
+  'src/Contracts/ErrorRenderer.php'
+  'src/Testing/InMemoryIdempotencyStore.php'
+  'src/Testing/FixedClock.php'
+  'src/Testing/FakeCredentialBucketResolver.php'
 )
 
 MIN="${MUTATE_MIN:-95}"
