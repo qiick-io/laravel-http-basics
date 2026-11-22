@@ -29,7 +29,7 @@ Packagist (Packagist publish only after Luca’s go).
 
 ## Requirements
 
-- PHP `^8.3`
+- PHP `^8.3` with `ext-fileinfo` (upload MIME sniffing)
 - Illuminate cache / contracts / http / support `^12.0 \|\| ^13.0` (never
   `laravel/framework`)
 

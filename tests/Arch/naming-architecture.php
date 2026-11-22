@@ -25,6 +25,10 @@ return [
             'Qiick\HttpBasics\Contracts\CredentialBucketResolver',
             'Qiick\HttpBasics\Contracts\IdempotencyStore',
             'Qiick\HttpBasics\Contracts\ErrorRenderer',
+            // Design M10/S7: upload seams without Contract/Enum suffix.
+            'Qiick\HttpBasics\Uploads\UploadPolicy',
+            'Qiick\HttpBasics\Uploads\UploadPolicyResolver',
+            'Qiick\HttpBasics\Uploads\MalwareScanner',
         ],
         'Enums' => [
             // Design §3.1 / §3.2 / §3.3: source enums without Enum suffix.
@@ -35,6 +39,8 @@ return [
             'Qiick\HttpBasics\Idempotency\ClaimOutcome',
             'Qiick\HttpBasics\Idempotency\IdempotencyErrorCode',
             'Qiick\HttpBasics\Idempotency\IdempotencyKeyFormat',
+            'Qiick\HttpBasics\Uploads\ScanResult',
+            'Qiick\HttpBasics\Uploads\MismatchMode',
         ],
     ],
 

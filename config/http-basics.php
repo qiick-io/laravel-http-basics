@@ -11,6 +11,29 @@ declare(strict_types=1);
 
 return [
 
+    'uploads' => [
+        'magic_signatures' => [
+            'pdf' => ['255044462D'],
+            'jpg' => ['FFD8FF'],
+            'jpeg' => ['FFD8FF'],
+            'png' => ['89504E470D0A1A0A'],
+            'gif' => ['474946383761', '474946383961'],
+        ],
+        /*
+         * @var array<string, array<string, mixed>>
+         */
+        'contexts' => [
+            'files' => [
+                'allowed_extensions' => null,
+                'allowed_mime_types' => null,
+                'max_bytes' => null,
+                'allows_svg' => false,
+                'content_type_mismatch' => 'reject',
+                'max_uncompressed_ratio' => null,
+            ],
+        ],
+    ],
+
     'request_id' => [
         /*
          * Optional dual-write aliases into hidden Context (e.g. externa).
