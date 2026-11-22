@@ -18,7 +18,8 @@ jobs:
   tests:
     name: PHP ${{ matrix.php }} Laravel ${{ matrix.laravel }} ${{ matrix.dependency-version }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Must stay above the mutate step's own bound below, or the job cap cancels it first.
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -94,7 +95,8 @@ jobs:
       # the whole matrix cell.
       - name: Pest mutate (security-critical classes, per-class min 95)
         if: matrix.php == '8.4' && matrix.laravel == '12' && matrix.dependency-version == 'stable'
-        timeout-minutes: 25
+        # About a minute per gated class, run one after another.
+        timeout-minutes: 40
         run: |
           set -euo pipefail
           output="$(mktemp)"
