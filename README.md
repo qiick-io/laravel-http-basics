@@ -181,7 +181,7 @@ stale `X-RateLimit-*` headers.
 | Cross-credential replay | Server-side credential bucket + owner lease; unique `(bucket, key_hash)`; never a request-controlled bucket. |
 | Anonymous bucket | Best-effort de-duplication, **not** an identity boundary; HMAC secret rotatable (rotation invalidates anon records); depends on TrustProxies. |
 | Secret replay | Route `replayable=false` + header deny-list + text/JSON only; API-key issuance must be non-replayable. |
-| Retry storms / double execution | 409 while lock held; lease-conditional complete; fail closed on marker eviction. |
+| Retry storms / double execution | 409 while lock held; lease-conditional complete; fail closed on marker eviction. Config requires `max_handler_seconds` **strictly less than** store `lock_ttl_seconds` so a route cannot claim a handler budget that outlives the lock. Soft overrun remains possible: `max_handler_seconds` is checked **after** `$next` returns, so a hung or wall-clock-skewed handler can still hold the request past lock expiry; once the lock and `stale_after` elapse, another worker may claim `New` (crash-recovery takeover by design). Bound handlers and keep lock TTL above real p99 latency. |
 | Cache poisoning | `Vary: Accept-Language` whenever Accept-Language was read on a machine door; authenticated responses documented `Cache-Control: private`. |
 | Proxy trust | Same configured proxies as TrustProxies, evaluated independently of middleware order / request static state. |
 
