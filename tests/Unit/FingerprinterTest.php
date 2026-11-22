@@ -222,3 +222,18 @@ it('includes the credential bucket in the fingerprint material', function (): vo
         ->and($fingerprinter->fingerprint($request, 1048576, '', 'tenant:a'))
         ->toBe(hash('sha256', "POST\n/api/widgets\ntenant:a\n{}\n"));
 });
+
+it('canonicalizes nested query bags when QUERY_STRING is absent', function (): void {
+    $fingerprinter = new Fingerprinter;
+    $request = Request::create('/items', 'POST', [], [], [], [], '{}');
+    $request->server->remove('QUERY_STRING');
+    $queryParameters = new ReflectionProperty($request->query, 'parameters');
+    $queryParameters->setValue($request->query, [
+        'a' => ['b' => '1', 'c' => ['d' => '2']],
+        'list' => ['x', ['y' => 'z']],
+        'empty' => [],
+    ]);
+
+    expect($fingerprinter->fingerprint($request, 1048576))
+        ->toBe(hash('sha256', "POST\n/items?a%5Bb%5D=1&a%5Bc%5D%5Bd%5D=2&empty=&list=x&list%5By%5D=z\n\n{}\n"));
+});

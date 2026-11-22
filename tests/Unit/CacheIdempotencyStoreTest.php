@@ -559,3 +559,41 @@ it('preserves fingerprint coalesce and lease match guards on complete', function
     expect($record['fingerprint'])->toBe('')
         ->and($record['lease'])->toBe($claim->lease);
 });
+
+it('seals unreplayable completed rows so retries never re-run as New', function (): void {
+    [$store, $repository] = cacheIdempotencyStore(ttlSeconds: 120);
+    $scope = new IdempotencyScope('bucket-a', 'POST', '/items');
+    $now = new DateTimeImmutable('2026-01-01T00:00:00Z');
+    $key = '550e8400-e29b-41d4-a716-446655440020';
+
+    $claim = $store->claim($scope, $key, 'fp', $now);
+    $store->sealUnreplayable($claim, $now);
+
+    /** @var array<string, mixed> $record */
+    $record = $repository->get($scope->cacheKey($key));
+    expect($record['status'])->toBe('completed')
+        ->and($record['body'])->toBeNull()
+        ->and($record['status_code'])->toBeNull()
+        ->and($record['headers'])->toBeNull()
+        ->and($record['expires_at'])->toBe($now->getTimestamp() + 120);
+
+    $again = $store->claim($scope, $key, 'fp', $now);
+    expect($again->outcome)->toBe(ClaimOutcome::NotReplayable);
+
+    expect(fn () => $store->sealUnreplayable(
+        new IdempotencyClaim(ClaimOutcome::Replay, null, 'lease', $scope, $key),
+        $now,
+    ))->toThrow(IdempotencyStoreException::class);
+
+    expect(fn () => $store->sealUnreplayable(
+        new IdempotencyClaim(ClaimOutcome::New, null, null, $scope, $key),
+        $now,
+    ))->toThrow(IdempotencyStoreException::class);
+
+    $fresh = $store->claim($scope, '550e8400-e29b-41d4-a716-446655440021', 'fp', $now);
+    expect(fn () => $store->sealUnreplayable(
+        new IdempotencyClaim(ClaimOutcome::New, null, 'wrong-lease', $scope, '550e8400-e29b-41d4-a716-446655440021'),
+        $now,
+    ))->toThrow(IdempotencyStoreException::class);
+    expect($fresh->outcome)->toBe(ClaimOutcome::New);
+});

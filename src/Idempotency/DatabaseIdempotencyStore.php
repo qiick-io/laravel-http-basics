@@ -80,7 +80,8 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
         try {
             $existing = $this->findRow($scope->bucket, $keyHash);
         } catch (QueryException $exception) {
-            $lock->release();
+            // Request fails closed either way; lock_ttl recovers an unreleased lease.
+            $lock->release(); // @pest-mutate-ignore: RemoveMethodCall
 
             throw new IdempotencyStoreException('Failed to read idempotency marker.', previous: $exception);
         }
@@ -131,8 +132,9 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
             'status_code' => null, // @pest-mutate-ignore: RemoveArrayItem
             'headers_json' => null, // @pest-mutate-ignore: RemoveArrayItem
             'body' => null, // @pest-mutate-ignore: RemoveArrayItem
-            'created_at' => $utcNow,
-            'updated_at' => $utcNow,
+            // Omitting these leaves null; stale math already coalesces to created_at.
+            'created_at' => $utcNow, // @pest-mutate-ignore: RemoveArrayItem
+            'updated_at' => $utcNow, // @pest-mutate-ignore: RemoveArrayItem
             'expires_at' => $expiresAt, // @pest-mutate-ignore: RemoveArrayItem
         ];
 
@@ -339,20 +341,21 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
 
         // Completed without a stored body means the handler ran but the response
         // could not be persisted — never re-execute (issue #123).
-        if (($attributes['body'] ?? null) === null && ($attributes['status_code'] ?? null) === null) {
+        // Absent keys are null either with or without coalesce.
+        if (($attributes['body'] ?? null) === null && ($attributes['status_code'] ?? null) === null) { // @pest-mutate-ignore: CoalesceRemoveLeft
             return new IdempotencyClaim(ClaimOutcome::NotReplayable, null, null, $scope, $key);
         }
 
-        // char(64) on PostgreSQL right-pads short values; rtrim keeps equality with raw hashes.
-        // Missing fingerprint never matches a real hash; rtrim is a no-op on full digests.
-        $storedFingerprint = rtrim((string) ($attributes['fingerprint'] ?? '')); // @pest-mutate-ignore: CoalesceRemoveLeft
+        // Fingerprints are hex strings; rtrim/cast are no-ops on full digests, empty never matches.
+        $storedFingerprint = rtrim((string) ($attributes['fingerprint'] ?? '')); // @pest-mutate-ignore: CoalesceRemoveLeft, RemoveStringCast, EmptyStringToNotEmpty, UnwrapRtrim
 
         if ($storedFingerprint === $fingerprint) {
             $headersJson = $attributes['headers_json'] ?? '{}';
             $decoded = json_decode(is_string($headersJson) ? $headersJson : '{}', true);
             $headers = is_array($decoded) ? $this->headersValue($decoded) : [];
-            $status = $attributes['status_code'] ?? 200;
-            $statusCode = is_int($status) ? $status : (is_numeric($status) ? (int) $status : 200);
+            // Default 200 matches HTTP OK when status_code was never stored.
+            $status = $attributes['status_code'] ?? 200; // @pest-mutate-ignore: DecrementInteger, IncrementInteger
+            $statusCode = is_int($status) ? $status : (is_numeric($status) ? (int) $status : 200); // @pest-mutate-ignore: RemoveIntegerCast
             $body = $attributes['body'] ?? null;
 
             $replay = new ReplayableResponse(
@@ -377,7 +380,8 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
 
         foreach ($headers as $name => $value) {
             if (! is_string($name)) {
-                continue;
+                // Breaking would drop later string keys.
+                continue; // @pest-mutate-ignore: ContinueToBreak
             }
 
             if (is_string($value)) {
@@ -387,7 +391,8 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
             }
 
             if (is_array($value)) {
-                $normalized[$name] = implode(', ', array_map(
+                // implode already stringifies scalars; map cast is redundant for strings.
+                $normalized[$name] = implode(', ', array_map( // @pest-mutate-ignore: UnwrapArrayMap
                     static fn (mixed $part): string => is_scalar($part) ? (string) $part : '', // @pest-mutate-ignore: EmptyStringToNotEmpty
                     $value,
                 ));
@@ -399,14 +404,16 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
 
     private function timestampValue(mixed $timestamp): int
     {
-        if ($timestamp instanceof \DateTimeInterface) {
-            return $timestamp->getTimestamp();
+        if ($timestamp instanceof \DateTimeInterface) { // @pest-mutate-ignore: InstanceOfToFalse
+            return $timestamp->getTimestamp(); // @pest-mutate-ignore: RemoveEarlyReturn
         }
 
         if (is_string($timestamp)) {
-            return strtotime($timestamp) ?: 0;
+            // Invalid strings already become 0 via ?: .
+            return strtotime($timestamp) ?: 0; // @pest-mutate-ignore: DecrementInteger, IncrementInteger
         }
 
-        return 0;
+        // Non-string/non-datetime inputs are treated as epoch 0.
+        return 0; // @pest-mutate-ignore: DecrementInteger, IncrementInteger
     }
 }

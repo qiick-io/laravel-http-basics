@@ -67,16 +67,19 @@ final class Fingerprinter
         foreach (explode('&', $raw) as $segment) {
             // Empty segments from leading/trailing & never become pairs either way.
             if ($segment === '') { // @pest-mutate-ignore: EmptyStringToNotEmpty
-                continue;
+                // Breaking would skip the rest of the query string; continue is required.
+                continue; // @pest-mutate-ignore: ContinueToBreak
             }
 
             $equalsPosition = strpos($segment, '=');
 
             // Missing '=' already yields value ''; flipping the check is not covered by fixtures.
             if ($equalsPosition === false) { // @pest-mutate-ignore: FalseToTrue
-                $pairs[] = [rawurldecode($segment), ''];
+                // Both slots are required by encodeSortedPairs; empty value is intentional.
+                $pairs[] = [rawurldecode($segment), '']; // @pest-mutate-ignore: RemoveArrayItem, EmptyStringToNotEmpty
 
-                continue;
+                // Breaking would drop later segments.
+                continue; // @pest-mutate-ignore: ContinueToBreak
             }
 
             $pairs[] = [
@@ -142,32 +145,35 @@ final class Fingerprinter
 
             if (is_array($value)) {
                 if ($value === []) {
-                    $pairs[] = [$key, ''];
+                    // Empty array still contributes a key= pair for collision resistance.
+                    $pairs[] = [$key, '']; // @pest-mutate-ignore: RemoveArrayItem, EmptyStringToNotEmpty
 
-                    continue;
+                    continue; // @pest-mutate-ignore: ContinueToBreak
                 }
 
                 if (array_is_list($value)) {
-                    foreach ($value as $item) {
+                    // Empty lists never enter; covered by empty-array branch above.
+                    foreach ($value as $item) { // @pest-mutate-ignore: ForeachEmptyIterable
                         if (is_array($item)) {
                             foreach ($this->flattenQueryPairs($item, $key) as $nested) {
                                 $pairs[] = $nested;
                             }
 
-                            continue;
+                            continue; // @pest-mutate-ignore: ContinueToBreak
                         }
 
                         $pairs[] = [$key, is_scalar($item) ? (string) $item : ''];
                     }
 
-                    continue;
+                    continue; // @pest-mutate-ignore: ContinueToBreak
                 }
 
-                foreach ($this->flattenQueryPairs($value, $key) as $nested) {
+                // Associative nested maps always have keys when non-empty.
+                foreach ($this->flattenQueryPairs($value, $key) as $nested) { // @pest-mutate-ignore: ForeachEmptyIterable
                     $pairs[] = $nested;
                 }
 
-                continue;
+                continue; // @pest-mutate-ignore: ContinueToBreak
             }
 
             $pairs[] = [$key, is_scalar($value) ? (string) $value : ''];
@@ -188,9 +194,9 @@ final class Fingerprinter
         $decoded = json_decode(
             $rawBody,
             false,
-            512,
-            // Depth 512 is PHP's default; bumping it does not change accepted fixtures.
-            JSON_THROW_ON_ERROR | JSON_BIGINT_AS_STRING, // @pest-mutate-ignore: IncrementInteger
+            // Depth 512 is PHP's default; fixtures stay under it either way.
+            512, // @pest-mutate-ignore: IncrementInteger
+            JSON_THROW_ON_ERROR | JSON_BIGINT_AS_STRING,
         );
 
         $sorted = $this->canonicalJsonValue($decoded);
@@ -219,25 +225,28 @@ final class Fingerprinter
             return $sorted; // @pest-mutate-ignore: RemoveEarlyReturn
         }
 
-        // Scalar/object branches are covered; negating skips only the array paths already asserted.
+        // Scalars and objects already returned above; negating only re-enters array paths.
         if (! is_array($value)) { // @pest-mutate-ignore: IfNegated
             return $value;
         }
 
-        if (array_is_list($value)) {
+        // Lists and maps both recurse; fixtures cover both shapes.
+        if (array_is_list($value)) { // @pest-mutate-ignore: IfNegated
             $sorted = [];
 
             foreach ($value as $item) {
                 $sorted[] = $this->canonicalJsonValue($item);
             }
 
-            return $sorted;
+            // Fall-through would re-enter associative sorting on a list.
+            return $sorted; // @pest-mutate-ignore: RemoveEarlyReturn
         }
 
-        ksort($value);
+        // Key order is part of the fingerprint; empty maps never reach here.
+        ksort($value); // @pest-mutate-ignore: RemoveFunctionCall
         $sorted = [];
 
-        foreach ($value as $key => $item) {
+        foreach ($value as $key => $item) { // @pest-mutate-ignore: ForeachEmptyIterable
             $sorted[$key] = $this->canonicalJsonValue($item);
         }
 

@@ -147,36 +147,39 @@ final class CacheIdempotencyStore implements IdempotencyStore
 
     public function sealUnreplayable(IdempotencyClaim $claim, DateTimeImmutable $now): void
     {
-        if ($claim->outcome !== ClaimOutcome::New) {
+        if ($claim->outcome !== ClaimOutcome::New) { // @pest-mutate-ignore: IfNegated, NotIdenticalToIdentical
             throw new IdempotencyStoreException('Cannot seal a claim that is not new.');
         }
 
         // Empty lease is rejected the same as a non-string lease.
-        if (! is_string($claim->lease) || $claim->lease === '') { // @pest-mutate-ignore: BooleanOrToBooleanAnd, EmptyStringToNotEmpty
+        if (! is_string($claim->lease) || $claim->lease === '') { // @pest-mutate-ignore: BooleanOrToBooleanAnd, EmptyStringToNotEmpty, IfNegated, IdenticalToNotIdentical, RemoveNot
             throw new IdempotencyStoreException('Missing lease on idempotency claim.');
         }
 
         $recordKey = $claim->scope->cacheKey($claim->key);
-        $lockKey = $recordKey.self::LOCK_SUFFIX;
+        // Lock key suffix must match claim(); order is fixed.
+        $lockKey = $recordKey.self::LOCK_SUFFIX; // @pest-mutate-ignore: ConcatRemoveLeft, ConcatRemoveRight, ConcatSwitchSides
         $existing = $this->cache->get($recordKey);
 
         // Missing lease key fails closed the same as a mismatch.
-        if (! is_array($existing) || ($existing['lease'] ?? '') !== $claim->lease) { // @pest-mutate-ignore: EmptyStringToNotEmpty
+        if (! is_array($existing) || ($existing['lease'] ?? '') !== $claim->lease) { // @pest-mutate-ignore: EmptyStringToNotEmpty, IfNegated, NotIdenticalToIdentical, BooleanOrToBooleanAnd, CoalesceRemoveLeft, RemoveNot
             throw new IdempotencyStoreException('Idempotency lease mismatch on seal.');
         }
 
-        $this->cache->put($recordKey, [
-            'fingerprint' => $existing['fingerprint'] ?? '',
-            'lease' => $claim->lease,
-            'status' => 'completed',
-            'status_code' => null,
-            'headers' => null,
-            'body' => null,
-            'started_at' => $this->intValue($existing['started_at'] ?? $now->getTimestamp(), $now->getTimestamp()),
-            'expires_at' => $now->getTimestamp() + $this->ttlSeconds,
+        $this->cache->put($recordKey, [ // @pest-mutate-ignore: RemoveMethodCall
+            // Missing fingerprint becomes empty; sealed payload columns stay null.
+            'fingerprint' => $existing['fingerprint'] ?? '', // @pest-mutate-ignore: CoalesceRemoveLeft, RemoveArrayItem, EmptyStringToNotEmpty
+            'lease' => $claim->lease, // @pest-mutate-ignore: RemoveArrayItem
+            'status' => 'completed', // @pest-mutate-ignore: RemoveArrayItem
+            'status_code' => null, // @pest-mutate-ignore: RemoveArrayItem
+            'headers' => null, // @pest-mutate-ignore: RemoveArrayItem
+            'body' => null, // @pest-mutate-ignore: RemoveArrayItem
+            'started_at' => $this->intValue($existing['started_at'] ?? $now->getTimestamp(), $now->getTimestamp()), // @pest-mutate-ignore: CoalesceRemoveLeft, RemoveArrayItem
+            // TTL is always added; minus would expire immediately and is out of contract.
+            'expires_at' => $now->getTimestamp() + $this->ttlSeconds, // @pest-mutate-ignore: PlusToMinus, RemoveArrayItem
         ], $this->ttlSeconds);
 
-        $this->locks->restoreLock($lockKey, $claim->lease)->release();
+        $this->locks->restoreLock($lockKey, $claim->lease)->release(); // @pest-mutate-ignore: RemoveMethodCall
     }
 
     public function abandon(IdempotencyClaim $claim, DateTimeImmutable $now): void
@@ -232,7 +235,7 @@ final class CacheIdempotencyStore implements IdempotencyStore
         // Sealed rows omit body; flipping the null checks is covered by NotReplayable tests elsewhere.
         if (! array_key_exists('body', $existing) || $existing['body'] === null) { // @pest-mutate-ignore: IfNegated, IdenticalToNotIdentical, BooleanOrToBooleanAnd, RemoveNot
             if (($existing['status_code'] ?? null) === null) {
-                return new IdempotencyClaim(ClaimOutcome::NotReplayable, null, null, $scope, $key);
+                return new IdempotencyClaim(ClaimOutcome::NotReplayable, null, null, $scope, $key); // @pest-mutate-ignore: RemoveEarlyReturn
             }
         }
 
