@@ -157,3 +157,58 @@ it('preserves zero fractions in encoded json', function (): void {
     expect($fingerprinter->fingerprint($request, 1048576))
         ->toBe(hash('sha256', "POST\n/items\n{\"n\":1.0}\n"));
 });
+
+it('uppercases methods that the request object leaves lowercase', function (): void {
+    $fingerprinter = new Fingerprinter;
+    $request = new class extends Request
+    {
+        public function getMethod(): string
+        {
+            return 'post';
+        }
+    };
+    $request->initialize(request: [], attributes: [], cookies: [], files: [], server: [
+        'REQUEST_URI' => '/items',
+        'REQUEST_METHOD' => 'POST',
+    ], content: '{}');
+    $request->server->set('REQUEST_URI', '/items');
+
+    expect($fingerprinter->fingerprint($request, 1048576))
+        ->toBe(hash('sha256', "POST\n/items\n[]\n"));
+});
+
+it('stringifies integer query values in the canonical query', function (): void {
+    $fingerprinter = new Fingerprinter;
+    $request = Request::create('/items', 'POST', [], [], [], [], '{}');
+    $queryParameters = new ReflectionProperty($request->query, 'parameters');
+    $queryParameters->setValue($request->query, [
+        'n' => 2,
+        'tags' => [1, 2],
+    ]);
+
+    expect($fingerprinter->fingerprint($request, 1048576))
+        ->toBe(hash('sha256', "POST\n/items?n=2&tags=1&tags=2\n[]\n"));
+});
+
+it('keeps unicode and slashes unescaped in the canonical json body', function (): void {
+    $fingerprinter = new Fingerprinter;
+    $request = Request::create('/items', 'POST', [], [], [], [], '{"p":"a/b","t":"café"}');
+
+    expect($fingerprinter->fingerprint($request, 1048576))
+        ->toBe(hash('sha256', "POST\n/items\n{\"p\":\"a/b\",\"t\":\"café\"}\n"));
+});
+
+it('accepts json at depth 511 which fails if the decode limit is decremented', function (): void {
+    $fingerprinter = new Fingerprinter;
+    $nested = '';
+    for ($depth = 0; $depth < 511; $depth++) {
+        $nested .= '{"a":';
+    }
+    $nested .= '1';
+    for ($depth = 0; $depth < 511; $depth++) {
+        $nested .= '}';
+    }
+    $request = Request::create('/items', 'POST', [], [], [], [], $nested);
+
+    expect($fingerprinter->fingerprint($request, 1048576))->toBeString()->not->toBe('');
+});

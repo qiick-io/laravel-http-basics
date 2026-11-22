@@ -169,9 +169,9 @@ it('replays completed records that store numeric strings and array headers', fun
         'status' => 'completed',
         'status_code' => '201',
         'headers' => [
-            'X-Text' => 'ok',
-            'X-List' => ['a', 'b'],
             12 => 'skip-me',
+            'X-Text' => 'ok',
+            'X-List' => ['a', 'b', new stdClass],
             'X-Object' => new stdClass,
         ],
         'body' => ['not-a-string'],
@@ -186,7 +186,7 @@ it('replays completed records that store numeric strings and array headers', fun
         ->and($replay->replay?->body)->toBe('')
         ->and($replay->replay?->headers)->toBe([
             'X-Text' => 'ok',
-            'X-List' => 'a, b',
+            'X-List' => 'a, b, ',
         ]);
 });
 

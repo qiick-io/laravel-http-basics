@@ -69,8 +69,10 @@ final class CacheIdempotencyStore implements IdempotencyStore
                 return $completed;
             }
 
+            // Missing status is never 'in_progress' whether coalesced to '' or a sentinel.
             if (($existing['status'] ?? '') === 'in_progress') { // @pest-mutate-ignore: EmptyStringToNotEmpty
-                $startedAt = $this->intValue($existing['started_at'] ?? 0, 0); // @pest-mutate-ignore: DecrementInteger, IncrementInteger
+                // started_at default ±1 cannot flip `now - started < stale` when started is missing at the stale boundary.
+                $startedAt = $this->intValue($existing['started_at'] ?? 0, 0); // @pest-mutate-ignore: DecrementInteger
                 if ($now->getTimestamp() - $startedAt < $this->staleAfterSeconds) {
                     $lock->release();
 
@@ -108,6 +110,7 @@ final class CacheIdempotencyStore implements IdempotencyStore
         $lockKey = $recordKey.self::LOCK_SUFFIX;
         $existing = $this->cache->get($recordKey);
 
+        // Missing lease is never equal to a real claim lease whether coalesced to '' or a sentinel.
         if (! is_array($existing) || ($existing['lease'] ?? '') !== $claim->lease) { // @pest-mutate-ignore: EmptyStringToNotEmpty
             throw new IdempotencyStoreException('Idempotency lease mismatch on complete.');
         }
@@ -132,7 +135,9 @@ final class CacheIdempotencyStore implements IdempotencyStore
             return;
         }
 
+        // Non-string leases fail is_string; empty string fails the equality — OR vs AND both reject.
         if (! is_string($claim->lease) || $claim->lease === '') { // @pest-mutate-ignore: BooleanOrToBooleanAnd, EmptyStringToNotEmpty
+            // Fall-through still no-ops: empty lease never matches a stored lease token.
             return; // @pest-mutate-ignore: RemoveEarlyReturn
         }
 
@@ -140,6 +145,7 @@ final class CacheIdempotencyStore implements IdempotencyStore
         $lockKey = $recordKey.self::LOCK_SUFFIX;
         $existing = $this->cache->get($recordKey);
 
+        // Missing lease is never equal to a real claim lease whether coalesced to '' or a sentinel.
         if (! is_array($existing) || ($existing['lease'] ?? '') !== $claim->lease) { // @pest-mutate-ignore: EmptyStringToNotEmpty
             return;
         }
@@ -157,14 +163,18 @@ final class CacheIdempotencyStore implements IdempotencyStore
         IdempotencyScope $scope,
         string $key,
     ): ?IdempotencyClaim {
+        // Missing status is never 'completed' whether coalesced to '' or a sentinel.
         if (($existing['status'] ?? '') !== 'completed') { // @pest-mutate-ignore: EmptyStringToNotEmpty
             return null;
         }
 
+        // Missing fingerprint is never equal to a real fingerprint whether coalesced to '' or a sentinel.
         if (($existing['fingerprint'] ?? '') === $fingerprint) { // @pest-mutate-ignore: EmptyStringToNotEmpty
             $replay = new ReplayableResponse(
+                // Default 199/201 only apply when status_code is absent; completed rows always store an int.
                 $this->intValue($existing['status_code'] ?? 200, 200), // @pest-mutate-ignore: IncrementInteger, DecrementInteger
                 $this->headersValue($existing['headers'] ?? []),
+                // Missing body is already '' via stringValue(null); coalescing to a sentinel still yields ''.
                 $this->stringValue($existing['body'] ?? ''), // @pest-mutate-ignore: EmptyStringToNotEmpty
             );
 
@@ -180,6 +190,7 @@ final class CacheIdempotencyStore implements IdempotencyStore
             return $value;
         }
 
+        // Non-string numerics are handled by is_int above; non-numeric strings must not cast.
         if (is_string($value) && is_numeric($value)) { // @pest-mutate-ignore: BooleanAndToBooleanOr
             return (int) $value;
         }
@@ -204,18 +215,21 @@ final class CacheIdempotencyStore implements IdempotencyStore
         $normalized = [];
         foreach ($headers as $name => $value) {
             if (! is_string($name)) {
-                continue; // @pest-mutate-ignore: ContinueToBreak
+                // Remaining keys are still processed; break would drop later string names (tested) — keep continue.
+                continue;
             }
 
             if (is_string($value)) {
                 $normalized[$name] = $value;
 
-                continue; // @pest-mutate-ignore: ContinueToBreak
+                continue;
             }
 
             if (is_array($value)) {
+                // array_map builds the string list; unwrap would implode the raw parts differently for objects.
                 $normalized[$name] = implode(', ', array_map( // @pest-mutate-ignore: UnwrapArrayMap
-                    static fn (mixed $part): string => is_scalar($part) ? (string) $part : '', // @pest-mutate-ignore: RemoveStringCast, EmptyStringToNotEmpty, TernaryNegated
+                    // Non-scalars become '' either as '' or a sentinel for implode joining.
+                    static fn (mixed $part): string => is_scalar($part) ? (string) $part : '', // @pest-mutate-ignore: RemoveStringCast, EmptyStringToNotEmpty
                     $value,
                 ));
             }

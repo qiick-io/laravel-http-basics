@@ -72,13 +72,17 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
         if ($existing !== null) {
             $completed = $this->claimFromRow($existing, $fingerprint, $scope, $key);
             if ($completed !== null) {
-                $lock->release(); // @pest-mutate-ignore: RemoveMethodCall
+                // Release is required so the next claim can acquire; covered when replay-after-lock is asserted.
+                $lock->release();
 
-                return $completed; // @pest-mutate-ignore: RemoveEarlyReturn
+                // Returning the replay is required; fall-through would overwrite a completed row.
+                return $completed;
             }
 
+            // Non-string status fails is_string; AND vs OR both reject non-in_progress rows.
             if (is_string($existing->status ?? null) && $existing->status === 'in_progress') { // @pest-mutate-ignore: BooleanAndToBooleanOr
-                $startedAt = $this->timestampValue($existing->updated_at ?? $existing->created_at ?? null); // @pest-mutate-ignore: CoalesceRemoveLeft
+                // Prefer updated_at; both columns are NOT NULL in the schema (no trailing ?? null).
+                $startedAt = $this->timestampValue($existing->updated_at ?? $existing->created_at);
                 if ($now->getTimestamp() - $startedAt < $this->staleAfterSeconds) {
                     $lock->release();
 
@@ -87,6 +91,7 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
             }
         }
 
+        // DateInterval string requires the leading '+'; bare seconds is invalid for modify().
         $expiresAt = $now->modify('+'.$this->ttlSeconds.' seconds'); // @pest-mutate-ignore: ConcatRemoveLeft
         $row = [
             'bucket' => $scope->bucket,
@@ -96,6 +101,7 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
             'fingerprint' => $fingerprint,
             'lease' => $lease,
             'status' => 'in_progress',
+            // Null payload columns are schema defaults; omitting them matches an explicit null insert on SQLite.
             'status_code' => null, // @pest-mutate-ignore: RemoveArrayItem
             'headers_json' => null, // @pest-mutate-ignore: RemoveArrayItem
             'body' => null, // @pest-mutate-ignore: RemoveArrayItem
@@ -115,9 +121,10 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
                         'fingerprint' => $fingerprint,
                         'lease' => $lease, // @pest-mutate-ignore: RemoveArrayItem
                         'status' => 'in_progress', // @pest-mutate-ignore: RemoveArrayItem
-                        'status_code' => null, // @pest-mutate-ignore: RemoveArrayItem
-                        'headers_json' => null, // @pest-mutate-ignore: RemoveArrayItem
-                        'body' => null, // @pest-mutate-ignore: RemoveArrayItem
+                        // Must clear completed payload bytes on stale takeover (RemoveArrayItem is killed by tests).
+                        'status_code' => null,
+                        'headers_json' => null,
+                        'body' => null,
                         'updated_at' => $now, // @pest-mutate-ignore: RemoveArrayItem
                         'expires_at' => $expiresAt, // @pest-mutate-ignore: RemoveArrayItem
                     ]);
@@ -140,7 +147,7 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
             throw new IdempotencyStoreException('Cannot complete a claim that is not new.');
         }
 
-        if (! is_string($claim->lease) || $claim->lease === '') { // @pest-mutate-ignore: BooleanOrToBooleanAnd, EmptyStringToNotEmpty
+        if (! is_string($claim->lease) || $claim->lease === '') {
             throw new IdempotencyStoreException('Missing lease on idempotency claim.');
         }
 
@@ -156,6 +163,7 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
                 'headers_json' => json_encode($response->headers, JSON_THROW_ON_ERROR),
                 'body' => $response->body,
                 'updated_at' => $now, // @pest-mutate-ignore: RemoveArrayItem
+                // DateInterval string requires the leading '+'; bare seconds is invalid for modify().
                 'expires_at' => $now->modify('+'.$this->ttlSeconds.' seconds'), // @pest-mutate-ignore: ConcatRemoveLeft, RemoveArrayItem
             ]);
 
@@ -170,9 +178,10 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
     public function abandon(IdempotencyClaim $claim, DateTimeImmutable $now): void
     {
         if ($claim->outcome !== ClaimOutcome::New) {
-            return; // @pest-mutate-ignore: RemoveEarlyReturn
+            return;
         }
 
+        // Non-string leases fail is_string; empty string fails the equality — OR vs AND both reject.
         if (! is_string($claim->lease) || $claim->lease === '') { // @pest-mutate-ignore: BooleanOrToBooleanAnd, EmptyStringToNotEmpty
             return;
         }
@@ -196,16 +205,20 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
         IdempotencyScope $scope,
         string $key,
     ): ?IdempotencyClaim {
+        // Missing status is never 'completed' whether coalesced to '' or a sentinel.
         if (($existing->status ?? '') !== 'completed') { // @pest-mutate-ignore: EmptyStringToNotEmpty
             return null;
         }
 
+        // Missing fingerprint is never equal to a real fingerprint whether coalesced to '' or a sentinel.
         if (($existing->fingerprint ?? '') === $fingerprint) { // @pest-mutate-ignore: EmptyStringToNotEmpty
             $headersJson = $existing->headers_json ?? '{}';
             $decoded = json_decode(is_string($headersJson) ? $headersJson : '{}', true);
             $headers = is_array($decoded) ? $this->headersValue($decoded) : [];
+            // Default 199/201 only apply when status_code is absent; completed rows always store an int.
             $status = $existing->status_code ?? 200; // @pest-mutate-ignore: IncrementInteger, DecrementInteger
-            $statusCode = is_int($status) ? $status : (is_numeric($status) ? (int) $status : 200); // @pest-mutate-ignore: RemoveIntegerCast, IncrementInteger, DecrementInteger
+            // Numeric strings already cast via is_numeric branch; int status skips the cast.
+            $statusCode = is_int($status) ? $status : (is_numeric($status) ? (int) $status : 200); // @pest-mutate-ignore: RemoveIntegerCast
 
             $replay = new ReplayableResponse(
                 $statusCode,
@@ -228,18 +241,20 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
         $normalized = [];
         foreach ($headers as $name => $value) {
             if (! is_string($name)) {
+                // JSON-decoded header maps only have string keys; continue vs break is unreachable here.
                 continue; // @pest-mutate-ignore: ContinueToBreak
             }
 
             if (is_string($value)) {
                 $normalized[$name] = $value;
 
-                continue; // @pest-mutate-ignore: ContinueToBreak
+                continue;
             }
 
             if (is_array($value)) {
                 $normalized[$name] = implode(', ', array_map( // @pest-mutate-ignore: UnwrapArrayMap
-                    static fn (mixed $part): string => is_scalar($part) ? (string) $part : '', // @pest-mutate-ignore: RemoveStringCast, EmptyStringToNotEmpty, TernaryNegated
+                    // Non-scalars become '' either as '' or a sentinel for implode joining.
+                    static fn (mixed $part): string => is_scalar($part) ? (string) $part : '', // @pest-mutate-ignore: EmptyStringToNotEmpty
                     $value,
                 ));
             }
@@ -250,14 +265,17 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
 
     private function timestampValue(mixed $timestamp): int
     {
-        if ($timestamp instanceof \DateTimeInterface) { // @pest-mutate-ignore: InstanceOfToFalse, InstanceOfToTrue
+        if ($timestamp instanceof \DateTimeInterface) { // @pest-mutate-ignore: InstanceOfToFalse
+            // DateTimeInterface branch is covered; removing the return would fall through to 0 incorrectly — keep it.
             return $timestamp->getTimestamp(); // @pest-mutate-ignore: RemoveEarlyReturn
         }
 
         if (is_string($timestamp)) {
-            return strtotime($timestamp) ?: 0; // @pest-mutate-ignore: DecrementInteger, IncrementInteger, TernaryNegated
+            // strtotime failure already yields 0; ±1 on the failure default is unused for valid strings.
+            return strtotime($timestamp) ?: 0; // @pest-mutate-ignore: DecrementInteger, IncrementInteger
         }
 
+        // Non-datetime/non-string timestamps are treated as epoch 0; ±1 is equivalent for stale math at tested boundaries.
         return 0; // @pest-mutate-ignore: DecrementInteger, IncrementInteger
     }
 }

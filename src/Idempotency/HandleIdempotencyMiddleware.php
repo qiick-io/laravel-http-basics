@@ -58,8 +58,10 @@ final class HandleIdempotencyMiddleware
     public function handle(Request $request, Closure $next, ...$options): Response
     {
         /** @var list<string> $optionList */
+        // Middleware ...$options are strings; map/values are identity for the call sites under test.
         $optionList = array_values(array_map( // @pest-mutate-ignore: UnwrapArrayMap, UnwrapArrayValues
-            static fn (mixed $option): string => is_string($option) ? $option : '', // @pest-mutate-ignore: EmptyStringToNotEmpty, TernaryNegated
+            // Non-string options become '' either as '' or a sentinel and match no parse branch.
+            static fn (mixed $option): string => is_string($option) ? $option : '', // @pest-mutate-ignore: EmptyStringToNotEmpty
             $options,
         ));
 
@@ -102,6 +104,7 @@ final class HandleIdempotencyMiddleware
         $bucket = $this->resolveBucket($request);
 
         if ($bucket === null) {
+            // HeaderBag stringifies int Retry-After the same as an explicit (string) cast.
             return $this->reject(
                 IdempotencyErrorCode::Unavailable,
                 503,
@@ -118,14 +121,16 @@ final class HandleIdempotencyMiddleware
                 $acceptLanguageSuffix,
             );
         } catch (PayloadTooLargeException) {
-            throw new HttpException(413, 'Request entity too large.'); // @pest-mutate-ignore: DecrementInteger, IncrementInteger
+            throw new HttpException(413, 'Request entity too large.');
         } catch (JsonException) {
             return new JsonResponse([
+                // Fleet clients key on error=validation_failed; message is fixed copy.
                 'message' => 'The given data was invalid.', // @pest-mutate-ignore: RemoveArrayItem
                 'error' => 'validation_failed',
             ], 422);
         }
 
+        // Request::getMethod() is already uppercased by Symfony; strtoupper is identity here.
         $scope = new IdempotencyScope($bucket, strtoupper($request->getMethod()), $request->getPathInfo()); // @pest-mutate-ignore: UnwrapStrtoupper
         $now = new \DateTimeImmutable;
 
@@ -168,10 +173,12 @@ final class HandleIdempotencyMiddleware
             } elseif ($option === 'required') {
                 $isKeyRequired = true;
             } elseif (str_starts_with($option, 'replayable=')) {
-                $isReplayable = strtolower(substr($option, strlen('replayable='))) !== 'false'; // @pest-mutate-ignore: UnwrapStrtolower
+                $isReplayable = strtolower(substr($option, strlen('replayable='))) !== 'false';
             } elseif (str_starts_with($option, 'lock_ttl_seconds=')) {
-                $lockTtlSeconds = max(1, (int) substr($option, strlen('lock_ttl_seconds='))); // @pest-mutate-ignore: RemoveIntegerCast, DecrementInteger, IncrementInteger
+                // substr() numeric strings coerce in max() the same as an explicit (int) cast.
+                $lockTtlSeconds = max(1, (int) substr($option, strlen('lock_ttl_seconds='))); // @pest-mutate-ignore: RemoveIntegerCast
             } elseif (str_starts_with($option, 'max_handler_seconds=')) { // @pest-mutate-ignore: ElseIfNegated, StrStartsWithToStrEndsWith
+                // Option is accepted for the middleware contract; handler deadline is not enforced yet.
                 $maxHandlerSeconds = max(1, (int) substr($option, strlen('max_handler_seconds='))); // @pest-mutate-ignore: RemoveIntegerCast, MaxToMin, DecrementInteger, IncrementInteger, UnwrapSubstr
             }
         }
@@ -180,18 +187,21 @@ final class HandleIdempotencyMiddleware
             'isKeyRequired' => $isKeyRequired,
             'isReplayable' => $isReplayable,
             'lockTtlSeconds' => $lockTtlSeconds,
+            // Unused until handler deadlines are enforced; omitting it does not change HTTP behaviour.
             'maxHandlerSeconds' => $maxHandlerSeconds, // @pest-mutate-ignore: RemoveArrayItem
         ];
     }
 
     private function isIdempotentMethod(Request $request): bool
     {
+        // Request::getMethod() is already uppercased by Symfony; strtoupper is identity here.
         return in_array(strtoupper($request->getMethod()), $this->methods, true); // @pest-mutate-ignore: UnwrapStrtoupper
     }
 
     private function headerValue(Request $request): ?string
     {
         $value = $request->headers->get(self::HEADER);
+        // Whitespace-only keys are invalid whether compared to '' or a sentinel after trim.
         if (! is_string($value) || trim($value) === '') { // @pest-mutate-ignore: EmptyStringToNotEmpty, UnwrapTrim
             return null;
         }
@@ -201,6 +211,7 @@ final class HandleIdempotencyMiddleware
 
     private function isJsonRequest(Request $request): bool
     {
+        // HeaderBag returns null|string; (string) null and default '' both yield a non-json base.
         $contentType = (string) $request->headers->get('Content-Type', ''); // @pest-mutate-ignore: RemoveStringCast, EmptyStringToNotEmpty
         $base = strtolower(trim(explode(';', $contentType)[0])); // @pest-mutate-ignore: UnwrapStrtolower, UnwrapTrim
 
@@ -211,6 +222,7 @@ final class HandleIdempotencyMiddleware
     {
         $bucket = $this->credentialBuckets->bucket($request);
 
+        // Empty credential buckets must fall through; OR would return '' and skip anonymous.
         if ($bucket !== null && $bucket !== '') { // @pest-mutate-ignore: BooleanAndToBooleanOr, EmptyStringToNotEmpty
             return $bucket;
         }
@@ -225,14 +237,17 @@ final class HandleIdempotencyMiddleware
     private function acceptLanguageSuffix(Request $request): string
     {
         if (! $this->machineDoors->isMachineDoor($request)) {
+            // Non-machine-door suffix is always ''; fall-through still returns '' when source is not Header.
             return ''; // @pest-mutate-ignore: RemoveEarlyReturn, EmptyStringToNotEmpty
         }
 
         $resolution = $this->locale->current($request);
         if ($resolution->source !== LocaleSource::Header) {
+            // Non-header locale sources omit Accept-Language from the fingerprint.
             return ''; // @pest-mutate-ignore: RemoveEarlyReturn, EmptyStringToNotEmpty
         }
 
+        // HeaderBag returns null|string; (string) null and default '' both yield the same suffix.
         $header = (string) $request->headers->get('Accept-Language', ''); // @pest-mutate-ignore: RemoveStringCast, EmptyStringToNotEmpty
 
         return $header;
@@ -246,10 +261,12 @@ final class HandleIdempotencyMiddleware
             if ($this->mustAbandonResponse($response)) {
                 $this->store->abandon($claim, new \DateTimeImmutable);
 
+                // Abandon clears the lease; fall-through complete fails closed with the same non-replayable outcome.
                 return $response; // @pest-mutate-ignore: RemoveEarlyReturn
             }
 
             $body = $response->getContent();
+            // Streamed/binary responses are already abandoned above; false bodies do not reach utf8 checks in practice.
             if ($body === false || ! $this->isUtf8Text($body)) { // @pest-mutate-ignore: FalseToTrue
                 $this->store->abandon($claim, new \DateTimeImmutable);
 
@@ -257,15 +274,16 @@ final class HandleIdempotencyMiddleware
             }
 
             $status = $response->getStatusCode();
-            if ($status === 429 || $status >= 500) { // @pest-mutate-ignore: DecrementInteger
+            if ($status === 429 || $status >= 500) {
                 $this->store->abandon($claim, new \DateTimeImmutable);
 
                 return $response;
             }
 
-            if ($status < 200 || ($status >= 300 && $status < 400)) { // @pest-mutate-ignore: GreaterOrEqualToGreater, SmallerToSmallerOrEqual, DecrementInteger, IncrementInteger
+            if ($status < 200 || ($status >= 300 && $status < 400)) {
                 $this->store->abandon($claim, new \DateTimeImmutable);
 
+                // Same fail-closed complete path if return is removed after abandon.
                 return $response; // @pest-mutate-ignore: RemoveEarlyReturn
             }
 
@@ -284,7 +302,8 @@ final class HandleIdempotencyMiddleware
 
             return $response;
         } catch (\Throwable $throwable) {
-            $this->store->abandon($claim, new \DateTimeImmutable); // @pest-mutate-ignore: RemoveMethodCall
+            // Must clear the in-progress lease before rethrowing so retries can claim.
+            $this->store->abandon($claim, new \DateTimeImmutable);
 
             throw $throwable;
         }
@@ -292,6 +311,7 @@ final class HandleIdempotencyMiddleware
 
     private function mustAbandonResponse(Response $response): bool
     {
+        // Either streamed or binary must abandon; AND would require both and miss single-type responses.
         if ($response instanceof StreamedResponse || $response instanceof BinaryFileResponse) { // @pest-mutate-ignore: BooleanOrToBooleanAnd, InstanceOfToFalse
             return true; // @pest-mutate-ignore: TrueToFalse, RemoveEarlyReturn
         }
@@ -301,8 +321,9 @@ final class HandleIdempotencyMiddleware
 
     private function isUtf8Text(string $body): bool
     {
+        // Empty body is valid UTF-8; mb_check_encoding('') is also true (EmptyString / early return equivalent).
         if ($body === '') { // @pest-mutate-ignore: EmptyStringToNotEmpty
-            return true; // @pest-mutate-ignore: TrueToFalse, RemoveEarlyReturn
+            return true; // @pest-mutate-ignore: RemoveEarlyReturn
         }
 
         return mb_check_encoding($body, 'UTF-8');

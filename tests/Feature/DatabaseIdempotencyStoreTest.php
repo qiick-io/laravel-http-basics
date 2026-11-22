@@ -351,6 +351,26 @@ it('uses updated_at then created_at when judging stale in-progress rows', functi
 
     $takeover = $store->claim($scope, $key, 'fresh', $now);
     expect($takeover->outcome)->toBe(ClaimOutcome::New);
+
+    // Fresh updated_at must win over a stale created_at (kills CoalesceRemoveLeft on updated_at).
+    DB::table('idempotency_records')->update([
+        'created_at' => '2025-12-01 00:00:00',
+        'updated_at' => '2026-01-01 00:00:00',
+        'lease' => str_repeat('d', 64),
+    ]);
+    $cache->getStore()->lock($scope->cacheKey($key).':lock', 1, 'x')->forceRelease();
+
+    expect($store->claim($scope, $key, 'fresh-2', $now)->outcome)->toBe(ClaimOutcome::Conflict);
+
+    // Dropping the trailing `?? null` collapses the timestamp to null/epoch 0 and would allow takeover.
+    DB::table('idempotency_records')->update([
+        'created_at' => $now->format('Y-m-d H:i:s'),
+        'updated_at' => $now->format('Y-m-d H:i:s'),
+        'lease' => str_repeat('e', 64),
+    ]);
+    $cache->getStore()->lock($scope->cacheKey($key).':lock', 1, 'y')->forceRelease();
+
+    expect($store->claim($scope, $key, 'fresh-3', $now)->outcome)->toBe(ClaimOutcome::Conflict);
 });
 
 it('returns replay before contending for the lock on completed rows', function (): void {
@@ -512,6 +532,41 @@ it('parses datetime objects and invalid timestamp strings when judging staleness
     $cache->getStore()->lock($scope->cacheKey($key).':lock', 1, 'x')->forceRelease();
 
     expect($store->claim($scope, $key, 'fresh-2', $now)->outcome)->toBe(ClaimOutcome::New);
+});
+
+it('replays a completed row discovered after the lock is acquired', function (): void {
+    $cache = new Repository(new ArrayStore);
+    $completed = (object) [
+        'status' => 'completed',
+        'fingerprint' => 'fp',
+        'headers_json' => '{"X-A":"1"}',
+        'status_code' => 200,
+        'body' => '{"race":true}',
+    ];
+
+    $connection = Mockery::mock(ConnectionInterface::class);
+    $builder = Mockery::mock();
+    $builder->shouldReceive('where')->andReturnSelf();
+    $builder->shouldReceive('first')->andReturn(null, $completed);
+    $connection->shouldReceive('table')->andReturn($builder);
+
+    $store = new DatabaseIdempotencyStore(
+        $connection,
+        $cache,
+        'idempotency_records',
+        60,
+        30,
+        5,
+    );
+    $scope = new IdempotencyScope('bucket-a', 'POST', '/items');
+    $now = new DateTimeImmutable('2026-01-01T00:00:00Z');
+    $key = '550e8400-e29b-41d4-a716-446655440019';
+
+    $claim = $store->claim($scope, $key, 'fp', $now);
+    expect($claim->outcome)->toBe(ClaimOutcome::Replay)
+        ->and($claim->replay?->body)->toBe('{"race":true}');
+
+    expect($cache->getStore()->lock($scope->cacheKey($key).':lock', 1, 'probe')->get())->toBeTrue();
 });
 
 it('wraps write failures as store exceptions and releases the lock', function (): void {

@@ -145,12 +145,21 @@ it('abandons streamed responses without completing the claim', function (): void
 });
 
 it('rethrows exceptions after abandoning the in-flight claim', function (): void {
-    $middleware = app(HandleIdempotencyMiddleware::class);
+    $middleware = makeIdempotencyMiddleware($this->store, new FakeCredentialBucketResolver('tenant:1'));
     $request = idempotencyRequest();
+    $request->headers->set('Idempotency-Key', '550e8400-e29b-41d4-a716-446655440099');
 
     expect(fn () => $middleware->handle($request, static function (): void {
         throw new RuntimeException('boom');
     }))->toThrow(RuntimeException::class);
+
+    $again = $this->store->claim(
+        new IdempotencyScope('tenant:1', 'POST', '/api/widgets'),
+        '550e8400-e29b-41d4-a716-446655440099',
+        'fp',
+        new DateTimeImmutable,
+    );
+    expect($again->outcome)->toBe(ClaimOutcome::New);
 });
 
 it('passes non-idempotent methods straight through', function (): void {
@@ -428,8 +437,12 @@ it('turns oversized payloads into http 413', function (): void {
         maxBodyBytes: 8,
     );
 
-    expect(fn () => $middleware->handle(idempotencyRequest('{"name":"too-large"}'), static fn () => response('x')))
-        ->toThrow(HttpException::class);
+    try {
+        $middleware->handle(idempotencyRequest('{"name":"too-large"}'), static fn () => response('x'));
+        expect(false)->toBeTrue();
+    } catch (HttpException $exception) {
+        expect($exception->getStatusCode())->toBe(413);
+    }
 });
 
 it('returns 422 when the fingerprinter rejects json', function (): void {

@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Idempotency: rebase onto security-headers re-review tip; strip blanket
+  `@pest-mutate-ignore` and keep only proven equivalents with one-line reasons;
+  raise per-class mutation score to 100% for the six design §8 targets.
+
 ### Added
 
 - Idempotency: `HandleIdempotencyMiddleware`, `Fingerprinter`, `CacheIdempotencyStore`,

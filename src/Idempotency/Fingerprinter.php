@@ -22,13 +22,14 @@ final class Fingerprinter
     public function fingerprint(
         Request $request,
         int $maxBytes,
-        string $acceptLanguageSuffix = '', // @pest-mutate-ignore: EmptyStringToNotEmpty
+        string $acceptLanguageSuffix = '',
     ): string {
-        $method = strtoupper($request->getMethod()); // @pest-mutate-ignore: UnwrapStrtoupper
+        $method = strtoupper($request->getMethod());
         $path = $request->getPathInfo();
         $query = $this->canonicalQueryString($request);
-        $pathLine = $path.($query !== '' ? '?'.$query : ''); // @pest-mutate-ignore: EmptyStringToNotEmpty
+        $pathLine = $path.($query !== '' ? '?'.$query : '');
 
+        // Request::getContent() is already string-typed in Symfony 7.
         $rawBody = (string) $request->getContent(); // @pest-mutate-ignore: RemoveStringCast
         if (strlen($rawBody) > $maxBytes) {
             throw new PayloadTooLargeException;
@@ -49,16 +50,18 @@ final class Fingerprinter
         $parts = [];
         foreach ($parameters as $name => $value) {
             if (is_array($value)) {
-                foreach ($value as $single) { // @pest-mutate-ignore: ForeachEmptyIterable
-                    $encoded = is_scalar($single) ? (string) $single : ''; // @pest-mutate-ignore: RemoveStringCast, EmptyStringToNotEmpty, TernaryNegated
-                    $parts[] = rawurlencode((string) $name).'='.rawurlencode($encoded); // @pest-mutate-ignore: RemoveStringCast, ConcatSwitchSides
+                foreach ($value as $single) {
+                    $encoded = is_scalar($single) ? (string) $single : '';
+                    // Query bag keys are strings; rawurlencode would coerce the same way.
+                    $parts[] = rawurlencode((string) $name).'='.rawurlencode($encoded); // @pest-mutate-ignore: RemoveStringCast
                 }
 
-                continue; // @pest-mutate-ignore: ContinueToBreak
+                continue;
             }
 
-            $encodedValue = is_scalar($value) ? (string) $value : ''; // @pest-mutate-ignore: RemoveStringCast, EmptyStringToNotEmpty, TernaryNegated
-            $parts[] = rawurlencode((string) $name).'='.rawurlencode($encodedValue); // @pest-mutate-ignore: RemoveStringCast, ConcatSwitchSides
+            $encodedValue = is_scalar($value) ? (string) $value : '';
+            // Query bag keys are strings; rawurlencode would coerce the same way.
+            $parts[] = rawurlencode((string) $name).'='.rawurlencode($encodedValue); // @pest-mutate-ignore: RemoveStringCast
         }
 
         return implode('&', $parts);
@@ -69,16 +72,17 @@ final class Fingerprinter
      */
     private function canonicalJsonBody(string $rawBody): string
     {
-        if ($rawBody === '') { // @pest-mutate-ignore: EmptyStringToNotEmpty
-            return ''; // @pest-mutate-ignore: EmptyStringToNotEmpty, RemoveEarlyReturn
+        if ($rawBody === '') {
+            return '';
         }
 
-        $decoded = json_decode($rawBody, true, 512, JSON_THROW_ON_ERROR); // @pest-mutate-ignore: DecrementInteger, IncrementInteger
+        // Depth 513 still accepts every payload depth 512 accepts (IncrementInteger equivalent).
+        $decoded = json_decode($rawBody, true, 512, JSON_THROW_ON_ERROR); // @pest-mutate-ignore: IncrementInteger
         $sorted = $this->recursiveKeySort($decoded);
 
-        return json_encode($sorted, JSON_UNESCAPED_SLASHES // @pest-mutate-ignore: BitwiseOrToBitwiseAnd
-            | JSON_UNESCAPED_UNICODE // @pest-mutate-ignore: BitwiseOrToBitwiseAnd
-            | JSON_PRESERVE_ZERO_FRACTION // @pest-mutate-ignore: BitwiseOrToBitwiseAnd
+        return json_encode($sorted, JSON_UNESCAPED_SLASHES
+            | JSON_UNESCAPED_UNICODE
+            | JSON_PRESERVE_ZERO_FRACTION
             | JSON_THROW_ON_ERROR);
     }
 
@@ -90,10 +94,11 @@ final class Fingerprinter
 
         if (array_is_list($value)) {
             $sorted = [];
-            foreach ($value as $item) { // @pest-mutate-ignore: ForeachEmptyIterable
+            foreach ($value as $item) {
                 $sorted[] = $this->recursiveKeySort($item);
             }
 
+            // Falling through ksort()+rebuild on a list yields the same list.
             return $sorted; // @pest-mutate-ignore: RemoveEarlyReturn
         }
 

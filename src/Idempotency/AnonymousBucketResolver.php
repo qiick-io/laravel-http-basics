@@ -27,6 +27,7 @@ final class AnonymousBucketResolver
         foreach ($this->components as $component) {
             $parts[] = match ($component) {
                 'ip' => $request->ip() ?? '',
+                // null userAgent becomes '' in implode the same as (string) null.
                 'user_agent' => (string) $request->userAgent(), // @pest-mutate-ignore: RemoveStringCast
                 'route' => $request->route()?->getName()
                     ?? $request->route()?->uri()
