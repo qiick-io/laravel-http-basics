@@ -31,3 +31,50 @@ it('throws for an unknown upload context', function (): void {
     expect(fn () => $resolver->forContext('missing'))
         ->toThrow(InvalidArgumentException::class);
 });
+
+it('normalises partial context entries and falls back to default magic', function (): void {
+    $resolver = new ConfigUploadPolicyResolver([
+        'chat' => [
+            'allowed_extensions' => ['png', 123, null],
+            'allowed_mime_types' => 'not-an-array',
+            'max_bytes' => 'unlimited',
+            'allows_svg' => true,
+            'content_type_mismatch' => 'trust_sniffed',
+            'max_uncompressed_ratio' => 12,
+        ],
+    ], [
+        'png' => ['89504E470D0A1A0A', 99],
+        0 => ['ignored'],
+    ]);
+
+    $policy = $resolver->forContext('chat');
+
+    expect($policy->allowedExtensions())->toBe(['png'])
+        ->and($policy->allowedMimeTypes())->toBeNull()
+        ->and($policy->maxBytes())->toBeNull()
+        ->and($policy->allowsSvg())->toBeTrue()
+        ->and($policy->contentTypeMismatch())->toBe(MismatchMode::TrustSniffed)
+        ->and($policy->maxUncompressedRatio())->toBe(12)
+        ->and($policy->magicSignatures())->toBe(['png' => ['89504E470D0A1A0A']]);
+});
+
+it('rejects unknown mismatch modes and keeps explicit magic maps', function (): void {
+    $resolver = new ConfigUploadPolicyResolver([
+        'files' => [
+            'allowed_extensions' => null,
+            'allowed_mime_types' => ['image/png'],
+            'max_bytes' => 100,
+            'content_type_mismatch' => 'nope',
+            'magic_signatures' => [
+                'png' => ['AABB'],
+            ],
+        ],
+    ]);
+
+    $policy = $resolver->forContext('files');
+
+    expect($policy->contentTypeMismatch())->toBe(MismatchMode::Reject)
+        ->and($policy->maxBytes())->toBe(100)
+        ->and($policy->allowedMimeTypes())->toBe(['image/png'])
+        ->and($policy->magicSignatures())->toBe(['png' => ['AABB']]);
+});

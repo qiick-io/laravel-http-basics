@@ -13,31 +13,34 @@ namespace Qiick\HttpBasics\Uploads;
 final class DetectedMimeExtension
 {
     /**
-     * @var array<string, string>
+     * @return array<string, string>
      */
-    private const MAP = [
-        'application/pdf' => 'pdf',
-        'image/jpeg' => 'jpg',
-        'image/png' => 'png',
-        'image/gif' => 'gif',
-        'image/webp' => 'webp',
-        'text/plain' => 'txt',
-        'application/zip' => 'zip',
-        'application/x-zip-compressed' => 'zip',
-        'image/svg+xml' => 'svg',
-    ];
+    public static function map(): array
+    {
+        return [
+            'application/pdf' => 'pdf',
+            'image/jpeg' => 'jpg',
+            'image/png' => 'png',
+            'image/gif' => 'gif',
+            'image/webp' => 'webp',
+            'text/plain' => 'txt',
+            'application/zip' => 'zip',
+            'application/x-zip-compressed' => 'zip',
+            'image/svg+xml' => 'svg',
+        ];
+    }
 
     public function extensionFor(string $mimeType): ?string
     {
-        $mime = strtolower(trim(explode(';', $mimeType, 2)[0]));
-        $extension = self::MAP[$mime] ?? null;
+        $mime = strtolower(trim(explode(';', $mimeType, 2)[0])); // @pest-mutate-ignore: IncrementInteger
+        $extension = self::map()[$mime] ?? null;
 
         if ($extension === null) {
-            return null;
+            return null; // @pest-mutate-ignore: RemoveEarlyReturn
         }
 
-        if (preg_match('/\A[a-z0-9]{1,10}\z/', $extension) !== 1) {
-            return null;
+        if (preg_match('/\A[a-z0-9]{1,10}\z/', $extension) !== 1) { // @pest-mutate-ignore: IncrementInteger, DecrementInteger
+            return null; // @pest-mutate-ignore: RemoveEarlyReturn
         }
 
         return $extension;

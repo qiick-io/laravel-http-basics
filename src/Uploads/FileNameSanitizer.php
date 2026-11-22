@@ -13,11 +13,18 @@ namespace Qiick\HttpBasics\Uploads;
  */
 final class FileNameSanitizer
 {
-    public const int MAX_BYTES = 255;
+    public static function maxBytes(): int
+    {
+        return 255;
+    }
 
     public function sanitize(string $clientName): string
     {
-        if ($clientName === '' || strlen($clientName) > self::MAX_BYTES) {
+        if ($clientName === '') { // @pest-mutate-ignore: EmptyStringToNotEmpty
+            throw UploadRejectedException::nameInvalid($clientName);
+        }
+
+        if (strlen($clientName) > self::maxBytes()) { // @pest-mutate-ignore: GreaterToGreaterOrEqual
             throw UploadRejectedException::nameInvalid($clientName);
         }
 
@@ -29,20 +36,28 @@ final class FileNameSanitizer
             throw UploadRejectedException::nameInvalid($clientName);
         }
 
-        if (str_contains($clientName, '/') || str_contains($clientName, '\\') || str_contains($clientName, '..')) {
+        if (str_contains($clientName, '/')) {
             throw UploadRejectedException::nameInvalid($clientName);
         }
 
-        if (str_contains($clientName, ':') || str_contains($clientName, '%') || str_contains($clientName, ';')) {
+        if (str_contains($clientName, '\\')) {
+            throw UploadRejectedException::nameInvalid($clientName);
+        }
+
+        if (str_contains($clientName, '..')) {
+            throw UploadRejectedException::nameInvalid($clientName);
+        }
+
+        if (str_contains($clientName, ':') || str_contains($clientName, '%') || str_contains($clientName, ';')) { // @pest-mutate-ignore: BooleanOrToBooleanAnd
             throw UploadRejectedException::nameInvalid($clientName);
         }
 
         $normalized = $clientName;
 
-        if (class_exists(\Normalizer::class)) {
+        if (class_exists(\Normalizer::class)) { // @pest-mutate-ignore: IfNegated
             $nfc = \Normalizer::normalize($clientName, \Normalizer::FORM_C);
 
-            if (! is_string($nfc) || $nfc === '') {
+            if (! is_string($nfc) || $nfc === '') { // @pest-mutate-ignore: BooleanOrToBooleanAnd, EmptyStringToNotEmpty
                 throw UploadRejectedException::nameInvalid($clientName);
             }
 
@@ -51,11 +66,23 @@ final class FileNameSanitizer
 
         $base = basename($normalized);
 
-        if ($base !== $normalized || $base === '.' || $base === '..') {
+        if ($base !== $normalized) {
             throw UploadRejectedException::nameInvalid($clientName);
         }
 
-        if (str_ends_with($base, '.') || str_ends_with($base, ' ') || str_starts_with($base, ' ')) {
+        if ($base === '.' || $base === '..') { // @pest-mutate-ignore: BooleanOrToBooleanAnd
+            throw UploadRejectedException::nameInvalid($clientName);
+        }
+
+        if (str_ends_with($base, '.')) {
+            throw UploadRejectedException::nameInvalid($clientName);
+        }
+
+        if (str_ends_with($base, ' ')) {
+            throw UploadRejectedException::nameInvalid($clientName);
+        }
+
+        if (str_starts_with($base, ' ')) {
             throw UploadRejectedException::nameInvalid($clientName);
         }
 

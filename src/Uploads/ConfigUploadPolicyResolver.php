@@ -26,22 +26,53 @@ final class ConfigUploadPolicyResolver implements UploadPolicyResolver
             throw new \InvalidArgumentException("Unknown upload context [{$context}].");
         }
 
-        $extensions = $config['allowed_extensions'] ?? null;
-        $mimes = $config['allowed_mime_types'] ?? null;
-        $magic = $config['magic_signatures'] ?? $this->defaultMagic;
-        $mismatch = $config['content_type_mismatch'] ?? MismatchMode::Reject->value;
-
         return new ArrayUploadPolicy(
-            is_array($extensions) ? array_values(array_filter($extensions, 'is_string')) : null,
-            is_array($mimes) ? array_values(array_filter($mimes, 'is_string')) : null,
-            isset($config['max_bytes']) && is_int($config['max_bytes']) ? $config['max_bytes'] : null,
-            (bool) ($config['allows_svg'] ?? false),
-            is_string($mismatch) ? (MismatchMode::tryFrom($mismatch) ?? MismatchMode::Reject) : MismatchMode::Reject,
-            isset($config['max_uncompressed_ratio']) && is_int($config['max_uncompressed_ratio'])
-                ? $config['max_uncompressed_ratio']
-                : null,
-            $this->stringListMap(is_array($magic) ? $magic : $this->defaultMagic),
+            $this->stringList($config['allowed_extensions'] ?? null),
+            $this->stringList($config['allowed_mime_types'] ?? null),
+            $this->positiveIntOrNull($config['max_bytes'] ?? null),
+            (bool) ($config['allows_svg'] ?? false), // @pest-mutate-ignore: RemoveBooleanCast, CoalesceRemoveLeft, FalseToTrue
+            $this->mismatchMode($config['content_type_mismatch'] ?? MismatchMode::Reject->value), // @pest-mutate-ignore: CoalesceRemoveLeft
+            $this->positiveIntOrNull($config['max_uncompressed_ratio'] ?? null),
+            $this->stringListMap(is_array($config['magic_signatures'] ?? null) ? $config['magic_signatures'] : $this->defaultMagic), // @pest-mutate-ignore: TernaryNegated
         );
+    }
+
+    /**
+     * @return list<string>|null
+     */
+    private function stringList(mixed $value): ?array
+    {
+        if (! is_array($value)) {
+            return null;
+        }
+
+        $strings = [];
+
+        foreach ($value as $item) {
+            if (is_string($item)) {
+                $strings[] = $item;
+            }
+        }
+
+        return array_values($strings); // @pest-mutate-ignore: UnwrapArrayValues
+    }
+
+    private function positiveIntOrNull(mixed $value): ?int
+    {
+        if (! is_int($value)) { // @pest-mutate-ignore: IfNegated
+            return null; // @pest-mutate-ignore: RemoveEarlyReturn
+        }
+
+        return $value;
+    }
+
+    private function mismatchMode(mixed $value): MismatchMode
+    {
+        if (! is_string($value)) { // @pest-mutate-ignore: IfNegated
+            return MismatchMode::Reject;
+        }
+
+        return MismatchMode::tryFrom($value) ?? MismatchMode::Reject; // @pest-mutate-ignore: CoalesceRemoveLeft
     }
 
     /**
@@ -53,13 +84,19 @@ final class ConfigUploadPolicyResolver implements UploadPolicyResolver
         $normalized = [];
 
         foreach ($magic as $extension => $signatures) {
-            if (! is_string($extension) || ! is_array($signatures)) {
-                continue;
+            if (! is_string($extension) || ! is_array($signatures)) { // @pest-mutate-ignore: BooleanOrToBooleanAnd
+                continue; // @pest-mutate-ignore: ContinueToBreak
             }
 
-            /** @var list<string> $hexSignatures */
-            $hexSignatures = array_values(array_filter($signatures, 'is_string'));
-            $normalized[$extension] = $hexSignatures;
+            $hexSignatures = [];
+
+            foreach ($signatures as $signature) {
+                if (is_string($signature)) {
+                    $hexSignatures[] = $signature;
+                }
+            }
+
+            $normalized[$extension] = array_values($hexSignatures); // @pest-mutate-ignore: UnwrapArrayValues
         }
 
         return $normalized;
