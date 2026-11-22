@@ -2,6 +2,9 @@
 
 declare(strict_types=1);
 
+use Illuminate\Contracts\Http\Kernel;
+use Illuminate\Cookie\Middleware\EncryptCookies;
+use Illuminate\Foundation\Http\Middleware\PreventRequestsDuringMaintenance;
 use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\Route;
 use Qiick\HttpBasics\Contracts\DefaultLocaleResolver;
@@ -25,6 +28,10 @@ beforeEach(function (): void {
         return response('pong', 200);
     });
 
+    Route::middleware(SetLocaleMiddleware::class)->get('/api', function () {
+        return response('api-root', 200);
+    });
+
     Route::middleware(SetLocaleMiddleware::class)->get('/dashboard', function () {
         return response('ok', 200);
     });
@@ -43,23 +50,52 @@ it('sets Content-Language and Vary from Accept-Language on machine doors', funct
     assertVaryAcceptLanguage($response->baseResponse);
 });
 
-it('does not add Vary when the locale did not come from the header', function (): void {
-    // Call without Accept-Language (Symfony defaults would otherwise negotiate en).
+it('adds Vary when Accept-Language was read even if it did not win', function (): void {
+    $response = $this->get('/api/ping', ['Accept-Language' => 'xx']);
+
+    $response->assertOk();
+    assertContentLanguage($response->baseResponse, 'en');
+    assertVaryAcceptLanguage($response->baseResponse);
+});
+
+it('adds Vary when an empty Accept-Language header was still read', function (): void {
     $response = $this->call('GET', '/api/ping', server: [
         'HTTP_ACCEPT_LANGUAGE' => '',
     ]);
 
     $response->assertOk();
     assertContentLanguage($response->baseResponse, 'en');
-    expect($response->headers->get('Vary'))->toBeNull();
+    assertVaryAcceptLanguage($response->baseResponse);
 });
 
-it('ignores Accept-Language on web routes', function (): void {
+it('ignores Accept-Language on web routes and does not Vary', function (): void {
     $response = $this->get('/dashboard', ['Accept-Language' => 'de']);
 
     $response->assertOk();
     assertContentLanguage($response->baseResponse, 'en');
     expect($response->headers->get('Vary'))->toBeNull();
+});
+
+it('honours an encrypted locale cookie after EncryptCookies on the web stack', function (): void {
+    Route::middleware([EncryptCookies::class, SetLocaleMiddleware::class])
+        ->get('/web/cookie', function () {
+            return response('ok', 200);
+        });
+
+    // withCookie encrypts by default; EncryptCookies decrypts before SetLocale runs.
+    $response = $this->withCookie('locale', 'de')->get('/web/cookie');
+
+    $response->assertOk();
+    assertContentLanguage($response->baseResponse, 'de');
+    expect(App::getLocale())->toBe('de');
+});
+
+it('negotiates Accept-Language on /api itself', function (): void {
+    $response = $this->get('/api', ['Accept-Language' => 'fr']);
+
+    $response->assertOk();
+    assertContentLanguage($response->baseResponse, 'fr');
+    assertVaryAcceptLanguage($response->baseResponse);
 });
 
 it('carries Content-Language on error responses', function (): void {
@@ -68,6 +104,22 @@ it('carries Content-Language on error responses', function (): void {
     $response->assertStatus(429);
     assertContentLanguage($response->baseResponse, 'fr');
     assertVaryAcceptLanguage($response->baseResponse);
+});
+
+it('carries Content-Language on a maintenance 503 when prepended globally', function (): void {
+    $kernel = $this->app->make(Kernel::class);
+    $kernel->prependMiddleware(PreventRequestsDuringMaintenance::class);
+    $kernel->prependMiddleware(SetLocaleMiddleware::class);
+
+    $this->app->maintenanceMode()->activate([]);
+
+    try {
+        $response = $this->get('/dashboard');
+        $response->assertStatus(503);
+        assertContentLanguage($response->baseResponse, 'en');
+    } finally {
+        $this->app->maintenanceMode()->deactivate();
+    }
 });
 
 it('preserves an existing Vary token when appending Accept-Language', function (): void {
@@ -95,5 +147,6 @@ it('applies principal locale inside $next when header did not win', function ():
 
     $response->assertOk();
     assertContentLanguage($response->baseResponse, 'fr');
-    expect($response->headers->get('Vary'))->toBeNull();
+    // Empty Accept-Language was still read → Vary under the amended rule.
+    assertVaryAcceptLanguage($response->baseResponse);
 });

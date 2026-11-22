@@ -72,21 +72,45 @@ Trust is computed by `ConfigTrustedProxyDetector` from the same sources as Trust
 
 ### Locale (landed)
 
+Locale cookie and user preference only work **after** `EncryptCookies` +
+`StartSession`. Register on the `web` and `api` groups (Laravel 12 / 13
+`bootstrap/app.php`). Prepend globally as well when maintenance / early errors
+must carry `Content-Language`.
+
 ```php
 use Qiick\HttpBasics\Locale\SetLocaleMiddleware;
 use Qiick\HttpBasics\Locale\LocaleNegotiator;
 
-$middleware->append(SetLocaleMiddleware::class);
+// bootstrap/app.php
+->withMiddleware(function (Middleware $middleware) {
+    // Web: after EncryptCookies + StartSession (group defaults) so cookie / user work.
+    $middleware->web(append: [
+        SetLocaleMiddleware::class,
+    ]);
+
+    // API / machine doors: Accept-Language negotiation only (no cookie).
+    $middleware->api(append: [
+        SetLocaleMiddleware::class,
+    ]);
+
+    // Optional but recommended: Content-Language on maintenance 503 and errors
+    // before group middleware (same reason AssignRequestId is prepended).
+    $middleware->prepend(SetLocaleMiddleware::class);
+})
 
 // After API-key / principal auth (inside the stack, before Content-Language):
 app(LocaleNegotiator::class)->applyPrincipalLocale($request, $principal->locale);
 ```
 
+Default machine doors include `api` and `api/*` (so `/api` itself negotiates).
+`Vary: Accept-Language` is set whenever that header was **read** on a machine
+door, not only when it won.
+
 | Config / env | Default | Meaning |
 | --- | --- | --- |
 | `HTTP_BASICS_SUPPORTED_LOCALES` | empty → app locale + fallback | Comma-separated supported tags (case-sensitive). |
 | `HTTP_BASICS_LOCALE_MAX_HEADER_BYTES` | `1024` | Oversize `Accept-Language` is ignored (fall through). |
-| `HTTP_BASICS_LOCALE_MAX_LANGUAGES` | `20` | Too many ranges → treat header as absent. |
+| `HTTP_BASICS_LOCALE_MAX_LANGUAGES` | `20` | Too many ranges (counted before dedupe) → treat header as absent. |
 
 ## Threat model (short)
 
@@ -100,7 +124,7 @@ app(LocaleNegotiator::class)->applyPrincipalLocale($request, $principal->locale)
 | Anonymous bucket | Best-effort de-duplication, **not** an identity boundary; HMAC secret rotatable (rotation invalidates anon records); depends on TrustProxies. |
 | Secret replay | Route `replayable=false` + header deny-list + text/JSON only; API-key issuance must be non-replayable. |
 | Retry storms / double execution | 409 while lock held; lease-conditional complete; fail closed on marker eviction. |
-| Cache poisoning | `Vary: Accept-Language` when negotiated from the header; authenticated responses documented `Cache-Control: private`. |
+| Cache poisoning | `Vary: Accept-Language` whenever Accept-Language was read on a machine door; authenticated responses documented `Cache-Control: private`. |
 | Proxy trust | Same configured proxies as TrustProxies, evaluated independently of middleware order / request static state. |
 
 ## CORS (fleet)

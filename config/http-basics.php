@@ -61,7 +61,7 @@ return [
         /*
          * @var list<string>
          */
-        'machine_doors' => ['api/*', 'mcp', 'mcp/*'],
+        'machine_doors' => ['api', 'api/*', 'mcp', 'mcp/*'],
         'cookie' => 'locale',
         'fallback' => env('APP_FALLBACK_LOCALE', 'en'),
         'max_header_bytes' => (int) env('HTTP_BASICS_LOCALE_MAX_HEADER_BYTES', 1024),

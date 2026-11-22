@@ -10,7 +10,9 @@ use Illuminate\Support\Facades\App;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
- * @api Register globally so errors before group middleware still get Content-Language.
+ * @api Register on the `web` group (after StartSession) and the `api` group.
+ * Prepend globally as well when maintenance / early errors must carry
+ * Content-Language (see README).
  */
 final class SetLocaleMiddleware
 {
@@ -36,7 +38,8 @@ final class SetLocaleMiddleware
 
         $response->headers->set('Content-Language', $final->locale);
 
-        if ($final->source === LocaleSource::Header) {
+        // Vary whenever Accept-Language was read, not only when it won.
+        if ($final->didReadAcceptLanguage) {
             $this->appendVary($response, 'Accept-Language');
         }
 

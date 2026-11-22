@@ -18,14 +18,20 @@ final class LocaleNegotiator
 {
     public const string ATTRIBUTE = 'http_basics.locale';
 
+    /**
+     * RFC 7231 qvalue: 0[.0-3 digits] or 1[.0-3 zeros]. Rejects scientific
+     * notation (`1e-1`) and leading-dot forms (`.5`).
+     */
+    private const string Q_VALUE_PATTERN = '/^(?:0(?:\.[0-9]{0,3})?|1(?:\.0{0,3})?)$/';
+
     public function __construct(
         private SupportedLocales $supported,
         private DefaultLocaleResolver $default,
         private MachineDoorClassifier $doors,
         private string $cookieName = 'locale',
         private string $fallbackLocale = 'en',
-        private int $maxHeaderBytes = 1024, // @pest-mutate-ignore: IncrementInteger, DecrementInteger
-        private int $maxLanguages = 20, // @pest-mutate-ignore: IncrementInteger, DecrementInteger
+        private int $maxHeaderBytes = 1024,
+        private int $maxLanguages = 20,
     ) {}
 
     public function resolve(Request $request): LocaleResolution
@@ -43,6 +49,7 @@ final class LocaleNegotiator
      * Called from product auth middleware after the global locale middleware has
      * entered and before it writes Content-Language (i.e. inside `$next`).
      * Only upgrades the locale when Accept-Language did not already win.
+     * Preserves whether Accept-Language was read (for Vary).
      */
     public function applyPrincipalLocale(Request $request, ?string $principalLocale): void
     {
@@ -55,9 +62,12 @@ final class LocaleNegotiator
             return;
         }
 
+        $didReadAcceptLanguage = $current instanceof LocaleResolution
+            && $current->didReadAcceptLanguage;
+
         $request->attributes->set(
             self::ATTRIBUTE,
-            new LocaleResolution($principalLocale, LocaleSource::Principal),
+            new LocaleResolution($principalLocale, LocaleSource::Principal, $didReadAcceptLanguage),
         );
     }
 
@@ -79,12 +89,15 @@ final class LocaleNegotiator
 
     private function resolveMachineDoor(Request $request): LocaleResolution
     {
-        $fromHeader = $this->negotiateAcceptLanguage($request);
+        $raw = $request->headers->get('Accept-Language');
+        $didReadAcceptLanguage = is_string($raw);
+
+        $fromHeader = $this->negotiateAcceptLanguage($raw);
         if ($fromHeader !== null) {
-            return new LocaleResolution($fromHeader, LocaleSource::Header);
+            return new LocaleResolution($fromHeader, LocaleSource::Header, true);
         }
 
-        return $this->defaultChain();
+        return $this->defaultChain($didReadAcceptLanguage);
     }
 
     private function resolveWeb(Request $request): LocaleResolution
@@ -104,43 +117,45 @@ final class LocaleNegotiator
 
     private function userLocale(mixed $user): ?string
     {
-        if (! is_object($user)) {
-            return null; // @pest-mutate-ignore: RemoveEarlyReturn
-        }
-
-        if (! isset($user->locale) || ! is_string($user->locale)) {
+        // Empty locale fails isSupported the same as null (EmptyStringToNotEmpty equivalent).
+        // BooleanOrToBooleanAnd is equivalent: non-objects never expose a string locale via isset.
+        if (! is_object($user) || ! isset($user->locale) || ! is_string($user->locale) || $user->locale === '') { // @pest-mutate-ignore: EmptyStringToNotEmpty, BooleanOrToBooleanAnd
             return null;
         }
 
-        return strlen($user->locale) === 0 ? null : $user->locale; // @pest-mutate-ignore: IdenticalEqual, NotIdentical, IncrementInteger, DecrementInteger
+        return $user->locale;
     }
 
-    private function defaultChain(): LocaleResolution
+    private function defaultChain(bool $didReadAcceptLanguage = false): LocaleResolution
     {
         $default = $this->default->resolve();
         if ($this->isSupported($default)) {
-            return new LocaleResolution($default, LocaleSource::Default);
+            return new LocaleResolution($default, LocaleSource::Default, $didReadAcceptLanguage);
         }
 
         if ($this->isSupported($this->fallbackLocale)) {
-            return new LocaleResolution($this->fallbackLocale, LocaleSource::Fallback);
+            return new LocaleResolution($this->fallbackLocale, LocaleSource::Fallback, $didReadAcceptLanguage);
         }
 
         if ($this->isSupported('en')) {
-            return new LocaleResolution('en', LocaleSource::Fallback);
+            return new LocaleResolution('en', LocaleSource::Fallback, $didReadAcceptLanguage);
         }
 
         $available = $this->supported->all();
         if ($available === []) {
-            return new LocaleResolution($this->fallbackLocale, LocaleSource::Fallback);
+            return new LocaleResolution($this->fallbackLocale, LocaleSource::Fallback, $didReadAcceptLanguage);
         }
 
-        return new LocaleResolution($available[0], LocaleSource::Fallback);
+        return new LocaleResolution($available[0], LocaleSource::Fallback, $didReadAcceptLanguage);
     }
 
-    private function negotiateAcceptLanguage(Request $request): ?string
+    /**
+     * Negotiate a supported locale from a raw Accept-Language value, or null
+     * when the header is absent, oversize, over-cap, empty after parse, or
+     * matches nothing (including when only `*` remains but nothing is supported).
+     */
+    private function negotiateAcceptLanguage(mixed $raw): ?string
     {
-        $raw = $request->headers->get('Accept-Language');
         if (! is_string($raw)) {
             return null;
         }
@@ -150,10 +165,16 @@ final class LocaleNegotiator
             return null;
         }
 
-        $ranges = $this->parseLanguageRanges($raw);
-        // Strict greater-than: exactly maxLanguages ranges are still accepted.
-        if ($ranges === [] || count($ranges) > $this->maxLanguages) {
+        $rangeParts = $this->splitLanguageRangeParts($raw);
+        // Cap counts raw ranges before q-parse / dedupe.
+        if ($rangeParts === [] || count($rangeParts) > $this->maxLanguages) {
             return null;
+        }
+
+        $ranges = $this->orderLanguageRanges($rangeParts);
+        // Empty ordered ranges still fall through to null after both match loops.
+        if ($ranges === []) {
+            return null; // @pest-mutate-ignore: RemoveEarlyReturn
         }
 
         $available = $this->supported->all();
@@ -162,10 +183,7 @@ final class LocaleNegotiator
         }
 
         foreach ($ranges as $tag) {
-            if ($tag === '*') {
-                continue; // @pest-mutate-ignore: ContinueToBreak
-            }
-
+            // '*' never matches via matchAvailable; handled in the pass below.
             $match = $this->matchAvailable($tag, $available);
             if ($match !== null) {
                 return $match;
@@ -183,35 +201,53 @@ final class LocaleNegotiator
     }
 
     /**
-     * Parse Accept-Language into tags ordered by q (desc). Drops q=0 and
-     * malformed q. Duplicate tags keep the highest q. '*' is appended last
-     * (lowest priority among remaining).
+     * Non-empty comma-separated Accept-Language parts (before q-parse / dedupe).
      *
      * @return list<string>
      */
-    private function parseLanguageRanges(string $header): array
+    private function splitLanguageRangeParts(string $header): array
+    {
+        $parts = [];
+
+        foreach (explode(',', $header) as $part) {
+            $trimmed = trim($part);
+            if ($trimmed === '') {
+                continue;
+            }
+
+            $parts[] = $trimmed;
+        }
+
+        return $parts;
+    }
+
+    /**
+     * Parse Accept-Language parts into tags ordered by q (desc). Drops q=0 and
+     * malformed q. Duplicate tags keep the highest q. '*' is appended last
+     * (lowest priority among remaining).
+     *
+     * @param  list<string>  $rangeParts
+     * @return list<string>
+     */
+    private function orderLanguageRanges(array $rangeParts): array
     {
         /** @var array<string, float> $scores */
         $scores = [];
 
-        foreach (explode(',', $header) as $part) {
-            $part = trim($part); // @pest-mutate-ignore: UnwrapTrim
-            if ($part === '') { // @pest-mutate-ignore: EmptyStringToNotEmpty
-                continue;
-            }
-
+        foreach ($rangeParts as $part) {
             $pieces = array_map(trim(...), explode(';', $part));
             $tag = array_shift($pieces);
-            if (! is_string($tag) || $tag === '') { // @pest-mutate-ignore: BooleanOrToBooleanAnd, EmptyStringToNotEmpty
-                continue; // @pest-mutate-ignore: ContinueToBreak
+            if (! is_string($tag) || $tag === '') {
+                continue;
             }
 
             $q = $this->parseQuality($pieces);
-            if ($q === null || $q <= 0.0) { // @pest-mutate-ignore: SmallerToSmallerOrEqual, DecrementFloat
+            if ($q === null || $q <= 0.0) {
                 continue;
             }
 
-            // Highest q wins duplicates; do not case-fold tags.
+            // Highest q wins duplicate tags; do not case-fold tags.
+            // Equal q keeps the same score for the same tag (GreaterToGreaterOrEqual equivalent).
             if (! isset($scores[$tag]) || $q > $scores[$tag]) { // @pest-mutate-ignore: GreaterToGreaterOrEqual
                 $scores[$tag] = $q;
             }
@@ -236,32 +272,36 @@ final class LocaleNegotiator
      */
     private function parseQuality(array $params): ?float
     {
-        $q = 1.0; // @pest-mutate-ignore: IncrementFloat, DecrementFloat
+        $q = 1.0;
+        $hasQuality = false;
 
         foreach ($params as $param) {
-            if (! str_starts_with($param, 'q=')) {
+            if (! str_starts_with(strtolower($param), 'q=')) {
+                continue;
+            }
+
+            // Duplicate q params: first wins.
+            // Remaining params are only further q= values we already ignore (ContinueToBreak equivalent).
+            if ($hasQuality) {
                 continue; // @pest-mutate-ignore: ContinueToBreak
             }
 
-            $rawQ = substr($param, 2); // @pest-mutate-ignore: IncrementInteger, DecrementInteger
-            if ($rawQ === '' || ! is_numeric($rawQ)) { // @pest-mutate-ignore: EmptyStringToNotEmpty, BooleanOrToBooleanAnd
+            $rawQ = substr($param, 2);
+            // Empty rawQ already fails Q_VALUE_PATTERN (EmptyStringToNotEmpty equivalent).
+            if ($rawQ === '' || preg_match(self::Q_VALUE_PATTERN, $rawQ) !== 1) { // @pest-mutate-ignore: EmptyStringToNotEmpty
                 return null;
             }
 
-            $parsed = (float) $rawQ;
-            if ($parsed < 0.0 || $parsed > 1.0) { // @pest-mutate-ignore: GreaterToGreaterOrEqual, SmallerToSmallerOrEqual, DecrementFloat, IncrementFloat
-                return null;
-            }
-
-            $q = $parsed;
+            $q = (float) $rawQ;
+            $hasQuality = true;
         }
 
         return $q;
     }
 
     /**
-     * Exact match, or prefix match after normalising `-`/`_` (both directions).
-     * No case folding: `EN` does not match `en`.
+     * Exact (and normalised exact) match across the whole available list first,
+     * then language-prefix match. No case folding: `EN` does not match `en`.
      *
      * @param  list<string>  $available
      */
@@ -270,16 +310,18 @@ final class LocaleNegotiator
         $normalizedTag = $this->normalizeTag($tag);
 
         foreach ($available as $locale) {
+            // Identical tags also match on the normalised equality below (RemoveEarlyReturn equivalent).
             if ($locale === $tag) {
                 return $locale; // @pest-mutate-ignore: RemoveEarlyReturn
             }
 
-            $normalizedLocale = $this->normalizeTag($locale);
-            if ($normalizedLocale === $normalizedTag) {
+            if ($this->normalizeTag($locale) === $normalizedTag) {
                 return $locale;
             }
+        }
 
-            if ($this->isLanguagePrefixMatch($normalizedTag, $normalizedLocale)) {
+        foreach ($available as $locale) {
+            if ($this->isLanguagePrefixMatch($normalizedTag, $this->normalizeTag($locale))) {
                 return $locale;
             }
         }

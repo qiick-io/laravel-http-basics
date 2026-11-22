@@ -128,7 +128,7 @@ final class HttpBasicsServiceProvider extends ServiceProvider
         });
 
         $this->app->singleton(MachineDoorClassifier::class, function (Application $app): MachineDoorClassifier {
-            $patterns = $this->config($app)->get('http-basics.locale.machine_doors', ['api/*', 'mcp', 'mcp/*']);
+            $patterns = $this->config($app)->get('http-basics.locale.machine_doors', ['api', 'api/*', 'mcp', 'mcp/*']);
             if (! is_array($patterns)) {
                 $patterns = [];
             }

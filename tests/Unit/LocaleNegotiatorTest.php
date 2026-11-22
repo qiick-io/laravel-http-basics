@@ -12,7 +12,7 @@ use Qiick\HttpBasics\Testing\FixedDefaultLocaleResolver;
 function makeNegotiator(
     array $supported = ['en', 'de', 'fr'],
     string $default = 'en',
-    array $doors = ['api/*', 'mcp', 'mcp/*'],
+    array $doors = ['api', 'api/*', 'mcp', 'mcp/*'],
     string $fallback = 'en',
     int $maxHeaderBytes = 1024,
     int $maxLanguages = 20,
@@ -59,7 +59,8 @@ it('honours q-values and ignores q=0 on machine doors', function (): void {
     $resolution = $negotiator->resolve($request);
 
     expect($resolution->locale)->toBe('en')
-        ->and($resolution->source)->toBe(LocaleSource::Header);
+        ->and($resolution->source)->toBe(LocaleSource::Header)
+        ->and($resolution->didReadAcceptLanguage)->toBeTrue();
 });
 
 it('keeps the highest q when a tag is duplicated', function (): void {
@@ -69,7 +70,14 @@ it('keeps the highest q when a tag is duplicated', function (): void {
     expect($negotiator->resolve($request)->locale)->toBe('de');
 });
 
-it('treats an oversize Accept-Language as absent', function (): void {
+it('uses the first q parameter when q is duplicated on one range', function (): void {
+    $negotiator = makeNegotiator(['en', 'de']);
+    $request = machineRequest(headers: ['Accept-Language' => 'de;q=0.2;q=0.9,en;q=0.5']);
+
+    expect($negotiator->resolve($request)->locale)->toBe('en');
+});
+
+it('treats an oversize Accept-Language as absent but still marks it read', function (): void {
     $negotiator = makeNegotiator(maxHeaderBytes: 32);
     $request = machineRequest(headers: [
         'Accept-Language' => 'de,'.str_repeat('x', 100),
@@ -78,7 +86,8 @@ it('treats an oversize Accept-Language as absent', function (): void {
     $resolution = $negotiator->resolve($request);
 
     expect($resolution->source)->not->toBe(LocaleSource::Header)
-        ->and($resolution->locale)->toBe('en');
+        ->and($resolution->locale)->toBe('en')
+        ->and($resolution->didReadAcceptLanguage)->toBeTrue();
 });
 
 it('still accepts an Accept-Language of exactly maxHeaderBytes', function (): void {
@@ -99,7 +108,21 @@ it('treats too many language ranges as absent', function (): void {
 
     $resolution = $negotiator->resolve($request);
 
-    expect($resolution->source)->toBe(LocaleSource::Default);
+    expect($resolution->source)->toBe(LocaleSource::Default)
+        ->and($resolution->didReadAcceptLanguage)->toBeTrue();
+});
+
+it('counts ranges before dedupe for the maxLanguages cap', function (): void {
+    // 16 raw ranges, but only 8 unique tags after dedupe — still over a cap of 15.
+    $ranges = [];
+    for ($i = 0; $i < 8; $i++) {
+        $ranges[] = 'xx'.$i.';q=0.1';
+        $ranges[] = 'xx'.$i.';q=0.9';
+    }
+    $negotiator = makeNegotiator(supported: ['en', 'de'], maxLanguages: 15);
+    $request = machineRequest(headers: ['Accept-Language' => implode(',', $ranges).',de;q=1']);
+
+    expect($negotiator->resolve($request)->source)->toBe(LocaleSource::Default);
 });
 
 it('still accepts exactly maxLanguages ranges', function (): void {
@@ -122,6 +145,13 @@ it('matches de-DE to available de and rejects case-folded EN', function (): void
 
     $enUpper = $negotiator->resolve(machineRequest(headers: ['Accept-Language' => 'EN']));
     expect($enUpper->source)->not->toBe(LocaleSource::Header);
+});
+
+it('prefers an exact available locale over an earlier prefix match', function (): void {
+    $negotiator = makeNegotiator(['de', 'de-CH']);
+
+    expect($negotiator->resolve(machineRequest(headers: ['Accept-Language' => 'de-CH']))->locale)
+        ->toBe('de-CH');
 });
 
 it('normalises underscores both ways', function (): void {
@@ -167,7 +197,16 @@ it('drops malformed and out-of-range q-values', function (string $header, string
     'empty q' => ['de;q=,en;q=0.8', 'en'],
     'above one' => ['de;q=1.5,en;q=0.8', 'en'],
     'below zero' => ['de;q=-0.1,en;q=0.8', 'en'],
+    'scientific' => ['de;q=1e-1,en;q=0.8', 'en'],
+    'leading dot' => ['de;q=.5,en;q=0.8', 'en'],
 ]);
+
+it('treats Q= as case-insensitive', function (): void {
+    $negotiator = makeNegotiator(['en', 'de']);
+    $request = machineRequest(headers: ['Accept-Language' => 'de;Q=0.2,en;q=0.9']);
+
+    expect($negotiator->resolve($request)->locale)->toBe('en');
+});
 
 it('prefers Accept-Language over a later principal on machine doors', function (): void {
     $negotiator = makeNegotiator(['en', 'de']);
@@ -188,7 +227,19 @@ it('applies principal locale when Accept-Language did not win', function (): voi
     $negotiator->applyPrincipalLocale($request, 'fr');
 
     expect($negotiator->current($request)->locale)->toBe('fr')
-        ->and($negotiator->current($request)->source)->toBe(LocaleSource::Principal);
+        ->and($negotiator->current($request)->source)->toBe(LocaleSource::Principal)
+        ->and($negotiator->current($request)->didReadAcceptLanguage)->toBeFalse();
+});
+
+it('preserves didReadAcceptLanguage when applying principal after a failed header', function (): void {
+    $negotiator = makeNegotiator(['en', 'de', 'fr']);
+    $request = machineRequest(headers: ['Accept-Language' => 'xx']);
+    $negotiator->resolve($request);
+
+    $negotiator->applyPrincipalLocale($request, 'fr');
+
+    expect($negotiator->current($request)->locale)->toBe('fr')
+        ->and($negotiator->current($request)->didReadAcceptLanguage)->toBeTrue();
 });
 
 it('ignores empty or unsupported principal locales', function (?string $principal): void {
@@ -232,7 +283,8 @@ it('ignores Accept-Language on web requests', function (): void {
     $resolution = $negotiator->resolve($request);
 
     expect($resolution->locale)->toBe('en')
-        ->and($resolution->source)->toBe(LocaleSource::Default);
+        ->and($resolution->source)->toBe(LocaleSource::Default)
+        ->and($resolution->didReadAcceptLanguage)->toBeFalse();
 });
 
 it('uses the authenticated user locale on web requests', function (): void {
@@ -356,7 +408,8 @@ it('ignores Accept-Language when the supported list is empty', function (): void
     $negotiator = makeNegotiator(supported: [], default: 'en', fallback: 'en');
     $request = machineRequest(headers: ['Accept-Language' => 'de']);
 
-    expect($negotiator->resolve($request)->source)->toBe(LocaleSource::Fallback);
+    expect($negotiator->resolve($request)->source)->toBe(LocaleSource::Fallback)
+        ->and($negotiator->resolve($request)->didReadAcceptLanguage)->toBeTrue();
 });
 
 it('ignores a non-object user resolver on web requests', function (): void {
@@ -379,7 +432,8 @@ it('drops a lone q=0 range instead of treating it as a match', function (): void
     $negotiator = makeNegotiator(['en', 'de']);
     $request = machineRequest(headers: ['Accept-Language' => 'de;q=0']);
 
-    expect($negotiator->resolve($request)->source)->not->toBe(LocaleSource::Header);
+    expect($negotiator->resolve($request)->source)->not->toBe(LocaleSource::Header)
+        ->and($negotiator->resolve($request)->didReadAcceptLanguage)->toBeTrue();
 });
 
 it('skips a bare semicolon range and keeps the next tag', function (): void {
@@ -401,4 +455,85 @@ it('ignores a star-only Accept-Language when nothing is supported', function ():
     $request = machineRequest(headers: ['Accept-Language' => '*']);
 
     expect($negotiator->resolve($request)->source)->toBe(LocaleSource::Fallback);
+});
+
+it('treats /api itself as a machine door', function (): void {
+    $negotiator = makeNegotiator(['en', 'de']);
+    $request = machineRequest('/api', ['Accept-Language' => 'de']);
+
+    expect($negotiator->resolve($request)->locale)->toBe('de')
+        ->and($negotiator->resolve($request)->source)->toBe(LocaleSource::Header);
+});
+
+it('does not mark didReadAcceptLanguage when the header is absent', function (): void {
+    $negotiator = makeNegotiator(['en', 'de']);
+    $request = machineRequest();
+
+    expect($negotiator->resolve($request)->didReadAcceptLanguage)->toBeFalse();
+});
+
+it('uses constructor defaults for maxHeaderBytes and maxLanguages', function (): void {
+    $negotiator = new LocaleNegotiator(
+        new ArraySupportedLocales(['en', 'de']),
+        new FixedDefaultLocaleResolver('en'),
+        new MachineDoorClassifier(['api', 'api/*']),
+    );
+
+    // Exactly 1024 bytes is accepted; 1025 is ignored (default maxHeaderBytes=1024).
+    $exact = 'de,'.str_repeat('x', 1024 - 3);
+    expect(strlen($exact))->toBe(1024);
+    expect($negotiator->resolve(machineRequest(headers: ['Accept-Language' => $exact]))->locale)->toBe('de');
+
+    $over = 'de,'.str_repeat('x', 1025 - 3);
+    expect(strlen($over))->toBe(1025);
+    expect($negotiator->resolve(machineRequest(headers: ['Accept-Language' => $over]))->source)
+        ->toBe(LocaleSource::Default);
+
+    $ranges = [];
+    for ($i = 0; $i < 20; $i++) {
+        $ranges[] = 'xx'.$i.';q=0.1';
+    }
+    $ranges[19] = 'de;q=0.9';
+    expect($negotiator->resolve(machineRequest(headers: ['Accept-Language' => implode(',', $ranges)]))->locale)
+        ->toBe('de');
+
+    $ranges[] = 'yy;q=0.1';
+    expect($negotiator->resolve(machineRequest(headers: ['Accept-Language' => implode(',', $ranges)]))->source)
+        ->toBe(LocaleSource::Default);
+});
+
+it('does not count whitespace-only segments toward maxLanguages', function (): void {
+    $negotiator = makeNegotiator(supported: ['en', 'de'], maxLanguages: 1);
+    $request = machineRequest(headers: ['Accept-Language' => ' ,de']);
+
+    expect($negotiator->resolve($request)->locale)->toBe('de');
+});
+
+it('skips empty comma segments when applying the maxLanguages cap', function (): void {
+    $negotiator = makeNegotiator(supported: ['en', 'de'], maxLanguages: 1);
+    $request = machineRequest(headers: ['Accept-Language' => ',,de,,']);
+
+    expect($negotiator->resolve($request)->locale)->toBe('de');
+});
+
+it('treats a missing q as 1.0 so an explicit q=1.0 sibling is not outranked', function (): void {
+    $negotiator = makeNegotiator(['en', 'de']);
+    $request = machineRequest(headers: ['Accept-Language' => 'en;q=1.0,de']);
+
+    expect($negotiator->resolve($request)->locale)->toBe('en');
+});
+
+it('still reads q after a non-q parameter on the same range', function (): void {
+    $negotiator = makeNegotiator(['en', 'de']);
+    $request = machineRequest(headers: ['Accept-Language' => 'de;x=1;q=0.1,en;q=0.5']);
+
+    expect($negotiator->resolve($request)->locale)->toBe('en');
+});
+
+it('does not honour an empty language tag even when the empty string is supported', function (): void {
+    $negotiator = makeNegotiator(supported: ['', 'de'], default: 'de', fallback: 'de');
+    $request = machineRequest(headers: ['Accept-Language' => ';q=1']);
+
+    expect($negotiator->resolve($request)->locale)->toBe('de')
+        ->and($negotiator->resolve($request)->source)->not->toBe(LocaleSource::Header);
 });
