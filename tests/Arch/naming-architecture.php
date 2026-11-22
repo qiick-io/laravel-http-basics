@@ -25,6 +25,8 @@ return [
             'Qiick\HttpBasics\Contracts\CredentialBucketResolver',
             'Qiick\HttpBasics\Contracts\IdempotencyStore',
             'Qiick\HttpBasics\Contracts\ErrorRenderer',
+            // Design M9: CORS seams without Contract suffix.
+            'Qiick\HttpBasics\Cors\AllowedOriginsResolver',
         ],
         'Enums' => [
             // Design §3.1 / §3.2 / §3.3: source enums without Enum suffix.
