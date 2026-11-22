@@ -139,6 +139,37 @@ Existing HSTS / XFO / Referrer / Permissions / nosniff on the response are never
 replaced. If the response already has **either** `Content-Security-Policy` or
 `Content-Security-Policy-Report-Only`, this package adds **neither** CSP header.
 
+### Idempotency (landed)
+
+```php
+use Qiick\HttpBasics\Contracts\CredentialBucketResolver;
+use Qiick\HttpBasics\Idempotency\HandleIdempotencyMiddleware;
+
+// Per route, after throttle / auth / scope / cost:
+Route::post('/api/items', ...)->middleware(HandleIdempotencyMiddleware::class);
+
+// Non-replayable routes that issue secrets (API keys, invites, password reset):
+Route::post('/api/keys', ...)->middleware(HandleIdempotencyMiddleware::class.':replayable=false');
+
+// Product bucket from server state (never request input):
+app()->bind(CredentialBucketResolver::class, MyCredentialBucketResolver::class);
+```
+
+| Config / env | Default | Meaning |
+| --- | --- | --- |
+| `HTTP_BASICS_IDEMPOTENCY_STORE` | `cache` | `cache` or `database` (see `docs/reference-schema.md`). |
+| `HTTP_BASICS_IDEMPOTENCY_TTL` | `86400` | Completed record TTL from completion time. |
+| `HTTP_BASICS_IDEMPOTENCY_LOCK_TTL` | `60` | Must be ≥ `max_handler_seconds`. |
+| `HTTP_BASICS_IDEMPOTENCY_KEY_FORMAT` | `uuid` | `uuid` or `sf-string`. |
+| `HTTP_BASICS_IDEMPOTENCY_ANON_ENABLED` | `false` | Public writes via HMAC bucket (`ip`, `user_agent`, `route`). |
+| `HTTP_BASICS_IDEMPOTENCY_ANON_SECRET` | — | Required ≥32 bytes when anon is enabled. |
+
+Refusals use fleet JSON (`message` + `error`): `idempotency_key_required`,
+`idempotency_key_invalid`, `idempotency_unsupported_media` (415),
+`idempotency_payload_mismatch` (422), `idempotency_in_progress` (409 + `Retry-After`),
+`idempotency_unavailable` (503). Replays force the **current** `X-Request-Id` and strip
+stale `X-RateLimit-*` headers.
+
 ## Threat model (short)
 
 | Topic | Contract |

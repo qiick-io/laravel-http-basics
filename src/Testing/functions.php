@@ -62,3 +62,19 @@ function assertSecurityHeaders(
         Assert::assertSame('nosniff', $response->headers->get('X-Content-Type-Options'));
     }
 }
+
+function assertIdempotentReplay(Response $first, Response $second): void
+{
+    Assert::assertSame($first->getStatusCode(), $second->getStatusCode());
+    Assert::assertSame((string) $first->getContent(), (string) $second->getContent());
+}
+
+/**
+ * @param  array<string, mixed>  $snapshot
+ */
+function assertNoSensitiveBucketData(array $snapshot): void
+{
+    $encoded = json_encode($snapshot, JSON_THROW_ON_ERROR);
+    Assert::assertStringNotContainsString('HTTP_BASICS_IDEMPOTENCY_ANON_SECRET', $encoded);
+    Assert::assertDoesNotMatchRegularExpression('/\b(?:\d{1,3}\.){3}\d{1,3}\b/', $encoded);
+}

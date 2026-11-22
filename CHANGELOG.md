@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Idempotency: `HandleIdempotencyMiddleware`, `Fingerprinter`, `CacheIdempotencyStore`,
+  `DatabaseIdempotencyStore`, `AnonymousBucketResolver`, `FleetErrorRenderer`,
+  `IdempotencyRejection`, contract seams (`CredentialBucketResolver`, `IdempotencyStore`,
+  `ErrorRenderer`), and testing helpers (`FixedClock`, `InMemoryIdempotencyStore`,
+  `FakeCredentialBucketResolver`, `assertIdempotentReplay`, `assertNoSensitiveBucketData`).
+  Per-route replay of 2xx/422 (not 429/5xx/Set-Cookie/streams); server-side buckets only;
+  boot validation for TTLs, key format, anon secret length, and lock/handler bounds.
 - Security headers: `SecurityHeaderBuilder`, `SetSecurityHeadersMiddleware`,
   `SecurityHeadersPolicy`, `CspMode`, `CspPolicyBuilder` /
   `ViteFriendlyCspPolicyBuilder`, and `assertSecurityHeaders`. Never clobbers
