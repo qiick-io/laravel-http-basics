@@ -213,7 +213,9 @@ final class UploadValidator
         $ratio = $policy->maxUncompressedRatio();
         $ceiling = $policy->maxUncompressedBytes();
 
-        if ($ratio === null && $ceiling === null) {
+        // Both limits null turns inspection off only where archives are allowed: a
+        // context that refuses them must still catch a ZIP behind another format.
+        if ($ratio === null && $ceiling === null && $policy->allowsArchives()) {
             return;
         }
 

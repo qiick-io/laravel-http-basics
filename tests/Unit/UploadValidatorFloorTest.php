@@ -388,7 +388,7 @@ it('puts the previous error handler back after measuring an archive', function (
  * bytes before, between or after the records. Offsets in the directory always point
  * at the real local headers, so libzip opens what a careful attacker would send.
  *
- * @param  list<array{name: string, data: string, localName?: string, isListed?: bool, unixMode?: int, hasDataDescriptor?: bool, hasDescriptorSignature?: bool, hasZip64Descriptor?: bool, localExtra?: string}>  $entries
+ * @param  list<array{name: string, data: string, localName?: string, isListed?: bool, unixMode?: int, hasDataDescriptor?: bool, hasDescriptorSignature?: bool, hasZip64Descriptor?: bool, localExtra?: string, zip64DirectoryFields?: string, directoryExtraBefore?: string}>  $entries
  * @param  array{comment?: string, afterEnd?: string, leadingBytes?: string, beforeDirectory?: string, isZip64?: bool, beforeZip64Record?: string, beforeZip64Locator?: string, zip64RecordBytes?: int}  $layout
  */
 function craftedZipBytes(array $entries, array $layout = []): string
@@ -422,11 +422,25 @@ function craftedZipBytes(array $entries, array $layout = []): string
         }
 
         $unixMode = $entry['unixMode'] ?? null;
+        // ZIP64 in the directory: the maxed 32-bit fields move, in order, to extra field 0x0001.
+        $zip64Fields = $entry['zip64DirectoryFields'] ?? 'none';
+        $hasZip64Sizes = $zip64Fields === 'sizes and offset';
+        $directoryExtra = ($entry['directoryExtraBefore'] ?? '').match ($zip64Fields) {
+            'none' => '',
+            'offset' => pack('vvP', 0x0001, 8, $localOffset),
+            'sizes and offset' => pack('vvPPP', 0x0001, 24, strlen($entry['data']), strlen($compressed), $localOffset),
+            'truncated' => pack('vv', 0x0001, 0),
+            'missing' => ZIP_TIMESTAMP_EXTRA,
+            // Three bytes too few for another field header.
+            'dangling' => ZIP_TIMESTAMP_EXTRA."\0\0\0",
+            // Claims 8 bytes of offset but carries 7.
+            'short' => pack('vv', 0x0001, 8).str_repeat("\0", 7),
+        };
         $listedCount++;
-        $centralSection .= "PK\x01\x02".pack('vvvvvv', $unixMode === null ? 20 : (3 << 8) | 20, 20, $flags, 8, 0, 0)
-            .pack('VVV', $crc, strlen($compressed), strlen($entry['data']))
-            .pack('vvvvv', strlen($entry['name']), 0, 0, 0, 0)
-            .pack('VV', $unixMode === null ? 0 : $unixMode << 16, $localOffset).$entry['name'];
+        $centralSection .= "PK\x01\x02".pack('vvvvvv', $unixMode === null ? 45 : (3 << 8) | 45, 45, $flags, 8, 0, 0)
+            .pack('VVV', $crc, $hasZip64Sizes ? 0xFFFF_FFFF : strlen($compressed), $hasZip64Sizes ? 0xFFFF_FFFF : strlen($entry['data']))
+            .pack('vvvvv', strlen($entry['name']), strlen($directoryExtra), 0, 0, 0)
+            .pack('VV', $unixMode === null ? 0 : $unixMode << 16, $zip64Fields === 'none' ? $localOffset : 0xFFFF_FFFF).$entry['name'].$directoryExtra;
     }
 
     $localSection .= $layout['beforeDirectory'] ?? '';
@@ -747,3 +761,50 @@ it('refuses other archive formats finfo recognises (re-review 4 N3)', function (
     'warc' => ["WARC/1.0\r\nWARC-Type: warcinfo\r\n\r\n"],
     'iso' => [str_repeat("\0", 0x8001).'CD001'.str_repeat("\0", 3000)],
 ]);
+
+it('follows ZIP64 local header offsets in the central directory', function (string $zip64Fields, string $extraBefore): void {
+    $entries = [
+        ['name' => 'a.txt', 'data' => 'hello'],
+        ['name' => 'b.txt', 'data' => 'world', 'zip64DirectoryFields' => $zip64Fields, 'directoryExtraBefore' => $extraBefore],
+    ];
+
+    expect(zipLayoutCovers(craftedZipBytes($entries)))->toBeTrue();
+})->with([
+    'offset only' => ['offset', ''],
+    'sizes, then offset' => ['sizes and offset', ''],
+    'after another extra field' => ['offset', ZIP_TIMESTAMP_EXTRA],
+]);
+
+it('refuses a ZIP64 directory offset it cannot read', function (string $zip64Fields): void {
+    $twin = craftedZipBytes([['name' => 'a.txt', 'data' => 'hello', 'zip64DirectoryFields' => 'offset']]);
+    $broken = craftedZipBytes([['name' => 'a.txt', 'data' => 'hello', 'zip64DirectoryFields' => $zip64Fields]]);
+
+    // The directory says "offset in ZIP64 extra", but the extra field does not hold it.
+    expect(zipLayoutCovers($broken, $twin))->toBeFalse();
+})->with(['no room' => ['truncated'], 'one byte short' => ['short'], 'no ZIP64 field' => ['missing'], 'a dangling field header' => ['dangling']]);
+
+it('refuses a central directory with fewer entries than libzip listed', function (): void {
+    $twin = craftedZipBytes([['name' => 'a.txt', 'data' => 'hello'], ['name' => 'b.txt', 'data' => 'world']]);
+
+    expect(zipLayoutCovers(craftedZipBytes([['name' => 'a.txt', 'data' => 'hello']]), $twin))->toBeFalse();
+});
+
+it('stops at the first data descriptor that disagrees, even before the last entry', function (): void {
+    $bytes = craftedZipBytes([
+        ['name' => 'a.txt', 'data' => 'hello', 'hasDataDescriptor' => true],
+        ['name' => 'b.txt', 'data' => 'world'],
+    ]);
+    $descriptorAt = (int) strpos($bytes, "PK\x07\x08");
+    $forged = substr_replace($bytes, pack('V', unpack('V', $bytes, $descriptorAt + 12)[1] + 1), $descriptorAt + 12, 4);
+
+    expect(zipLayoutCovers($forged, $bytes))->toBeFalse();
+});
+
+it('refuses a central directory with bytes left after its last entry', function (): void {
+    $bytes = craftedZipBytes([['name' => 'a.txt', 'data' => 'hello']]);
+    $endRecordAt = strlen($bytes) - 22;
+    // One spare byte inside the directory: the end record now claims one byte more.
+    $padded = substr($bytes, 0, $endRecordAt)."\0".substr_replace(substr($bytes, $endRecordAt), pack('V', unpack('V', $bytes, $endRecordAt + 12)[1] + 1), 12, 4);
+
+    expect(zipLayoutCovers($padded, $bytes))->toBeFalse();
+});

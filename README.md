@@ -218,29 +218,46 @@ never the client suffix.
 
 Archives are refused by default. A context accepts them only with
 `allows_archives: true`; otherwise a name with an archive suffix (`zip`, `7z`,
-`tar.gz`, `docx`, `xlsx`, `odt`, `epub`, `apk`, …, see
-`HardFloor::archiveExtensions()`), a sniffed archive MIME, or a file libzip opens
-as a ZIP (a PDF+ZIP polyglot included) is refused with `upload_forbidden_type`.
-A context that turns archives on must also unpack them safely.
+`tar.gz`, `docx`, `xlsx`, `odt`, `epub`, `apk`, `deb`, `rpm`, …, see
+`HardFloor::archiveExtensions()`), a sniffed archive MIME
+(`HardFloor::archiveMimeTypes()`, plus every OOXML and OpenDocument type), or a
+file libzip opens as a ZIP (a PDF+ZIP polyglot included) is refused with
+`upload_forbidden_type`. This holds even when both archive budgets are `null`.
+Brotli, shar and uuencoded tar have no magic bytes, so only their suffix can
+catch them.
+
+**With `allows_archives`, the package checks an archive's structure; it does not
+make extracting it safe.** A product must never extract uploaded archives with a
+streaming reader (libarchive or `bsdtar` from a pipe, Java's `ZipInputStream`,
+Node's `unzipper`): read them through the central directory, as libzip does, and
+validate every extracted file as its own upload. Safe extraction is out of scope
+for 1.0.
 
 Archive budget: any file libzip opens as a ZIP (docx, jar and polyglots
 included) is inflated in streaming and its real bytes are counted, because the
 sizes in its headers are attacker-controlled. Reading stops at `size ×
 max_uncompressed_ratio`, capped by `max_uncompressed_bytes`; either limit works
 alone, a zero or negative limit allows nothing, and leaving both `null` turns
-archive inspection off (the archive name and MIME check above still runs). An
-archive over 10 000 entries is refused before any entry is read.
+the budget off where archives are allowed. An archive over 10 000 entries is
+refused before any entry is read. Only ZIP is measured: with archives allowed, a
+`.gz`, `.7z` or `.tar.xz` bomb is not.
 
-Streaming readers (libarchive from a pipe, Java's `ZipInputStream`) walk the
-local headers instead of the central directory libzip reads. So the local
-headers, walked in central-directory order, must cover the file exactly from
-byte 0 to the central directory, every local header must agree with its
-directory entry, the directory must end where the only end record starts, and
-that record's comment must run to the end of the file. A local header the
-directory does not list (a hidden bomb), a contradicting local name, data before
-the first entry or after the end record, and a second end record are refused
-with `upload_content_mismatch`, as are a corrupt archive, a CRC mismatch, and an
-encrypted entry.
+Streaming readers walk the local headers instead of the central directory libzip
+reads, so the two must describe the same bytes. Every local header must sit
+exactly at the offset its directory entry gives, the headers must follow each
+other with no byte left over from byte 0 to the central directory, every local
+header must agree with its entry, every data descriptor must repeat the entry's
+CRC and sizes, the directory must end where the only end record starts, and that
+record's comment must run to the end of the file. A stored entry with a data
+descriptor is refused outright, because only the descriptor marks where its data
+ends. A local header hidden in another one's extra field or data, a contradicting
+local name, data before the first entry or after the end record, and a second end
+record are refused with `upload_content_mismatch`, as are a corrupt archive, a CRC
+mismatch, and an encrypted entry. Two kinds of honest archive are refused too,
+because their layout cannot be told apart from a crafted one: Info-ZIP output
+written to or from a pipe (`… | zip - -`, which adds a ZIP64 end record next to a
+classic one) and `bsdtar --format=zip` written to stdout (zero padding after the
+end record). Re-create such archives with a seekable writer.
 
 A file libzip cannot open is refused with `upload_content_mismatch` when its
 last 64 KiB hold an end record that a tolerant reader (unzip, Python's

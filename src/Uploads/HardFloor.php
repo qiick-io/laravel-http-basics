@@ -55,6 +55,7 @@ final class HardFloor
             'zip', 'zipx', '7z', 'rar', 'tar', 'gz', 'tgz', 'bz2', 'tbz', 'tbz2', 'xz', 'txz',
             'zst', 'lz', 'lzma', 'z', 'cab', 'cpio', 'arj', 'lzh', 'ace', 'xar', 'dmg', 'pkg',
             'ear', 'apk', 'aab', 'ipa', 'xpi', 'crx', 'whl', 'nupkg', 'vsix', 'epub',
+            'deb', 'rpm', 'lz4', 'lzo', 'lha', 'wim', 'warc', 'sqsh', 'squashfs',
             'docx', 'dotx', 'xlsx', 'xltx', 'pptx', 'potx', 'ppsx',
             'odt', 'ott', 'ods', 'ots', 'odp', 'otp', 'odg',
         ];
@@ -89,6 +90,16 @@ final class HardFloor
             'application/x-apple-diskimage',
             'application/epub+zip',
             'application/vnd.android.package-archive',
+            'application/vnd.debian.binary-package',
+            'application/x-rpm',
+            'application/x-iso9660-image',
+            'application/x-lzh-compressed',
+            'application/x-lz4',
+            'application/x-lzop',
+            'application/x-arj',
+            'application/x-ms-wim',
+            'application/x-squashfs',
+            'application/warc',
         ];
     }
 
