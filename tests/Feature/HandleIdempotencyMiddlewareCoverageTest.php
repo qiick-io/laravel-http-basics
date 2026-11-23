@@ -34,6 +34,7 @@ use Qiick\HttpBasics\RequestId\RequestIdResolver;
 use Qiick\HttpBasics\RequestId\RequestIdSource;
 use Qiick\HttpBasics\Testing\FakeCredentialBucketResolver;
 use Qiick\HttpBasics\Testing\InMemoryIdempotencyStore;
+use Qiick\HttpBasics\Tests\Support\FakeHighResolutionClock;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 use Symfony\Component\HttpKernel\Exception\HttpException;
@@ -992,7 +993,7 @@ it('treats an empty credential bucket as no bucket', function (): void {
     expect($response->getStatusCode())->toBe(503)->and($runs)->toBe(0);
 });
 
-it('folds the negotiated locale into the fingerprint only when it came from Accept-Language', function (
+it('folds the served locale into machine-door fingerprints and nothing into web ones', function (
     string $path,
     ?string $acceptLanguage,
     ?LocaleResolution $resolvedLocale,
@@ -1025,7 +1026,7 @@ it('folds the negotiated locale into the fingerprint only when it came from Acce
     expect($retry->outcome)->toBe(ClaimOutcome::Replay);
 })->with([
     'web route ignores even a header-sourced locale' => ['/widgets', 'it', new LocaleResolution('it', LocaleSource::Header, true), ''],
-    'machine door, unsupported header falls back' => ['/api/widgets', 'fr', null, ''],
+    'machine door, unsupported header falls back' => ['/api/widgets', 'fr', null, 'en'],
     'machine door, negotiated region tag' => ['/api/widgets', 'it-CH,it;q=0.9', null, 'it'],
 ]);
 
@@ -1068,4 +1069,72 @@ it('abandons the claim when the handler itself throws a store exception', functi
     $retry = $middleware->handle(idempotencyRequest(), static fn () => response('ran', 201));
 
     expect($retry->getStatusCode())->toBe(201)->and($retry->getContent())->toBe('ran');
+});
+
+it('replays a retry whose Accept-Language negotiates to the same served locale', function (?string $firstHeader): void {
+    // fr is unsupported and a missing header falls back: both serve the default en.
+    $middleware = makeIdempotencyMiddleware($this->store, new FakeCredentialBucketResolver('tenant:1'));
+    $first = idempotencyRequest();
+    $first->headers->remove('Accept-Language');
+
+    if ($firstHeader !== null) {
+        $first->headers->set('Accept-Language', $firstHeader);
+    }
+
+    $retry = idempotencyRequest();
+    $retry->headers->set('Accept-Language', 'en');
+
+    $middleware->handle($first, static fn () => response('first', 201));
+    $response = $middleware->handle($retry, static fn () => response('second', 201));
+
+    expect($response->getContent())->toBe('first')
+        ->and($response->headers->get('Idempotent-Replayed'))->toBe('true');
+})->with(['unsupported language' => ['fr'], 'no header' => [null]]);
+
+it('measures the handler budget in exact nanoseconds', function (int $elapsedNanoseconds, int $expectedStatus): void {
+    $middleware = makeIdempotencyMiddleware($this->store, new FakeCredentialBucketResolver('tenant:1'));
+    FakeHighResolutionClock::queue(1_000, 1_000 + $elapsedNanoseconds);
+
+    try {
+        $response = $middleware->handle(idempotencyRequest(), static fn () => response('ok', 201));
+    } finally {
+        FakeHighResolutionClock::reset();
+    }
+
+    expect($response->getStatusCode())->toBe($expectedStatus);
+})->with([
+    'exactly the 55-second budget' => [55_000_000_000, 201],
+    'one nanosecond over' => [55_000_000_001, 503],
+]);
+
+it('rethrows the handler failure even when abandoning the claim fails too', function (): void {
+    $store = new class(new InMemoryIdempotencyStore) implements IdempotencyStore
+    {
+        public function __construct(private InMemoryIdempotencyStore $inner) {}
+
+        public function claim(IdempotencyScope $scope, string $key, string $fingerprint, DateTimeImmutable $now): IdempotencyClaim
+        {
+            return $this->inner->claim($scope, $key, $fingerprint, $now);
+        }
+
+        public function complete(IdempotencyClaim $claim, ReplayableResponse $response, DateTimeImmutable $now): void
+        {
+            $this->inner->complete($claim, $response, $now);
+        }
+
+        public function sealUnreplayable(IdempotencyClaim $claim, DateTimeImmutable $now): void
+        {
+            $this->inner->sealUnreplayable($claim, $now);
+        }
+
+        public function abandon(IdempotencyClaim $claim, DateTimeImmutable $now): void
+        {
+            throw new IdempotencyStoreException('cache down');
+        }
+    };
+    $middleware = makeIdempotencyMiddleware($store, new FakeCredentialBucketResolver('tenant:1'));
+
+    expect(fn () => $middleware->handle(idempotencyRequest(), static function (): never {
+        throw new RuntimeException('handler failed');
+    }))->toThrow(RuntimeException::class, 'handler failed');
 });

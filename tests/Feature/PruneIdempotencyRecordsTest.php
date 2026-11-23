@@ -99,3 +99,10 @@ it('prunes on the configured idempotency connection, not the default one', funct
     expect(DB::connection('idempotency')->table('idempotency_records')->pluck('key_hash')->all())->toBe(['live'])
         ->and(DB::table('idempotency_records')->count())->toBe(1);
 });
+
+it('keeps a connection chosen with on() or setConnection() over the configured one', function (): void {
+    config(['http-basics.idempotency.database.connection' => 'idempotency']);
+
+    expect((new IdempotencyRecord)->setConnection('sqlite')->getConnectionName())->toBe('sqlite')
+        ->and((new IdempotencyRecord)->getConnectionName())->toBe('idempotency');
+});
