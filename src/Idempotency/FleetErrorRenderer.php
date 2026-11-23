@@ -8,6 +8,7 @@ use Illuminate\Contracts\Translation\Translator;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Qiick\HttpBasics\Contracts\ErrorRenderer;
+use Qiick\HttpBasics\Errors\ErrorCode;
 
 /**
  * @api Default fleet JSON shape for idempotency refusals (`message` + `error`).
@@ -25,7 +26,7 @@ final class FleetErrorRenderer implements ErrorRenderer
     public function render(IdempotencyRejection $rejection, Request $request): JsonResponse
     {
         $payload = [
-            'message' => $this->messageFor($rejection->idempotencyErrorCode(), $request),
+            'message' => $this->messageFor($rejection->fleetErrorCode(), $request),
             'error' => $rejection->errorCode(),
         ];
 
@@ -40,7 +41,7 @@ final class FleetErrorRenderer implements ErrorRenderer
         );
     }
 
-    private function messageFor(IdempotencyErrorCode $code, Request $request): string
+    private function messageFor(ErrorCode $code, Request $request): string
     {
         $key = 'http-basics::idempotency.'.$code->value;
         $locale = $request->getLocale();
@@ -56,17 +57,18 @@ final class FleetErrorRenderer implements ErrorRenderer
         return $this->fallbackMessage($code);
     }
 
-    private function fallbackMessage(IdempotencyErrorCode $code): string
+    private function fallbackMessage(ErrorCode $code): string
     {
         return match ($code) {
-            IdempotencyErrorCode::KeyRequired => 'Idempotency-Key header is required.',
-            IdempotencyErrorCode::KeyInvalid => 'Idempotency-Key header is invalid.',
-            IdempotencyErrorCode::PayloadMismatch => 'Request payload does not match the original idempotent request.',
-            IdempotencyErrorCode::InProgress => 'An idempotent request with this key is already in progress.',
-            IdempotencyErrorCode::NotReplayable => 'The idempotent request completed but cannot be replayed.',
-            IdempotencyErrorCode::Unavailable => 'Idempotency store is temporarily unavailable.',
-            IdempotencyErrorCode::UnsupportedMedia => 'Idempotent routes require Content-Type: application/json.',
-            IdempotencyErrorCode::InvalidJson => 'The given data was invalid.',
+            ErrorCode::IdempotencyKeyRequired => 'Idempotency-Key header is required.',
+            ErrorCode::IdempotencyKeyInvalid => 'Idempotency-Key header is invalid.',
+            ErrorCode::IdempotencyPayloadMismatch => 'Request payload does not match the original idempotent request.',
+            ErrorCode::IdempotencyInProgress => 'An idempotent request with this key is already in progress.',
+            ErrorCode::IdempotencyNotReplayable => 'The idempotent request completed but cannot be replayed.',
+            ErrorCode::IdempotencyUnavailable => 'Idempotency store is temporarily unavailable.',
+            ErrorCode::IdempotencyUnsupportedMedia => 'Idempotent routes require Content-Type: application/json or application/*+json.',
+            ErrorCode::ValidationFailed => 'The given data was invalid.',
+            default => $code->documentation(),
         };
     }
 }

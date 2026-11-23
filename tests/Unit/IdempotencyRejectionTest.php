@@ -4,13 +4,13 @@ declare(strict_types=1);
 
 use Illuminate\Http\Request;
 use Qiick\HttpBasics\Contracts\ErrorRenderer;
+use Qiick\HttpBasics\Errors\ErrorCode;
 use Qiick\HttpBasics\Idempotency\FleetErrorRenderer;
-use Qiick\HttpBasics\Idempotency\IdempotencyErrorCode;
 use Qiick\HttpBasics\Idempotency\IdempotencyRejection;
 
 it('exposes stable error codes and renders fleet json with retry after', function (): void {
     $rejection = new IdempotencyRejection(
-        IdempotencyErrorCode::InProgress,
+        ErrorCode::IdempotencyInProgress,
         409,
         ['Retry-After' => '30'],
     );
@@ -25,7 +25,7 @@ it('exposes stable error codes and renders fleet json with retry after', functio
 });
 
 it('translates refusal messages while keeping the error code stable', function (): void {
-    $rejection = new IdempotencyRejection(IdempotencyErrorCode::KeyRequired, 400);
+    $rejection = new IdempotencyRejection(ErrorCode::IdempotencyKeyRequired, 400);
     $request = Request::create('/api/widgets', 'POST');
     $request->setLocale('it');
 

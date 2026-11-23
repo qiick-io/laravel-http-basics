@@ -2,8 +2,8 @@
 
 declare(strict_types=1);
 
+use Qiick\HttpBasics\Errors\ErrorCode;
 use Qiick\HttpBasics\Idempotency\HandleIdempotencyMiddleware;
-use Qiick\HttpBasics\Idempotency\IdempotencyErrorCode;
 
 require_once __DIR__.'/Support/php-built-in-server.php';
 
@@ -185,7 +185,7 @@ it('returns in-progress 409 for a concurrent duplicate Idempotency-Key over real
     expect($winnerStatus)->toBe(201)
         ->and($conflict['status'])->toBe(409)
         ->and(json_decode($winnerBody, true)['created'] ?? null)->toBeTrue()
-        ->and(json_decode($conflict['body'], true)['error'] ?? null)->toBe(IdempotencyErrorCode::InProgress->value)
+        ->and(json_decode($conflict['body'], true)['error'] ?? null)->toBe(ErrorCode::IdempotencyInProgress->value)
         ->and($conflict['headers'])->toHaveKey('retry-after');
 
     $countResponse = realHttpRequest($idempotencyHttpState->portA, '/api/handler-count', 'GET');
@@ -203,7 +203,7 @@ it('rejects replay with a different body as 422 idempotency_payload_mismatch ove
 
     expect($mismatch['status'])->toBe(422)
         ->and(json_decode($mismatch['body'], true)['error'] ?? null)
-        ->toBe(IdempotencyErrorCode::PayloadMismatch->value);
+        ->toBe(ErrorCode::IdempotencyPayloadMismatch->value);
 })->group('http-server');
 
 it('allows lock-expiry takeover after stale_after when the lock is gone over real HTTP', function () use ($idempotencyHttpState): void {
@@ -289,7 +289,7 @@ it('does not re-run the handler when an oversized response is sealed unreplayabl
 
         $second = realHttpRequest($port, '/api/large', 'POST', $headers, '{}');
         expect($second['status'])->toBe(409)
-            ->and(json_decode($second['body'], true)['error'] ?? null)->toBe(IdempotencyErrorCode::NotReplayable->value);
+            ->and(json_decode($second['body'], true)['error'] ?? null)->toBe(ErrorCode::IdempotencyNotReplayable->value);
 
         $countResponse = realHttpRequest($port, '/api/handler-count', 'GET');
         expect(json_decode($countResponse['body'], true)['count'] ?? null)->toBe(1);

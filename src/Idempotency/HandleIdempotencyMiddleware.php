@@ -10,6 +10,7 @@ use JsonException;
 use Qiick\HttpBasics\Contracts\CredentialBucketResolver;
 use Qiick\HttpBasics\Contracts\ErrorRenderer;
 use Qiick\HttpBasics\Contracts\IdempotencyStore;
+use Qiick\HttpBasics\Errors\ErrorCode;
 use Qiick\HttpBasics\Locale\LocaleNegotiator;
 use Qiick\HttpBasics\Locale\MachineDoorClassifier;
 use Qiick\HttpBasics\RequestId\RequestId;
@@ -68,7 +69,7 @@ final class HandleIdempotencyMiddleware
             if ($parsed['isKeyRequired'] && ($key === null || ! $this->keyValidator->isValid($key))) {
                 return $this->reject(
                     $request,
-                    $key === null ? IdempotencyErrorCode::KeyRequired : IdempotencyErrorCode::KeyInvalid,
+                    $key === null ? ErrorCode::IdempotencyKeyRequired : ErrorCode::IdempotencyKeyInvalid,
                     400,
                 );
             }
@@ -80,18 +81,18 @@ final class HandleIdempotencyMiddleware
 
         if ($key === null) {
             if ($parsed['isKeyRequired']) {
-                return $this->reject($request, IdempotencyErrorCode::KeyRequired, 400);
+                return $this->reject($request, ErrorCode::IdempotencyKeyRequired, 400);
             }
 
             return $this->ensureResponse($next($request));
         }
 
         if (! $this->keyValidator->isValid($key)) {
-            return $this->reject($request, IdempotencyErrorCode::KeyInvalid, 400);
+            return $this->reject($request, ErrorCode::IdempotencyKeyInvalid, 400);
         }
 
         if ($this->requireJson && ! $this->isJsonRequest($request)) {
-            return $this->reject($request, IdempotencyErrorCode::UnsupportedMedia, 415);
+            return $this->reject($request, ErrorCode::IdempotencyUnsupportedMedia, 415);
         }
 
         $bucket = $this->resolveBucket($request);
@@ -112,7 +113,7 @@ final class HandleIdempotencyMiddleware
         } catch (PayloadTooLargeException) {
             throw new HttpException(413, 'Request entity too large.');
         } catch (JsonException) {
-            return $this->reject($request, IdempotencyErrorCode::InvalidJson, 422);
+            return $this->reject($request, ErrorCode::ValidationFailed, 422);
         }
 
         $scope = new IdempotencyScope($bucket, $request->getMethod(), $request->getPathInfo());
@@ -126,15 +127,15 @@ final class HandleIdempotencyMiddleware
 
         return match ($claim->outcome) {
             ClaimOutcome::Replay => $this->replayResponse($request, $claim->replay),
-            ClaimOutcome::Mismatch => $this->reject($request, IdempotencyErrorCode::PayloadMismatch, 422),
+            ClaimOutcome::Mismatch => $this->reject($request, ErrorCode::IdempotencyPayloadMismatch, 422),
             ClaimOutcome::Conflict => $this->reject(
                 $request,
-                IdempotencyErrorCode::InProgress,
+                ErrorCode::IdempotencyInProgress,
                 409,
                 // Store lock TTL is fixed at construction; route options cannot change it.
                 ['Retry-After' => (string) $this->defaultLockTtlSeconds],
             ),
-            ClaimOutcome::NotReplayable => $this->reject($request, IdempotencyErrorCode::NotReplayable, 409),
+            ClaimOutcome::NotReplayable => $this->reject($request, ErrorCode::IdempotencyNotReplayable, 409),
             ClaimOutcome::New => $this->executeOnce($request, $next, $claim, $parsed['maxHandlerSeconds']),
         };
     }
@@ -340,7 +341,7 @@ final class HandleIdempotencyMiddleware
     /**
      * @param  array<string, string>  $headers
      */
-    private function reject(Request $request, IdempotencyErrorCode $code, int $status, array $headers = []): Response
+    private function reject(Request $request, ErrorCode $code, int $status, array $headers = []): Response
     {
         $rejection = new IdempotencyRejection($code, $status, $headers);
 
@@ -351,7 +352,7 @@ final class HandleIdempotencyMiddleware
     {
         return $this->reject(
             $request,
-            IdempotencyErrorCode::Unavailable,
+            ErrorCode::IdempotencyUnavailable,
             503,
             ['Retry-After' => (string) $this->retryAfterSeconds],
         );

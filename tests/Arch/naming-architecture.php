@@ -31,6 +31,9 @@ return [
             'Qiick\HttpBasics\Uploads\MalwareScanner',
             // Design M9: CORS seams without Contract suffix.
             'Qiick\HttpBasics\Cors\AllowedOriginsResolver',
+            // Design §3.5: public contract names without Contract suffix.
+            'Qiick\HttpBasics\Errors\ErrorCodeResolver',
+            'Qiick\HttpBasics\Errors\ExceptionRespondBinder',
         ],
         'Enums' => [
             // Design §3.1 / §3.2 / §3.3: source enums without Enum suffix.
@@ -39,7 +42,7 @@ return [
             'Qiick\HttpBasics\Locale\LocaleSource',
             'Qiick\HttpBasics\Security\CspMode',
             'Qiick\HttpBasics\Idempotency\ClaimOutcome',
-            'Qiick\HttpBasics\Idempotency\IdempotencyErrorCode',
+            'Qiick\HttpBasics\Errors\ErrorCode',
             'Qiick\HttpBasics\Idempotency\IdempotencyKeyFormat',
             'Qiick\HttpBasics\Uploads\ScanResult',
             'Qiick\HttpBasics\Uploads\MismatchMode',

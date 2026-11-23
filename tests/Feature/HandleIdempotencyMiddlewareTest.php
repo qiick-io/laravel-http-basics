@@ -6,8 +6,8 @@ use Illuminate\Support\Facades\Route;
 use Qiick\HttpBasics\Contracts\CredentialBucketResolver;
 use Qiick\HttpBasics\Contracts\ErrorRenderer;
 use Qiick\HttpBasics\Contracts\IdempotencyStore;
+use Qiick\HttpBasics\Errors\ErrorCode;
 use Qiick\HttpBasics\Idempotency\HandleIdempotencyMiddleware;
-use Qiick\HttpBasics\Idempotency\IdempotencyErrorCode;
 use Qiick\HttpBasics\Idempotency\IdempotencyRejection;
 use Qiick\HttpBasics\RequestId\AssignRequestIdMiddleware;
 use Qiick\HttpBasics\Testing\FakeCredentialBucketResolver;
@@ -127,7 +127,7 @@ it('does not store when replayable is false', function (): void {
 
 it('renders in progress refusals with retry-after on the json payload', function (): void {
     $rejection = new IdempotencyRejection(
-        IdempotencyErrorCode::InProgress,
+        ErrorCode::IdempotencyInProgress,
         409,
         ['Retry-After' => '30'],
     );
