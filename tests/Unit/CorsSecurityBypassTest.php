@@ -122,8 +122,6 @@ it('normalises and drops unsafe resolver origins before HandleCors (review B2)',
 });
 
 it('purges credentialed patterns when the resolver overrides the origins (re-review R1)', function (): void {
-    config()->set('http-basics.cors.validate_on_boot', false);
-
     $resolver = new class implements AllowedOriginsResolver
     {
         public function origins(Request $request): ?array

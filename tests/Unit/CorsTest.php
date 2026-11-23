@@ -49,8 +49,9 @@ it('rejects credentialed wildcard origins and exposed headers at boot', function
     ]);
 });
 
-it('fails provider boot when cors credentials and star collide', function (): void {
-    config()->set('http-basics.cors.validate_on_boot', true);
+it('fails provider boot when cors credentials and star collide, with no switch to skip it', function (): void {
+    // The removed `validate_on_boot` switch must not come back as a way around the guard.
+    config()->set('http-basics.cors.validate_on_boot', false);
     config()->set('cors.supports_credentials', true);
     config()->set('cors.allowed_origins', ['*']);
 

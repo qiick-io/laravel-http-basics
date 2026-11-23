@@ -30,7 +30,8 @@ final class SecurityHeaderBuilder
             return [];
         }
 
-        if ($this->isMachineDoor($request, $policy->machineDoorPatterns)) {
+        // Request::is() with no patterns is false, so an empty list means no machine doors.
+        if ($request->is(...$policy->machineDoorPatterns)) {
             if (! $policy->baselineOnMachineDoors) {
                 return [];
             }
@@ -46,19 +47,6 @@ final class SecurityHeaderBuilder
         $this->applyHsts($headers, $request, $response, $policy);
 
         return $headers;
-    }
-
-    /**
-     * @param  list<string>  $patterns
-     */
-    private function isMachineDoor(Request $request, array $patterns): bool
-    {
-        if ($patterns === []) {
-            // Request::is() with zero patterns also returns false.
-            return false; // @pest-mutate-ignore: RemoveEarlyReturn
-        }
-
-        return $request->is(...$patterns);
     }
 
     /**
@@ -84,11 +72,7 @@ final class SecurityHeaderBuilder
         Response $response,
         SecurityHeadersPolicy $policy,
     ): void {
-        if ($policy->cspMode === CspMode::Off) {
-            // Off is neither Enforce/Both nor ReportOnly/Both, so fall-through adds nothing.
-            return; // @pest-mutate-ignore: RemoveEarlyReturn
-        }
-
+        // CspMode::Off matches neither branch below, so it adds nothing.
         // Product already chose a CSP surface: do not add the other kind either.
         if (
             $response->headers->has('Content-Security-Policy')

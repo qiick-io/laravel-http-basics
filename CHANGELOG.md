@@ -8,7 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- CORS: the `http-basics.cors.validate_on_boot` switch (`HTTP_BASICS_CORS_VALIDATE_ON_BOOT`).
+  Boot validation of `config('cors')` now always runs.
+
 ### Fixed
+
+- CORS: with `supports_credentials`, boot now rejects `allowed_headers: ['*']`, which
+  Fruitcake answers by echoing every requested header (`Authorization` included).
 
 - Idempotency: rebase onto security-headers re-review tip; strip blanket
   `@pest-mutate-ignore` and keep only proven equivalents with one-line reasons;
