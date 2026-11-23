@@ -197,6 +197,12 @@ Refusals use fleet JSON (`message` + `error`): `idempotency_key_required`,
 `idempotency_unavailable` (503). Replays force the **current** `X-Request-Id` and strip
 stale `X-RateLimit-*` headers.
 
+A key is stored per bucket, not per route: the record is identified by
+`(bucket, key)` (the database store's unique `(bucket, key_hash)`), and the method and
+path live in the fingerprint. Reusing a key on another route therefore answers
+`idempotency_payload_mismatch` (or 409 while the first is in flight); it never
+replays another route's response. Clients should send a fresh key per operation.
+
 A custom `IdempotencyStore` receives an `IdempotencyContext` with every claim: the
 key format, the fingerprint version, the request id, and room for a trace id, a
 credential public id and namespaced metadata. The database store writes them to the
