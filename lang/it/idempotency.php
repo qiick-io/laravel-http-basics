@@ -14,6 +14,6 @@ return [
     'idempotency_in_progress' => 'Una richiesta idempotente con questa chiave è già in corso.',
     'idempotency_not_replayable' => 'La richiesta idempotente è completata ma non può essere riprodotta.',
     'idempotency_unavailable' => 'Lo store di idempotenza non è temporaneamente disponibile.',
-    'idempotency_unsupported_media' => 'Le route idempotenti richiedono Content-Type: application/json.',
+    'idempotency_unsupported_media' => 'Le route idempotenti richiedono Content-Type: application/json oppure application/*+json.',
     'validation_failed' => 'I dati forniti non sono validi.',
 ];

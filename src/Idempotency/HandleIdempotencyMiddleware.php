@@ -231,12 +231,13 @@ final class HandleIdempotencyMiddleware
 
         $base = strtolower(trim(explode(';', $contentType)[0]));
 
-        // RFC 6839 §3.1: application/json and any application/*+json (e.g. merge-patch+json on PATCH).
+        // RFC 6839 §3.1: application/json, or application/<name>+json (merge-patch+json on PATCH)
+        // with a non-empty RFC 6838 restricted name before the suffix.
         if ($base === 'application/json') {
             return true;
         }
 
-        return str_starts_with($base, 'application/') && str_ends_with($base, '+json');
+        return preg_match('/\Aapplication\/[a-z0-9][a-z0-9!#$&^_.+-]*\+json\z/', $base) === 1;
     }
 
     /**
