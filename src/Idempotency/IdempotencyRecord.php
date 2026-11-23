@@ -33,6 +33,16 @@ class IdempotencyRecord extends Model
     }
 
     /**
+     * Follows the store's connection so `model:prune` deletes where the rows live.
+     */
+    public function getConnectionName(): ?string
+    {
+        $connection = config('http-basics.idempotency.database.connection');
+
+        return is_string($connection) && $connection !== '' ? $connection : null;
+    }
+
+    /**
      * @return Builder<static>
      */
     public function prunable(): Builder

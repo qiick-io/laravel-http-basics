@@ -30,7 +30,9 @@ final class PruneIdempotencyRecordsCommand extends Command
         // expires_at is UTC wall-clock, so the cutoff must be too, whatever app.timezone is.
         $cutoff = now('UTC')->subHours($hours);
 
-        $query = DB::table($tableName)->where('expires_at', '<=', $cutoff);
+        $query = DB::connection((new IdempotencyRecord)->getConnectionName())
+            ->table($tableName)
+            ->where('expires_at', '<=', $cutoff);
         $count = (clone $query)->count();
 
         if ((bool) $this->option('dry-run')) {
