@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Idempotency: the `replayable=` middleware option accepts only `true` or `false` (any
+  letter case) and throws for anything else; `replayable=0`, `off` or a stray space used
+  to mean "replayable" and replayed the first response of a secret-issuing route.
+
 - Idempotency: when the response and then its seal both fail to persist, the key is
   sealed through a separate `:sealed` cache entry, so a retry after
   `stale_after_seconds` answers `idempotency_not_replayable` instead of running the

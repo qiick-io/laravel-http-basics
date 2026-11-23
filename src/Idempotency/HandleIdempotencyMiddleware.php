@@ -156,7 +156,12 @@ final class HandleIdempotencyMiddleware
             } elseif ($option === 'required') {
                 $isKeyRequired = true;
             } elseif (str_starts_with($option, 'replayable=')) {
-                $isReplayable = strtolower(substr($option, strlen('replayable='))) !== 'false';
+                // Strict: a typo such as replayable=0 must not silently replay a secret-issuing route.
+                $isReplayable = match (strtolower(substr($option, strlen('replayable=')))) {
+                    'true' => true,
+                    'false' => false,
+                    default => throw new \InvalidArgumentException('Idempotency middleware option replayable must be true or false.'),
+                };
             } elseif (str_starts_with($option, 'lock_ttl_seconds=')) {
                 throw new \InvalidArgumentException(
                     'lock_ttl_seconds middleware option is not supported; configure http-basics.idempotency.lock_ttl_seconds (store lock TTL also drives Conflict Retry-After).',

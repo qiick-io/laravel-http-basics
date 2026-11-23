@@ -1138,3 +1138,26 @@ it('rethrows the handler failure even when abandoning the claim fails too', func
         throw new RuntimeException('handler failed');
     }))->toThrow(RuntimeException::class, 'handler failed');
 });
+
+it('rejects a replayable option that is not true or false instead of replaying secrets', function (string $option): void {
+    // Red-team finding: replayable=0 used to mean "replayable" and replayed the first secret.
+    $middleware = makeIdempotencyMiddleware($this->store, new FakeCredentialBucketResolver('tenant:1'));
+    $runs = 0;
+
+    expect(fn () => $middleware->handle(idempotencyRequest(), static function () use (&$runs) {
+        $runs++;
+
+        return response('SECRET', 201);
+    }, $option))->toThrow(InvalidArgumentException::class, 'replayable must be true or false');
+
+    expect($runs)->toBe(0);
+})->with(['replayable=0', 'replayable=no', 'replayable=off', 'replayable=false ', 'replayable=', 'replayable=1']);
+
+it('accepts replayable=true in any letter case', function (): void {
+    $middleware = makeIdempotencyMiddleware($this->store, new FakeCredentialBucketResolver('tenant:1'));
+
+    $middleware->handle(idempotencyRequest(), static fn () => response('first', 201), 'replayable=TRUE');
+    $retry = $middleware->handle(idempotencyRequest(), static fn () => response('second', 201), 'replayable=True');
+
+    expect($retry->getContent())->toBe('first');
+});
