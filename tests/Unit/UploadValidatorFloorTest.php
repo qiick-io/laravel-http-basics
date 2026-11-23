@@ -656,3 +656,94 @@ it('ignores end-of-directory signatures no reader could follow', function (strin
     'a signature cut short by the end of the file' => [str_repeat('a', 100)."PK\x05\x06".str_repeat("\0", 17)],
     'an empty directory' => ["notes\nPK\x05\x06".pack('vvvvVVv', 0, 0, 0, 0, 0, 0, 0)],
 ]);
+
+function zipLocalHeader(string $name, int $method, int $flags, int $crc, int $compressedBytes, int $uncompressedBytes, string $extra = ''): string
+{
+    return "PK\x03\x04".pack('vvvvvVVVvv', 20, $flags, $method, 0, 0, $crc, $compressedBytes, $uncompressedBytes, strlen($name), strlen($extra)).$name.$extra;
+}
+
+function zipCentralHeader(string $name, int $method, int $flags, int $crc, int $compressedBytes, int $uncompressedBytes, int $localOffset): string
+{
+    return "PK\x01\x02".pack('vvvvvvVVVvvvvvVV', 20, 20, $flags, $method, 0, 0, $crc, $compressedBytes, $uncompressedBytes, strlen($name), 0, 0, 0, 0, 0, $localOffset).$name;
+}
+
+function zipEndRecord(int $entries, int $directoryBytes, int $directoryOffset): string
+{
+    return "PK\x05\x06".pack('vvvvVVv', 0, 0, $entries, $entries, $directoryBytes, $directoryOffset, 0);
+}
+
+/**
+ * Re-review 4, B1: the listed entry's local header hides inside the extra field of an
+ * unlisted one, so walking header lengths still lands on the central directory.
+ */
+function zipWithHeaderInsideExtraField(string $hiddenName): string
+{
+    $bomb = str_repeat("\0", 5 * 1024 * 1024);
+    $compressedBomb = (string) gzdeflate($bomb);
+    $payload = random_bytes(strlen($compressedBomb));
+    $listedHeader = zipLocalHeader('b.txt', 0, 0, crc32($payload), strlen($payload), strlen($payload));
+    $extra = pack('vv', 0x7777, strlen($listedHeader) + strlen($payload)).$listedHeader.$payload;
+    $body = zipLocalHeader($hiddenName, 8, 0, crc32($bomb), strlen($compressedBomb), strlen($bomb), $extra).$compressedBomb;
+    $directory = zipCentralHeader('b.txt', 0, 0, crc32($payload), strlen($payload), strlen($payload), 30 + strlen($hiddenName) + 4);
+
+    return $body.$directory.zipEndRecord(1, strlen($directory), strlen($body));
+}
+
+/**
+ * Re-review 4, B2: a stored entry with a data descriptor ends, for a streaming reader,
+ * at the first descriptor that matches; a full local header hides after it.
+ */
+function zipWithStoredDescriptorSplit(): string
+{
+    $bomb = str_repeat("\0", 5 * 1024 * 1024);
+    $compressedBomb = (string) gzdeflate($bomb);
+    $hidden = zipLocalHeader('h.bin', 8, 0, crc32($bomb), strlen($compressedBomb), strlen($bomb)).$compressedBomb;
+    $data = 'AAAA'."PK\x07\x08".pack('VVV', crc32('AAAA'), 4, 4).$hidden;
+    $descriptor = "PK\x07\x08".pack('VVV', crc32($data), strlen($data), strlen($data));
+    $body = zipLocalHeader('a.txt', 0, 0x08, 0, 0, 0).$data.$descriptor;
+    $directory = zipCentralHeader('a.txt', 0, 0x08, crc32($data), strlen($data), strlen($data), 0);
+
+    return $body.$directory.zipEndRecord(1, strlen($directory), strlen($body));
+}
+
+it('refuses what a streaming reader would extract but libzip never lists (re-review 4)', function (string $bytes): void {
+    $policy = new ArrayUploadPolicy(maxUncompressedRatio: 100, maxUncompressedBytes: 1024 * 1024, allowsArchives: true);
+
+    expect(floorOutcome($policy, floorFile($bytes), 'a.zip'))->toBe('upload_content_mismatch');
+})->with([
+    'B1: a header inside an extra field' => [fn (): string => zipWithHeaderInsideExtraField('x.bin')],
+    'B1: a traversal name inside an extra field' => [fn (): string => zipWithHeaderInsideExtraField('../evil.txt')],
+    'B2: a stored entry split by a fake descriptor' => [fn (): string => zipWithStoredDescriptorSplit()],
+]);
+
+it('refuses a data descriptor that disagrees with the central directory', function (): void {
+    $bytes = craftedZipBytes([['name' => 'a.txt', 'data' => 'hello', 'hasDataDescriptor' => true]]);
+    $descriptorAt = (int) strpos($bytes, "PK\x07\x08");
+    // Same CRC, a compressed size one byte larger than the directory says.
+    $forged = substr_replace($bytes, pack('V', unpack('V', $bytes, $descriptorAt + 8)[1] + 1), $descriptorAt + 8, 4);
+
+    expect(floorOutcome(new ArrayUploadPolicy(maxUncompressedRatio: 10, allowsArchives: true), floorFile($forged), 'a.zip'))->toBe('upload_content_mismatch');
+});
+
+it('refuses archives even when the context turned archive inspection off (re-review 4 N2)', function (): void {
+    $pdfPrefix = "%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n";
+    $adjustedPolyglot = floorFile(craftedZipBytes([['name' => 'payload.html', 'data' => '<script>x</script>']], ['leadingBytes' => $pdfPrefix]));
+    $zipPath = floorZip(['payload.html' => '<script>x</script>']);
+    $appendedPolyglot = floorFile($pdfPrefix.file_get_contents($zipPath));
+    @unlink($zipPath);
+
+    expect(floorOutcome(new ArrayUploadPolicy, $adjustedPolyglot, 'report.pdf'))->toBe('upload_forbidden_type')
+        ->and(floorOutcome(new ArrayUploadPolicy, $appendedPolyglot, 'report.pdf'))->toBe('upload_content_mismatch');
+});
+
+it('refuses other archive formats finfo recognises (re-review 4 N3)', function (string $bytes): void {
+    expect(floorOutcome(new ArrayUploadPolicy, floorFile($bytes), 'x.dat'))->toBe('upload_forbidden_type');
+})->with([
+    'deb' => ["!<arch>\ndebian-binary   1342943816  0     0     100644  4         `\n2.0\n"],
+    'rpm' => ["\xED\xAB\xEE\xDB\x03\x00\x00\x00\x00\x01".str_repeat("\0", 200)],
+    'lz4' => ["\x04\x22\x4D\x18".str_repeat("\0", 60)],
+    'lzh' => ["\x00\x00-lh5-".str_repeat("\0", 60)],
+    'wim' => ["MSWIM\0\0\0".str_repeat("\0", 200)],
+    'warc' => ["WARC/1.0\r\nWARC-Type: warcinfo\r\n\r\n"],
+    'iso' => [str_repeat("\0", 0x8001).'CD001'.str_repeat("\0", 3000)],
+]);
