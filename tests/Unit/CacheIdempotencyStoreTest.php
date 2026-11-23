@@ -675,3 +675,121 @@ it('seals unreplayable completed rows so retries never re-run as New', function 
     ))->toThrow(IdempotencyStoreException::class);
     expect($fresh->outcome)->toBe(ClaimOutcome::New);
 });
+
+it('lets a completed record past expires_at be claimed again, but not one at expires_at', function (): void {
+    [$store, $repository] = cacheIdempotencyStore();
+    $scope = new IdempotencyScope('bucket-a', 'POST', '/items');
+    $now = new DateTimeImmutable('2026-01-01T00:00:00Z');
+    $completedRecord = static fn (int $expiresAt): array => [
+        'fingerprint' => 'fp',
+        'status' => 'completed',
+        'status_code' => 201,
+        'headers' => [],
+        'body' => '{}',
+        'expires_at' => $expiresAt,
+    ];
+
+    $repository->put($scope->cacheKey('expired'), $completedRecord($now->getTimestamp() - 1), 60);
+    $repository->put($scope->cacheKey('boundary'), $completedRecord($now->getTimestamp()), 60);
+
+    expect($store->claim($scope, 'expired', 'fp', $now)->outcome)->toBe(ClaimOutcome::New)
+        ->and($store->claim($scope, 'boundary', 'fp', $now)->outcome)->toBe(ClaimOutcome::Replay);
+});
+
+it('never takes over a live in-progress claim because its expires_at passed', function (): void {
+    [$store, $repository] = cacheIdempotencyStore(staleAfterSeconds: 60);
+    $scope = new IdempotencyScope('bucket-a', 'POST', '/items');
+    $now = new DateTimeImmutable('2026-01-01T00:00:00Z');
+
+    $repository->put($scope->cacheKey('running'), [
+        'fingerprint' => 'fp',
+        'lease' => 'other-worker',
+        'status' => 'in_progress',
+        'started_at' => $now->getTimestamp() - 10,
+        'expires_at' => $now->getTimestamp() - 1,
+    ], 60);
+
+    expect($store->claim($scope, 'running', 'fp', $now)->outcome)->toBe(ClaimOutcome::Conflict);
+});
+
+it('takes over an in-progress claim with no readable start time', function (): void {
+    [$store, $repository] = cacheIdempotencyStore(staleAfterSeconds: 60);
+    $scope = new IdempotencyScope('bucket-a', 'POST', '/items');
+    $now = new DateTimeImmutable('2026-01-01T00:00:00Z');
+
+    $repository->put($scope->cacheKey('orphan'), ['fingerprint' => 'fp', 'lease' => 'gone', 'status' => 'in_progress'], 60);
+
+    expect($store->claim($scope, 'orphan', 'fp', $now)->outcome)->toBe(ClaimOutcome::New);
+});
+
+it('stores a sealed record without a response and releases the claim lock', function (): void {
+    [$store, $repository] = cacheIdempotencyStore(ttlSeconds: 3600);
+    $scope = new IdempotencyScope('bucket-a', 'POST', '/items');
+    $now = new DateTimeImmutable('2026-01-01T00:00:00Z');
+    $claim = $store->claim($scope, 'sealed', 'fp', $now);
+
+    $store->sealUnreplayable($claim, $now->modify('+5 seconds'));
+
+    expect($repository->get($scope->cacheKey('sealed')))->toBe([
+        'fingerprint' => 'fp',
+        'lease' => $claim->lease,
+        'status' => 'completed',
+        'status_code' => null,
+        'headers' => null,
+        'body' => null,
+        'started_at' => $now->getTimestamp(),
+        'expires_at' => $now->getTimestamp() + 5 + 3600,
+    ])
+        ->and($repository->getStore()->lock($scope->cacheKey('sealed').':lock', 30, 'next')->get())->toBeTrue()
+        ->and($store->claim($scope, 'sealed', 'fp', $now)->outcome)->toBe(ClaimOutcome::NotReplayable);
+});
+
+it('stores a completed record with its response and start time', function (): void {
+    [$store, $repository] = cacheIdempotencyStore(ttlSeconds: 3600);
+    $scope = new IdempotencyScope('bucket-a', 'POST', '/items');
+    $now = new DateTimeImmutable('2026-01-01T00:00:00Z');
+    $claim = $store->claim($scope, 'done', 'fp', $now);
+
+    $store->complete($claim, new ReplayableResponse(201, ['Location' => '/items/1'], '{"id":1}'), $now->modify('+2 seconds'));
+
+    expect($repository->get($scope->cacheKey('done')))->toBe([
+        'fingerprint' => 'fp',
+        'lease' => $claim->lease,
+        'status' => 'completed',
+        'status_code' => 201,
+        'headers' => ['Location' => '/items/1'],
+        'body' => '{"id":1}',
+        'started_at' => $now->getTimestamp(),
+        'expires_at' => $now->getTimestamp() + 2 + 3600,
+    ]);
+});
+
+it('leaves a marker alone when abandon carries another lease or none', function (?string $lease): void {
+    [$store, $repository] = cacheIdempotencyStore();
+    $scope = new IdempotencyScope('bucket-a', 'POST', '/items');
+    $now = new DateTimeImmutable('2026-01-01T00:00:00Z');
+    $store->claim($scope, 'held', 'fp', $now);
+
+    $store->abandon(new IdempotencyClaim(ClaimOutcome::New, null, $lease, $scope, 'held'), $now);
+
+    expect($repository->get($scope->cacheKey('held')))->toBeArray();
+})->with(['foreign lease' => ['someone-else'], 'empty lease' => [''], 'no lease' => [null]]);
+
+it('replays an unreadable status code as 200 and joins scalar header lists', function (): void {
+    [$store, $repository] = cacheIdempotencyStore();
+    $scope = new IdempotencyScope('bucket-a', 'POST', '/items');
+    $now = new DateTimeImmutable('2026-01-01T00:00:00Z');
+
+    $repository->put($scope->cacheKey('legacy'), [
+        'fingerprint' => 'fp',
+        'status' => 'completed',
+        'status_code' => 'abc',
+        'headers' => ['X-Versions' => [1, 2]],
+        'body' => '{}',
+    ], 60);
+
+    $replay = $store->claim($scope, 'legacy', 'fp', $now)->replay;
+
+    expect($replay?->status)->toBe(200)
+        ->and($replay?->headers)->toBe(['X-Versions' => '1, 2']);
+});

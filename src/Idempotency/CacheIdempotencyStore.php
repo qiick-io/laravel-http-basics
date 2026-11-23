@@ -6,6 +6,7 @@ namespace Qiick\HttpBasics\Idempotency;
 
 use DateTimeImmutable;
 use Illuminate\Cache\Repository;
+use Illuminate\Contracts\Cache\Lock;
 use Illuminate\Contracts\Cache\LockProvider;
 use Qiick\HttpBasics\Contracts\IdempotencyStore;
 
@@ -40,59 +41,43 @@ final class CacheIdempotencyStore implements IdempotencyStore
         DateTimeImmutable $now,
     ): IdempotencyClaim {
         $recordKey = $scope->cacheKey($key);
-        $lockKey = $recordKey.self::LOCK_SUFFIX;
-
-        $existingRaw = $this->cache->get($recordKey);
-        /** @var array<string, mixed>|null $existing */
-        $existing = is_array($existingRaw) ? $existingRaw : null;
+        $existing = $this->liveRecord($recordKey, $now);
 
         if ($existing !== null) {
-            // Missing status is treated as non-completed either way.
-            if (($existing['status'] ?? '') === 'completed' && $this->isExpired($existing, $now)) { // @pest-mutate-ignore: IdenticalToNotIdentical, CoalesceRemoveLeft, EmptyStringToNotEmpty
-                // Expired completed keys may be claimed again.
-            } else {
-                $completed = $this->claimFromCompleted($existing, $fingerprint, $scope, $key);
+            $completed = $this->claimFromCompleted($existing, $fingerprint, $scope, $key);
 
-                if ($completed !== null) {
-                    return $completed;
-                }
+            if ($completed !== null) {
+                return $completed;
             }
         }
 
         $lease = bin2hex(random_bytes(32));
-        $lock = $this->locks->lock($lockKey, $this->lockTtlSeconds, $lease);
+        $lock = $this->lockFor($recordKey, $lease);
 
         if (! $lock->get()) {
             return new IdempotencyClaim(ClaimOutcome::Conflict, null, null, $scope, $key);
         }
 
-        $existingRaw = $this->cache->get($recordKey);
-        /** @var array<string, mixed>|null $existing */
-        $existing = is_array($existingRaw) ? $existingRaw : null;
+        // Re-read under the lock: another worker may have claimed or completed meanwhile.
+        $existing = $this->liveRecord($recordKey, $now);
 
         if ($existing !== null) {
-            // Missing status is treated as non-completed either way.
-            if (($existing['status'] ?? '') === 'completed' && $this->isExpired($existing, $now)) { // @pest-mutate-ignore: IdenticalToNotIdentical, CoalesceRemoveLeft, EmptyStringToNotEmpty
-                // Fall through to overwrite.
-            } else {
-                $completed = $this->claimFromCompleted($existing, $fingerprint, $scope, $key);
+            $completed = $this->claimFromCompleted($existing, $fingerprint, $scope, $key);
 
-                if ($completed !== null) {
-                    $lock->release();
+            if ($completed !== null) {
+                $lock->release();
 
-                    return $completed;
-                }
+                return $completed;
+            }
 
-                // Absent status is not in_progress; default started_at 0 is intentional for stale math.
-                if (($existing['status'] ?? '') === 'in_progress') { // @pest-mutate-ignore: EmptyStringToNotEmpty
-                    $startedAt = $this->intValue($existing['started_at'] ?? 0, 0); // @pest-mutate-ignore: DecrementInteger
+            // An in-progress claim younger than stale_after belongs to a live worker; one
+            // without a readable start time is stale and may be taken over.
+            $startedAt = $this->intValue($existing['started_at'] ?? null);
 
-                    if ($now->getTimestamp() - $startedAt < $this->staleAfterSeconds) {
-                        $lock->release();
+            if ($startedAt !== null && $now->getTimestamp() - $startedAt < $this->staleAfterSeconds) {
+                $lock->release();
 
-                        return new IdempotencyClaim(ClaimOutcome::Conflict, null, null, $scope, $key);
-                    }
-                }
+                return new IdempotencyClaim(ClaimOutcome::Conflict, null, null, $scope, $key);
             }
         }
 
@@ -117,30 +102,18 @@ final class CacheIdempotencyStore implements IdempotencyStore
             throw new IdempotencyStoreException('Cannot complete a claim that is not new.');
         }
 
-        // Empty lease is rejected the same as a non-string lease.
-        if (! is_string($claim->lease) || $claim->lease === '') { // @pest-mutate-ignore: BooleanOrToBooleanAnd, EmptyStringToNotEmpty
+        if (! $this->hasLease($claim)) {
             throw new IdempotencyStoreException('Missing lease on idempotency claim.');
         }
 
         $recordKey = $claim->scope->cacheKey($claim->key);
-        $lockKey = $recordKey.self::LOCK_SUFFIX;
         $existing = $this->cache->get($recordKey);
 
-        // Missing lease key fails closed the same as a mismatch.
-        if (! is_array($existing) || ($existing['lease'] ?? '') !== $claim->lease) { // @pest-mutate-ignore: EmptyStringToNotEmpty
+        if (! is_array($existing) || ($existing['lease'] ?? null) !== $claim->lease) {
             throw new IdempotencyStoreException('Idempotency lease mismatch on complete.');
         }
 
-        $payload = [
-            'fingerprint' => $existing['fingerprint'] ?? '',
-            'lease' => $claim->lease,
-            'status' => 'completed',
-            'status_code' => $response->status,
-            'headers' => $response->headers,
-            'body' => $response->body,
-            'started_at' => $this->intValue($existing['started_at'] ?? $now->getTimestamp(), $now->getTimestamp()),
-            'expires_at' => $now->getTimestamp() + $this->ttlSeconds,
-        ];
+        $payload = $this->completedRecord($existing, $claim, $now, $response->status, $response->headers, $response->body);
 
         try {
             $written = $this->cache->put($recordKey, $payload, $this->ttlSeconds);
@@ -161,80 +134,110 @@ final class CacheIdempotencyStore implements IdempotencyStore
             throw new IdempotencyStoreException('Failed to persist idempotent response; sealed unreplayable.');
         }
 
-        $this->locks->restoreLock($lockKey, $claim->lease)->release();
+        $this->lockFor($recordKey, $claim->lease)->release();
     }
 
     public function sealUnreplayable(IdempotencyClaim $claim, DateTimeImmutable $now): void
     {
-        if ($claim->outcome !== ClaimOutcome::New) { // @pest-mutate-ignore: IfNegated, NotIdenticalToIdentical
+        if ($claim->outcome !== ClaimOutcome::New) {
             throw new IdempotencyStoreException('Cannot seal a claim that is not new.');
         }
 
-        // Empty lease is rejected the same as a non-string lease.
-        if (! is_string($claim->lease) || $claim->lease === '') { // @pest-mutate-ignore: BooleanOrToBooleanAnd, EmptyStringToNotEmpty, IfNegated, IdenticalToNotIdentical, RemoveNot
+        if (! $this->hasLease($claim)) {
             throw new IdempotencyStoreException('Missing lease on idempotency claim.');
         }
 
         $recordKey = $claim->scope->cacheKey($claim->key);
-        // Lock key suffix must match claim(); order is fixed.
-        $lockKey = $recordKey.self::LOCK_SUFFIX; // @pest-mutate-ignore: ConcatRemoveLeft, ConcatRemoveRight, ConcatSwitchSides
         $existing = $this->cache->get($recordKey);
 
-        // Missing lease key fails closed the same as a mismatch.
-        if (! is_array($existing) || ($existing['lease'] ?? '') !== $claim->lease) { // @pest-mutate-ignore: EmptyStringToNotEmpty, IfNegated, NotIdenticalToIdentical, BooleanOrToBooleanAnd, CoalesceRemoveLeft, RemoveNot
+        if (! is_array($existing) || ($existing['lease'] ?? null) !== $claim->lease) {
             throw new IdempotencyStoreException('Idempotency lease mismatch on seal.');
         }
 
-        $this->cache->put($recordKey, [ // @pest-mutate-ignore: RemoveMethodCall
-            // Missing fingerprint becomes empty; sealed payload columns stay null.
-            'fingerprint' => $existing['fingerprint'] ?? '', // @pest-mutate-ignore: CoalesceRemoveLeft, RemoveArrayItem, EmptyStringToNotEmpty
-            'lease' => $claim->lease, // @pest-mutate-ignore: RemoveArrayItem
-            'status' => 'completed', // @pest-mutate-ignore: RemoveArrayItem
-            'status_code' => null, // @pest-mutate-ignore: RemoveArrayItem
-            'headers' => null, // @pest-mutate-ignore: RemoveArrayItem
-            'body' => null, // @pest-mutate-ignore: RemoveArrayItem
-            'started_at' => $this->intValue($existing['started_at'] ?? $now->getTimestamp(), $now->getTimestamp()), // @pest-mutate-ignore: CoalesceRemoveLeft, RemoveArrayItem
-            // TTL is always added; minus would expire immediately and is out of contract.
-            'expires_at' => $now->getTimestamp() + $this->ttlSeconds, // @pest-mutate-ignore: PlusToMinus, RemoveArrayItem
-        ], $this->ttlSeconds);
+        // A sealed record has no status code: claim() answers NotReplayable for it.
+        $this->cache->put($recordKey, $this->completedRecord($existing, $claim, $now, null, null, null), $this->ttlSeconds);
 
-        $this->locks->restoreLock($lockKey, $claim->lease)->release(); // @pest-mutate-ignore: RemoveMethodCall
+        $this->lockFor($recordKey, $claim->lease)->release();
     }
 
     public function abandon(IdempotencyClaim $claim, DateTimeImmutable $now): void
     {
-        if ($claim->outcome !== ClaimOutcome::New) {
+        if ($claim->outcome !== ClaimOutcome::New || ! $this->hasLease($claim)) {
             return;
         }
 
-        // Empty lease is a no-op abandon either way.
-        if (! is_string($claim->lease) || $claim->lease === '') { // @pest-mutate-ignore: BooleanOrToBooleanAnd, EmptyStringToNotEmpty
-            return; // @pest-mutate-ignore: RemoveEarlyReturn
-        }
-
         $recordKey = $claim->scope->cacheKey($claim->key);
-        $lockKey = $recordKey.self::LOCK_SUFFIX;
         $existing = $this->cache->get($recordKey);
 
-        // Missing lease key is a no-op abandon.
-        if (! is_array($existing) || ($existing['lease'] ?? '') !== $claim->lease) { // @pest-mutate-ignore: EmptyStringToNotEmpty
+        // Only the claim's own marker is removed: a foreign lease is a no-op.
+        if (! is_array($existing) || ($existing['lease'] ?? null) !== $claim->lease) {
             return;
         }
 
         $this->cache->forget($recordKey);
-        $this->locks->restoreLock($lockKey, $claim->lease)->release();
+        $this->lockFor($recordKey, $claim->lease)->release();
     }
 
     /**
-     * @param  array<string, mixed>  $existing
+     * The stored record, or null when there is none or it is a completed record past
+     * its `expires_at` (the cache TTL may not have evicted it yet), which may be
+     * claimed again.
+     *
+     * @return array<string, mixed>|null
      */
-    private function isExpired(array $existing, DateTimeImmutable $now): bool
+    private function liveRecord(string $recordKey, DateTimeImmutable $now): ?array
     {
-        // Absent expires_at means never expired (0).
-        $expiresAt = $this->intValue($existing['expires_at'] ?? 0, 0); // @pest-mutate-ignore: CoalesceRemoveLeft, DecrementInteger, IncrementInteger
+        $existing = $this->cache->get($recordKey);
 
-        // Boundary equality is handled by claim takeover tests separately.
-        return $expiresAt > 0 && $expiresAt < $now->getTimestamp(); // @pest-mutate-ignore: SmallerToSmallerOrEqual, IncrementInteger
+        if (! is_array($existing)) {
+            return null;
+        }
+
+        /** @var array<string, mixed> $existing */
+        $expiresAt = $this->intValue($existing['expires_at'] ?? null);
+        $isExpiredCompletion = ($existing['status'] ?? null) === 'completed'
+            && $expiresAt !== null
+            && $expiresAt < $now->getTimestamp();
+
+        return $isExpiredCompletion ? null : $existing;
+    }
+
+    private function lockFor(string $recordKey, string $owner): Lock
+    {
+        return $this->locks->lock($recordKey.self::LOCK_SUFFIX, $this->lockTtlSeconds, $owner);
+    }
+
+    /**
+     * @phpstan-assert-if-true non-empty-string $claim->lease
+     */
+    private function hasLease(IdempotencyClaim $claim): bool
+    {
+        return is_string($claim->lease) && $claim->lease !== '';
+    }
+
+    /**
+     * @param  array<mixed>  $existing
+     * @param  array<string, string>|null  $headers
+     * @return array<string, mixed>
+     */
+    private function completedRecord(
+        array $existing,
+        IdempotencyClaim $claim,
+        DateTimeImmutable $now,
+        ?int $statusCode,
+        ?array $headers,
+        ?string $body,
+    ): array {
+        return [
+            'fingerprint' => $existing['fingerprint'] ?? '',
+            'lease' => $claim->lease,
+            'status' => 'completed',
+            'status_code' => $statusCode,
+            'headers' => $headers,
+            'body' => $body,
+            'started_at' => $this->intValue($existing['started_at'] ?? null) ?? $now->getTimestamp(),
+            'expires_at' => $now->getTimestamp() + $this->ttlSeconds,
+        ];
     }
 
     /**
@@ -246,26 +249,21 @@ final class CacheIdempotencyStore implements IdempotencyStore
         IdempotencyScope $scope,
         string $key,
     ): ?IdempotencyClaim {
-        // Missing status is not completed.
-        if (($existing['status'] ?? '') !== 'completed') { // @pest-mutate-ignore: EmptyStringToNotEmpty
+        if (($existing['status'] ?? null) !== 'completed') {
             return null;
         }
 
-        // Sealed rows omit body; flipping the null checks is covered by NotReplayable tests elsewhere.
-        if (! array_key_exists('body', $existing) || $existing['body'] === null) { // @pest-mutate-ignore: IfNegated, IdenticalToNotIdentical, BooleanOrToBooleanAnd, RemoveNot
-            if (($existing['status_code'] ?? null) === null) {
-                return new IdempotencyClaim(ClaimOutcome::NotReplayable, null, null, $scope, $key); // @pest-mutate-ignore: RemoveEarlyReturn
-            }
+        // A sealed record stores neither a body nor a status code.
+        if (($existing['body'] ?? null) === null && ($existing['status_code'] ?? null) === null) {
+            return new IdempotencyClaim(ClaimOutcome::NotReplayable, null, null, $scope, $key);
         }
 
-        // Missing fingerprint never matches a real hash.
-        if (($existing['fingerprint'] ?? '') === $fingerprint) { // @pest-mutate-ignore: EmptyStringToNotEmpty
+        if (($existing['fingerprint'] ?? null) === $fingerprint) {
             $replay = new ReplayableResponse(
-                // Default 200 matches HTTP OK when status_code was never stored.
-                $this->intValue($existing['status_code'] ?? 200, 200), // @pest-mutate-ignore: DecrementInteger, IncrementInteger
-                $this->headersValue($existing['headers'] ?? []),
-                // Absent body replays as empty string.
-                $this->stringValue($existing['body'] ?? ''), // @pest-mutate-ignore: EmptyStringToNotEmpty
+                // An unreadable status code replays as 200, like a body without one.
+                $this->intValue($existing['status_code'] ?? null) ?? 200,
+                $this->headersValue($existing['headers'] ?? null),
+                $this->stringValue($existing['body'] ?? null),
             );
 
             return new IdempotencyClaim(ClaimOutcome::Replay, $replay, null, $scope, $key);
@@ -274,18 +272,16 @@ final class CacheIdempotencyStore implements IdempotencyStore
         return new IdempotencyClaim(ClaimOutcome::Mismatch, null, null, $scope, $key);
     }
 
-    private function intValue(mixed $value, int $default): int
+    /**
+     * Records written by other drivers or versions may hold numeric strings.
+     */
+    private function intValue(mixed $value): ?int
     {
-        if (is_int($value)) {
-            return $value;
+        if (is_string($value) && is_numeric($value)) {
+            $value = (int) $value;
         }
 
-        // Non-numeric strings already fall through to the default.
-        if (is_string($value) && is_numeric($value)) { // @pest-mutate-ignore: BooleanAndToBooleanOr
-            return (int) $value;
-        }
-
-        return $default;
+        return is_int($value) ? $value : null;
     }
 
     private function stringValue(mixed $value): string
@@ -294,6 +290,9 @@ final class CacheIdempotencyStore implements IdempotencyStore
     }
 
     /**
+     * complete() stores the sanitized `array<string, string>` headers; a list value
+     * from another writer is joined, and anything else is dropped.
+     *
      * @return array<string, string>
      */
     private function headersValue(mixed $headers): array
@@ -311,14 +310,9 @@ final class CacheIdempotencyStore implements IdempotencyStore
 
             if (is_string($value)) {
                 $normalized[$name] = $value;
-
-                continue;
-            }
-
-            if (is_array($value)) {
+            } elseif (is_array($value)) {
                 $normalized[$name] = implode(', ', array_map(
-                    // Non-scalars become empty the same without the cast on scalars that are already strings.
-                    static fn (mixed $part): string => is_scalar($part) ? (string) $part : '', // @pest-mutate-ignore: RemoveStringCast
+                    static fn (mixed $part): string => is_scalar($part) ? (string) $part : '',
                     $value,
                 ));
             }

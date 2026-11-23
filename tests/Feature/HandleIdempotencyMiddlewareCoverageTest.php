@@ -2,9 +2,11 @@
 
 declare(strict_types=1);
 
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Context;
 use Qiick\HttpBasics\Contracts\CredentialBucketResolver;
+use Qiick\HttpBasics\Contracts\ErrorRenderer;
 use Qiick\HttpBasics\Contracts\IdempotencyStore;
 use Qiick\HttpBasics\Idempotency\AnonymousBucketResolver;
 use Qiick\HttpBasics\Idempotency\ClaimOutcome;
@@ -15,6 +17,7 @@ use Qiick\HttpBasics\Idempotency\IdempotencyClaim;
 use Qiick\HttpBasics\Idempotency\IdempotencyErrorCode;
 use Qiick\HttpBasics\Idempotency\IdempotencyKeyFormat;
 use Qiick\HttpBasics\Idempotency\IdempotencyKeyValidator;
+use Qiick\HttpBasics\Idempotency\IdempotencyRejection;
 use Qiick\HttpBasics\Idempotency\IdempotencyScope;
 use Qiick\HttpBasics\Idempotency\IdempotencyStoreException;
 use Qiick\HttpBasics\Idempotency\NullCredentialBucketResolver;
@@ -23,6 +26,8 @@ use Qiick\HttpBasics\Idempotency\ReplayHeaderSanitizer;
 use Qiick\HttpBasics\Locale\ConfigDefaultLocaleResolver;
 use Qiick\HttpBasics\Locale\ConfigSupportedLocales;
 use Qiick\HttpBasics\Locale\LocaleNegotiator;
+use Qiick\HttpBasics\Locale\LocaleResolution;
+use Qiick\HttpBasics\Locale\LocaleSource;
 use Qiick\HttpBasics\Locale\MachineDoorClassifier;
 use Qiick\HttpBasics\RequestId\RequestId;
 use Qiick\HttpBasics\RequestId\RequestIdResolver;
@@ -69,6 +74,9 @@ function makeIdempotencyMiddleware(
     int $retryAfterSeconds = 30,
     int $maxBodyBytes = 1048576,
     ?ReplayHeaderSanitizer $headerSanitizer = null,
+    ?ErrorRenderer $errorRenderer = null,
+    int $maxResponseBytes = 1048576,
+    ?string $replayHeaderName = HandleIdempotencyMiddleware::DEFAULT_REPLAY_HEADER,
 ): HandleIdempotencyMiddleware {
     return new HandleIdempotencyMiddleware(
         $store,
@@ -77,7 +85,7 @@ function makeIdempotencyMiddleware(
         $credentials,
         new AnonymousBucketResolver(str_repeat('s', 32), ['ip', 'route']),
         $anonymousEnabled,
-        new FleetErrorRenderer,
+        $errorRenderer ?? new FleetErrorRenderer,
         $headerSanitizer ?? new ReplayHeaderSanitizer(['Content-Type'], ['Set-Cookie']),
         app(RequestIdResolver::class),
         $doors = new MachineDoorClassifier(['api/*']),
@@ -89,10 +97,11 @@ function makeIdempotencyMiddleware(
         $methods,
         $requireJson,
         $maxBodyBytes,
-        1048576,
+        $maxResponseBytes,
         60,
         55,
         $retryAfterSeconds,
+        $replayHeaderName,
     );
 }
 
@@ -779,7 +788,10 @@ it('enforces max_handler_seconds and seals unreplayable after a slow handler', f
         return response('again', 201);
     }, 'max_handler_seconds=1');
 
-    expect($second->getStatusCode())->toBe(409)->and($runs)->toBe(1);
+    // Sealed, not merely still locked: the retry is told the response is gone for good.
+    expect($second->getStatusCode())->toBe(409)
+        ->and($second->getData(true)['error'] ?? null)->toBe(IdempotencyErrorCode::NotReplayable->value)
+        ->and($runs)->toBe(1);
 });
 
 it('accepts application/json content type case-insensitively with parameters', function (): void {
@@ -891,4 +903,169 @@ it('renders malformed JSON through ErrorRenderer as validation_failed', function
     expect($response->getStatusCode())->toBe(422)
         ->and($response->getData(true)['error'])->toBe('validation_failed')
         ->and($response->getData(true)['message'])->toBe('The given data was invalid.');
+});
+
+/**
+ * Error renderer that keeps every rejection so tests can inspect its exact headers.
+ */
+function capturingErrorRenderer(): ErrorRenderer
+{
+    return new class implements ErrorRenderer
+    {
+        /** @var list<IdempotencyRejection> */
+        public array $rejections = [];
+
+        public function render(IdempotencyRejection $rejection, Request $request): JsonResponse
+        {
+            $this->rejections[] = $rejection;
+
+            return (new FleetErrorRenderer)->render($rejection, $request);
+        }
+    };
+}
+
+it('hands the renderer Retry-After values as strings', function (): void {
+    $renderer = capturingErrorRenderer();
+    $middleware = makeIdempotencyMiddleware($this->store, new FakeCredentialBucketResolver('tenant:1'), errorRenderer: $renderer);
+    $unbucketed = makeIdempotencyMiddleware($this->store, new FakeCredentialBucketResolver(null), errorRenderer: $renderer, retryAfterSeconds: 7);
+
+    $this->store->claim(
+        new IdempotencyScope('tenant:1', 'POST', '/api/widgets'),
+        '550e8400-e29b-41d4-a716-446655440010',
+        'held',
+        new DateTimeImmutable,
+    );
+    $middleware->handle(idempotencyRequest(), static fn () => response('x'));
+    $unbucketed->handle(idempotencyRequest(), static fn () => response('x'));
+
+    expect($renderer->rejections[0]->getHeaders())->toBe(['Retry-After' => '60'])
+        ->and($renderer->rejections[1]->getHeaders())->toBe(['Retry-After' => '7']);
+});
+
+it('runs the handler under a max_handler_seconds override and floors it at one second', function (string $option): void {
+    $middleware = makeIdempotencyMiddleware($this->store, new FakeCredentialBucketResolver('tenant:1'));
+
+    $first = $middleware->handle(idempotencyRequest(), static fn () => response('ok', 201), $option);
+    $retry = $middleware->handle(idempotencyRequest(), static fn () => response('again', 201), $option);
+
+    expect($first->getStatusCode())->toBe(201)
+        ->and($retry->getContent())->toBe('ok')
+        ->and($retry->headers->get('Idempotent-Replayed'))->toBe('true');
+})->with([
+    'within the lock TTL' => ['max_handler_seconds=2'],
+    'zero floors to one' => ['max_handler_seconds=0'],
+]);
+
+it('rejects a request without Content-Type when JSON is required', function (): void {
+    $middleware = makeIdempotencyMiddleware($this->store, new FakeCredentialBucketResolver('tenant:1'));
+    $request = idempotencyRequest();
+    $request->headers->remove('Content-Type');
+    $runs = 0;
+
+    $response = $middleware->handle($request, static function () use (&$runs) {
+        $runs++;
+
+        return response('x');
+    });
+
+    expect($response->getStatusCode())->toBe(415)->and($runs)->toBe(0);
+});
+
+it('accepts a JSON media type with whitespace before its parameters', function (): void {
+    $middleware = makeIdempotencyMiddleware($this->store, new FakeCredentialBucketResolver('tenant:1'));
+    $request = idempotencyRequest();
+    $request->headers->set('Content-Type', 'application/json ; charset=utf-8');
+
+    expect($middleware->handle($request, static fn () => response('ok', 201))->getStatusCode())->toBe(201);
+});
+
+it('treats an empty credential bucket as no bucket', function (): void {
+    $middleware = makeIdempotencyMiddleware($this->store, new FakeCredentialBucketResolver(''));
+    $runs = 0;
+
+    $response = $middleware->handle(idempotencyRequest(), static function () use (&$runs) {
+        $runs++;
+
+        return response('x');
+    });
+
+    expect($response->getStatusCode())->toBe(503)->and($runs)->toBe(0);
+});
+
+it('folds the negotiated locale into the fingerprint only when it came from Accept-Language', function (
+    string $path,
+    ?string $acceptLanguage,
+    ?LocaleResolution $resolvedLocale,
+    string $expectedSuffix,
+): void {
+    $middleware = makeIdempotencyMiddleware($this->store, new FakeCredentialBucketResolver('tenant:1'));
+    $request = Request::create($path, 'POST', [], [], [], [
+        'HTTP_Idempotency-Key' => '550e8400-e29b-41d4-a716-446655440094',
+        'CONTENT_TYPE' => 'application/json',
+    ], '{"name":"a"}');
+
+    if ($acceptLanguage !== null) {
+        $request->headers->set('Accept-Language', $acceptLanguage);
+    }
+
+    if ($resolvedLocale !== null) {
+        $request->attributes->set(LocaleNegotiator::ATTRIBUTE, $resolvedLocale);
+    }
+
+    $middleware->handle($request, static fn () => response('ok', 201));
+
+    $expectedFingerprint = (new Fingerprinter)->fingerprint($request, 1048576, $expectedSuffix, 'tenant:1');
+    $retry = $this->store->claim(
+        new IdempotencyScope('tenant:1', 'POST', $path),
+        '550e8400-e29b-41d4-a716-446655440094',
+        $expectedFingerprint,
+        new DateTimeImmutable,
+    );
+
+    expect($retry->outcome)->toBe(ClaimOutcome::Replay);
+})->with([
+    'web route ignores even a header-sourced locale' => ['/widgets', 'it', new LocaleResolution('it', LocaleSource::Header, true), ''],
+    'machine door, unsupported header falls back' => ['/api/widgets', 'fr', null, ''],
+    'machine door, negotiated region tag' => ['/api/widgets', 'it-CH,it;q=0.9', null, 'it'],
+]);
+
+it('replays a response whose size equals the response cap', function (): void {
+    $middleware = makeIdempotencyMiddleware($this->store, new FakeCredentialBucketResolver('tenant:1'), maxResponseBytes: 2);
+
+    $middleware->handle(idempotencyRequest(), static fn () => response('ok', 201));
+    $retry = $middleware->handle(idempotencyRequest(), static fn () => response('no', 201));
+
+    expect($retry->getContent())->toBe('ok')
+        ->and($retry->headers->get('Idempotent-Replayed'))->toBe('true');
+});
+
+it('omits the replay header when its name is null or empty', function (?string $replayHeaderName): void {
+    $middleware = makeIdempotencyMiddleware(
+        $this->store,
+        new FakeCredentialBucketResolver('tenant:1'),
+        replayHeaderName: $replayHeaderName,
+    );
+
+    $middleware->handle(idempotencyRequest(), static fn () => response('ok', 201));
+    $retry = $middleware->handle(idempotencyRequest(), static fn () => response('no', 201));
+
+    expect($retry->getContent())->toBe('ok')
+        ->and(array_keys($retry->headers->all()))->not->toContain('')
+        ->and($retry->headers->has('Idempotent-Replayed'))->toBeFalse();
+})->with([
+    'null' => [null],
+    'empty' => [''],
+]);
+
+it('abandons the claim when the handler itself throws a store exception', function (): void {
+    $middleware = makeIdempotencyMiddleware($this->store, new FakeCredentialBucketResolver('tenant:1'));
+
+    // The handler's own failure propagates: it is not the middleware's store failing.
+    expect(fn () => $middleware->handle(idempotencyRequest(), static function (): never {
+        throw new IdempotencyStoreException('nested store failure');
+    }))->toThrow(IdempotencyStoreException::class, 'nested store failure');
+
+    $retry = $middleware->handle(idempotencyRequest(), static fn () => response('ran', 201));
+
+    expect($retry->getStatusCode())->toBe(201)->and($retry->getContent())->toBe('ran');
 });

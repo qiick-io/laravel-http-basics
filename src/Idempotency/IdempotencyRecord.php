@@ -33,10 +33,21 @@ class IdempotencyRecord extends Model
     }
 
     /**
+     * Follows the store's connection so `model:prune` deletes where the rows live.
+     */
+    public function getConnectionName(): ?string
+    {
+        $connection = config('http-basics.idempotency.database.connection');
+
+        return is_string($connection) && $connection !== '' ? $connection : null;
+    }
+
+    /**
      * @return Builder<static>
      */
     public function prunable(): Builder
     {
-        return static::query()->where('expires_at', '<=', now());
+        // expires_at is UTC wall-clock, so the cutoff must be too, whatever app.timezone is.
+        return static::query()->where('expires_at', '<=', now('UTC'));
     }
 }

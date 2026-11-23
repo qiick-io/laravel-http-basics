@@ -13,14 +13,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CORS: the `http-basics.cors.validate_on_boot` switch (`HTTP_BASICS_CORS_VALIDATE_ON_BOOT`).
   Boot validation of `config('cors')` now always runs.
 
+### Changed
+
+- Idempotency: on machine doors the fingerprint includes the locale negotiated from
+  `Accept-Language`, not the raw header, so `it-CH,it;q=0.9` and `it` replay the same
+  response instead of failing with `idempotency_payload_mismatch`.
+
 ### Fixed
 
 - CORS: with `supports_credentials`, boot now rejects `allowed_headers: ['*']`, which
   Fruitcake answers by echoing every requested header (`Authorization` included).
 
-- Idempotency: rebase onto security-headers re-review tip; strip blanket
-  `@pest-mutate-ignore` and keep only proven equivalents with one-line reasons;
-  raise per-class mutation score to 100% for the six design §8 targets.
+- Idempotency: the database store, `IdempotencyRecord::prunable()` and
+  `http-basics:prune-idempotency` now read the UTC `expires_at` / `updated_at` columns
+  as UTC. Under a non-UTC `app.timezone` (Europe/Rome) completed keys expired, and were
+  pruned, up to the UTC offset early, so a retry inside the TTL re-ran the handler.
+
+- Idempotency: `IdempotencyRecord` (`model:prune`) and `http-basics:prune-idempotency`
+  now use `http-basics.idempotency.database.connection`, the connection the store writes
+  to, instead of always the default connection.
+
+- Idempotency: no `@pest-mutate-ignore` is left in `src/Idempotency`; every class in
+  `scripts/mutate-per-class.sh` reaches its real per-class score of at least 95%.
+
+- Idempotency: an exception thrown by the route handler, `IdempotencyStoreException`
+  included, now always abandons the claim, so a retry can run it; before, a
+  handler-thrown `IdempotencyStoreException` left the key locked until `lock_ttl_seconds`.
+
+- Idempotency: a database row marked completed whose `status_code` cannot be read is
+  answered `idempotency_not_replayable` instead of being replayed as a guessed `200`.
 
 ### Added
 
