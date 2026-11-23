@@ -117,13 +117,10 @@ final class LocaleNegotiator
 
     private function userLocale(mixed $user): ?string
     {
-        // Empty locale fails isSupported the same as null (EmptyStringToNotEmpty equivalent).
-        // BooleanOrToBooleanAnd is equivalent: non-objects never expose a string locale via isset.
-        if (! is_object($user) || ! isset($user->locale) || ! is_string($user->locale) || $user->locale === '') {
-            return null;
-        }
+        $locale = is_object($user) ? ($user->locale ?? null) : null;
 
-        return $user->locale;
+        // Empty means "no preference", even if '' slipped into the supported list.
+        return is_string($locale) && $locale !== '' ? $locale : null;
     }
 
     private function defaultChain(bool $didReadAcceptLanguage = false): LocaleResolution
@@ -171,12 +168,8 @@ final class LocaleNegotiator
             return null;
         }
 
+        // Empty ordered ranges fall through to null after both match loops.
         $ranges = $this->orderLanguageRanges($rangeParts);
-        // Empty ordered ranges still fall through to null after both match loops.
-        if ($ranges === []) {
-            return null; // @pest-mutate-ignore: RemoveEarlyReturn
-        }
-
         $available = $this->supported->all();
         if ($available === []) {
             return null;
@@ -246,11 +239,8 @@ final class LocaleNegotiator
                 continue;
             }
 
-            // Highest q wins duplicate tags; do not case-fold tags.
-            // Equal q keeps the same score for the same tag (GreaterToGreaterOrEqual equivalent).
-            if (! isset($scores[$tag]) || $q > $scores[$tag]) { // @pest-mutate-ignore: GreaterToGreaterOrEqual
-                $scores[$tag] = $q;
-            }
+            // Highest q wins duplicate tags (q is always > 0 here); do not case-fold tags.
+            $scores[$tag] = max($q, $scores[$tag] ?? $q);
         }
 
         $star = array_key_exists('*', $scores);
@@ -272,31 +262,16 @@ final class LocaleNegotiator
      */
     private function parseQuality(array $params): ?float
     {
-        $q = 1.0;
-        $hasQuality = false;
-
+        // The first q= parameter decides; a malformed one (empty included) drops the range.
         foreach ($params as $param) {
-            if (! str_starts_with(strtolower($param), 'q=')) {
-                continue;
-            }
+            if (str_starts_with(strtolower($param), 'q=')) {
+                $rawQ = substr($param, 2);
 
-            // Duplicate q params: first wins.
-            // Remaining params are only further q= values we already ignore (ContinueToBreak equivalent).
-            if ($hasQuality) {
-                continue; // @pest-mutate-ignore: ContinueToBreak
+                return preg_match(self::Q_VALUE_PATTERN, $rawQ) === 1 ? (float) $rawQ : null;
             }
-
-            $rawQ = substr($param, 2);
-            // Empty rawQ already fails Q_VALUE_PATTERN (EmptyStringToNotEmpty equivalent).
-            if ($rawQ === '' || preg_match(self::Q_VALUE_PATTERN, $rawQ) !== 1) { // @pest-mutate-ignore: EmptyStringToNotEmpty
-                return null;
-            }
-
-            $q = (float) $rawQ;
-            $hasQuality = true;
         }
 
-        return $q;
+        return 1.0;
     }
 
     /**
@@ -310,11 +285,6 @@ final class LocaleNegotiator
         $normalizedTag = $this->normalizeTag($tag);
 
         foreach ($available as $locale) {
-            // Identical tags also match on the normalised equality below (RemoveEarlyReturn equivalent).
-            if ($locale === $tag) {
-                return $locale; // @pest-mutate-ignore: RemoveEarlyReturn
-            }
-
             if ($this->normalizeTag($locale) === $normalizedTag) {
                 return $locale;
             }
