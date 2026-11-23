@@ -62,6 +62,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   descriptor and symbolic link entries are refused. The package checks structure only:
   products must never extract uploads with streaming readers (see the README).
 
+- Errors: optional RFC 9457 problem details (`http-basics.errors.format=problem_details`).
+  `ProblemDetailsErrorRenderer` and a container-bound `ExceptionErrorCodeAugmenter` render
+  every machine-door error response, HTML error pages included, as
+  `application/problem+json`, keeping the fleet members as extension members; golden
+  tests pin the wire shapes.
+
 - Errors: design §3.5 fleet helpers — single `ErrorCode` backed enum (framework,
   `idempotency_*` and `upload_*` codes) with
   `docs/error-codes.md` catalogue (Pest fails on drift), `ErrorCodeResolver` /

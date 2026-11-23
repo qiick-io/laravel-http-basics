@@ -11,6 +11,19 @@ declare(strict_types=1);
 
 return [
 
+    'errors' => [
+        /*
+         * fleet | problem_details
+         * Chosen once per product (not per request). externa keeps fleet.
+         */
+        'format' => env('HTTP_BASICS_ERROR_FORMAT', 'fleet'),
+        /*
+         * When set, RFC 9457 `type` is this base URI plus the `error` code.
+         * Null keeps `about:blank` and HTTP reason-phrase titles.
+         */
+        'problem_type_base_uri' => env('HTTP_BASICS_PROBLEM_TYPE_BASE_URI'),
+    ],
+
     'uploads' => [
         'magic_signatures' => [
             'pdf' => ['255044462D'],

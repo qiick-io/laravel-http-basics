@@ -48,22 +48,25 @@ this package).
 ### Fleet error shape (landed)
 
 ```php
-use Qiick\HttpBasics\Errors\ErrorCodeResolver;
 use Qiick\HttpBasics\Errors\ExceptionErrorCodeAugmenter;
 use Qiick\HttpBasics\Errors\MachineDoorJson;
-use Qiick\HttpBasics\Locale\MachineDoorClassifier;
 
 // shouldRenderJsonWhen — machine doors only
 $exceptions->shouldRenderJsonWhen(MachineDoorJson::whenCallback(['api/*', 'mcp', 'mcp/*']));
 
-// respond() — add top-level `error` on JSON ≥400, never overwrite
-$exceptions->respond(function ($response, $exception, $request) {
-    return ExceptionErrorCodeAugmenter::callback(
-        app(ErrorCodeResolver::class),
-        app(MachineDoorClassifier::class),
-    )($response, $exception, $request);
-});
+// respond() — add top-level `error` on machine-door JSON ≥400, never overwrite.
+$exceptions->respond(fn ($response, $exception, $request) => app(ExceptionErrorCodeAugmenter::class)
+    ->respond($response, $exception, $request));
 ```
+
+With `http-basics.errors.format=problem_details` (chosen once per product), the
+same binding renders every machine-door error response as RFC 9457
+`application/problem+json`, an HTML error page included: `type` (`about:blank`,
+or `problem_type_base_uri` plus the code), `title`, `status`, `detail` (the fleet
+`message`), and `instance` when a `ProblemInstanceResolver` is bound. Every other
+fleet member stays as an extension member: `error` (a product's own code is
+kept), `errors`, `documentation_url`. Status and headers (`Retry-After`,
+`Allow`) are kept. The golden shapes are in `tests/Feature/golden/problem-details/`.
 
 Idempotency refusals already use `ErrorRenderer` with translated `message` and a
 stable `error` code from the shared `ErrorCode` enum (see `docs/error-codes.md`).

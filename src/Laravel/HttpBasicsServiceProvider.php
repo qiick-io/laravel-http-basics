@@ -21,7 +21,10 @@ use Qiick\HttpBasics\Cors\AllowedOriginsResolver;
 use Qiick\HttpBasics\Cors\CorsConfigValidator;
 use Qiick\HttpBasics\Cors\NullAllowedOriginsResolver;
 use Qiick\HttpBasics\Errors\ErrorCodeResolver;
+use Qiick\HttpBasics\Errors\ExceptionErrorCodeAugmenter;
 use Qiick\HttpBasics\Errors\FrameworkErrorCodeResolver;
+use Qiick\HttpBasics\Errors\ProblemDetailsErrorRenderer;
+use Qiick\HttpBasics\Errors\ProblemInstanceResolver;
 use Qiick\HttpBasics\Idempotency\AnonymousBucketResolver;
 use Qiick\HttpBasics\Idempotency\CacheIdempotencyStore;
 use Qiick\HttpBasics\Idempotency\DatabaseIdempotencyStore;
@@ -343,14 +346,32 @@ final class HttpBasicsServiceProvider extends ServiceProvider
         $this->app->singleton(AllowedOriginsResolver::class, NullAllowedOriginsResolver::class);
         $this->app->singleton(ErrorCodeResolver::class, FrameworkErrorCodeResolver::class);
 
-        $this->app->singleton(ErrorRenderer::class, function (Application $app): ErrorRenderer {
+        $this->app->singleton(FleetErrorRenderer::class, function (Application $app): FleetErrorRenderer {
             $url = $this->config($app)->get('http-basics.idempotency.documentation_url');
 
-            return new FleetErrorRenderer(
-                is_string($url) ? $url : null,
+            return new FleetErrorRenderer(is_string($url) ? $url : null, $app->make('translator'));
+        });
+
+        $this->app->singleton(ProblemDetailsErrorRenderer::class, function (Application $app): ProblemDetailsErrorRenderer {
+            $baseUri = $this->config($app)->get('http-basics.errors.problem_type_base_uri');
+
+            return new ProblemDetailsErrorRenderer(
+                $app->make(FleetErrorRenderer::class),
+                is_string($baseUri) && $baseUri !== '' ? $baseUri : null,
+                $app->bound(ProblemInstanceResolver::class) ? $app->make(ProblemInstanceResolver::class) : null,
                 $app->make('translator'),
             );
         });
+
+        $this->app->singleton(ErrorRenderer::class, fn (Application $app): ErrorRenderer => $this->usesProblemDetails($app)
+            ? $app->make(ProblemDetailsErrorRenderer::class)
+            : $app->make(FleetErrorRenderer::class));
+
+        $this->app->singleton(ExceptionErrorCodeAugmenter::class, fn (Application $app): ExceptionErrorCodeAugmenter => new ExceptionErrorCodeAugmenter(
+            $app->make(ErrorCodeResolver::class),
+            $app->make(MachineDoorClassifier::class),
+            problemDetails: $this->usesProblemDetails($app) ? $app->make(ProblemDetailsErrorRenderer::class) : null,
+        ));
 
         $this->app->singleton(IdempotencyStore::class, function (Application $app): IdempotencyStore {
             $config = $this->config($app);
@@ -437,6 +458,7 @@ final class HttpBasicsServiceProvider extends ServiceProvider
     public function boot(): void
     {
         $this->validateIdempotencyConfig();
+        $this->validateErrorsConfig();
         $this->validateCorsConfig();
 
         $this->loadTranslationsFrom(__DIR__.'/../../lang', 'http-basics');
@@ -457,6 +479,21 @@ final class HttpBasicsServiceProvider extends ServiceProvider
             $this->commands([
                 PruneIdempotencyRecordsCommand::class,
             ]);
+        }
+    }
+
+    private function usesProblemDetails(Application $app): bool
+    {
+        return $this->config($app)->get('http-basics.errors.format') === 'problem_details';
+    }
+
+    private function validateErrorsConfig(): void
+    {
+        $config = $this->config($this->app);
+        $format = $config->get('http-basics.errors.format', 'fleet');
+
+        if (! is_string($format) || ! in_array($format, ['fleet', 'problem_details'], true)) {
+            throw new \InvalidArgumentException('http-basics.errors.format must be fleet or problem_details.');
         }
     }
 

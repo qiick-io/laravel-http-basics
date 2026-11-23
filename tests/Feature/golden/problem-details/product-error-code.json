@@ -1,0 +1,12 @@
+{
+    "status": 423,
+    "headers": {"content-type": "application/problem+json"},
+    "body": {
+        "type": "about:blank",
+        "title": "Locked",
+        "status": 423,
+        "detail": "Widget 42 is locked.",
+        "error": "widget_locked",
+        "widget_id": 42
+    }
+}

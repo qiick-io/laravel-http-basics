@@ -1,0 +1,11 @@
+{
+    "status": 401,
+    "headers": {"content-type": "application/problem+json"},
+    "body": {
+        "type": "about:blank",
+        "title": "Unauthorized",
+        "status": 401,
+        "detail": "Unauthenticated.",
+        "error": "unauthenticated"
+    }
+}

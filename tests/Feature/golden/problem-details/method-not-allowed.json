@@ -1,0 +1,11 @@
+{
+    "status": 405,
+    "headers": {"content-type": "application/problem+json", "allow": "GET, HEAD"},
+    "body": {
+        "type": "about:blank",
+        "title": "Method Not Allowed",
+        "status": 405,
+        "detail": "The POST method is not supported for route api/items. Supported methods: GET, HEAD.",
+        "error": "method_not_allowed"
+    }
+}
