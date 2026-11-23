@@ -134,3 +134,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   PHPStan level max, qiick standards pack pinned to app-ui `v0.12.0`, CI matrix
   (PHP 8.3/8.4/8.5 × Laravel 12/13 × lowest/stable) with `composer validate
   --strict`, `composer audit`, SHA-pinned Actions, and README header banners.
+
+[Unreleased]: https://github.com/qiick-io/laravel-http-basics/compare/55a3690750baca3d6468a7465d606d8fe8a4e6c0...HEAD
