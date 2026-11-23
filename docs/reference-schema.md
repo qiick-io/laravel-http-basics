@@ -13,8 +13,8 @@ the create migration is edited in place. Tests load the same migration.
 | Column | Type | Notes |
 | --- | --- | --- |
 | `id` | bigint PK | Internal only |
-| `public_id` | `uuid`, unique | UUIDv7 written by the store; the id a product may expose |
-| `bucket` | `varchar(128)` | Server-side credential / anon bucket |
+| `public_id` | `uuid`, unique | UUIDv7 stamped with the claim time; the id a product may expose. One id names one operation: a takeover of an expired or stale row gets a new one, with its own `method`, `path` and `created_at` |
+| `bucket` | `varchar(128)`, binary collation on MySQL/MariaDB | Server-side credential / anon bucket, compared byte for byte on every engine; a bucket over 128 characters is stored as `sha256:<hex>` |
 | `bucket_version` | `smallint`, default `1` | Versions the bucket scheme (anonymous HMAC components) |
 | `credential_public_id` | `uuid` null, indexed | From `IdempotencyContext::$credentialPublicId` |
 | `key_hash` | `varchar(64)` | SHA-256 of the client key |
@@ -31,9 +31,9 @@ the create migration is edited in place. Tests load the same migration.
 | `headers_json` | `text` null | Allowlisted replay headers (`Idempotent-Replayed` is never stored) |
 | `body` | `longText` null | Capped by `max_response_bytes` (request bodies use `max_body_bytes`) |
 | `body_encoding` | `varchar(16)`, default `utf-8` | Leaves room for `base64` |
-| `request_id` | `varchar(128)` null | `X-Request-Id` of the claiming request |
-| `trace_id` | `char(32)` null, indexed | W3C trace-id, lowercase hex |
-| `metadata` | `json` null | Namespaced keys; never secrets, never `tracestate` |
+| `request_id` | `varchar(128)` null | `X-Request-Id` of the claiming request; null when the id does not match the request-id pattern |
+| `trace_id` | `char(32)` null, indexed | W3C trace-id, lowercase hex; empty until a trace-context module fills it (indexed now so 1.0 needs no later index on a hot table) |
+| `metadata` | `jsonb` null (`json` on MySQL/MariaDB) | Namespaced keys, plain values, at most 4 KiB; never secrets, never `tracestate` |
 | `schema_version` | `smallint`, default `1` | Row format, including how `headers_json` is serialised |
 | `completed_at` | timestamp null | Set when the response is stored or the key sealed (UTC) |
 | `created_at`, `updated_at` | timestamp null | Laravel defaults; store writes UTC |

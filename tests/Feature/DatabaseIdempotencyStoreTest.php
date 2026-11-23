@@ -725,7 +725,7 @@ it('takes over an expired completed row with a fresh lease, TTL and no old paylo
         ->and($row->status_code)->toBeNull()
         ->and($row->headers_json)->toBeNull()
         ->and($row->body)->toBeNull()
-        ->and($row->created_at)->toBe('2025-12-01 00:00:00')
+        ->and($row->created_at)->toBe('2026-01-01 00:00:00')
         ->and($row->updated_at)->toBe('2026-01-01 00:00:00')
         ->and($row->expires_at)->toBe('2026-01-01 00:02:00');
 });
@@ -967,7 +967,7 @@ it('stamps completed_at in UTC when the response is stored or sealed', function 
     expect(DB::table('idempotency_records')->value('completed_at'))->toBe('2026-01-01 00:00:30');
 })->with(['complete', 'seal']);
 
-it('keeps the row id but takes the new claim context on takeover', function (): void {
+it('gives a takeover a new row id and the new claim context', function (): void {
     $store = databaseIdempotencyStore(ttlSeconds: 2);
     $scope = new IdempotencyScope('bucket-a', 'POST', '/items');
     $now = new DateTimeImmutable('2026-01-01T00:00:00Z');
@@ -979,7 +979,7 @@ it('keeps the row id but takes the new claim context on takeover', function (): 
     $store->claim($scope, 'key-takeover', 'fp', $now->modify('+1 minute'), idempotencyContext());
     $row = DB::table('idempotency_records')->first();
 
-    expect($row->public_id)->toBe($publicId)
+    expect($row->public_id)->not->toBe($publicId)
         ->and($row->key_format)->toBe('uuid')
         ->and((int) $row->fingerprint_version)->toBe(1)
         ->and($row->request_id)->toBeNull()

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Qiick\HttpBasics\Idempotency;
 
 use Illuminate\Support\Str;
+use Qiick\HttpBasics\RequestId\RequestId;
 
 /**
  * @api What a store may record about a claim beyond its key and fingerprint.
@@ -17,16 +18,15 @@ use Illuminate\Support\Str;
 final readonly class IdempotencyContext
 {
     /**
-     * @param  int  $fingerprintVersion  1 = method, path, query, canonical JSON body and
-     *                                   the served locale
-     * @param  array<string, mixed>  $metadata  namespaced keys (`request.content_digest`);
+     * @param  array<string, mixed>  $metadata  namespaced keys (`upload`, `request.content_digest`)
+     *                                          holding plain values, at most 4 KiB of JSON;
      *                                          never secrets, never `tracestate`
      *
      * @throws \InvalidArgumentException when a value does not fit the record
      */
     public function __construct(
         public IdempotencyKeyFormat $keyFormat,
-        public int $fingerprintVersion = 1,
+        public int $fingerprintVersion = Fingerprinter::VERSION,
         public ?string $requestId = null,
         public ?string $traceId = null,
         public ?string $credentialPublicId = null,
@@ -36,8 +36,8 @@ final readonly class IdempotencyContext
             throw new \InvalidArgumentException('The fingerprint version starts at 1.');
         }
 
-        if ($requestId !== null && strlen($requestId) > 128) {
-            throw new \InvalidArgumentException('The request id holds at most 128 characters.');
+        if ($requestId !== null && preg_match(RequestId::PATTERN, $requestId) !== 1) {
+            throw new \InvalidArgumentException('The request id must match the request-id pattern (at most 128 characters).');
         }
 
         // W3C Trace Context: 32 lowercase hex digits, never all zeros.
@@ -49,10 +49,37 @@ final readonly class IdempotencyContext
             throw new \InvalidArgumentException('The credential public id must be a UUID.');
         }
 
+        self::assertStorableMetadata($metadata);
+    }
+
+    /**
+     * Metadata lands in an audit row: chosen keys and plain values only. An object
+     * (a model, say) would serialise fields nobody chose to record.
+     *
+     * @param  array<mixed>  $metadata
+     */
+    private static function assertStorableMetadata(array $metadata): void
+    {
+        foreach (array_keys($metadata) as $key) {
+            if (! is_string($key) || preg_match('/\A[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*\z/', $key) !== 1) {
+                throw new \InvalidArgumentException('The metadata keys must be namespaced names such as request.content_digest.');
+            }
+        }
+
+        array_walk_recursive($metadata, static function (mixed $value): void {
+            if (is_object($value)) {
+                throw new \InvalidArgumentException('The metadata holds plain values only, never objects.');
+            }
+        });
+
         try {
-            json_encode($metadata, JSON_THROW_ON_ERROR);
+            $json = json_encode($metadata, JSON_THROW_ON_ERROR);
         } catch (\JsonException $exception) {
             throw new \InvalidArgumentException('The metadata must be encodable as JSON.', previous: $exception);
+        }
+
+        if (strlen($json) > 4096) {
+            throw new \InvalidArgumentException('The metadata encodes to at most 4096 bytes of JSON.');
         }
     }
 }

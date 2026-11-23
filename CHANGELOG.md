@@ -22,7 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `key_format`, `fingerprint_algorithm`, `fingerprint_version`, `body_encoding`,
   `request_id`, `trace_id`, `metadata`, `schema_version` and `completed_at` (standards
   review M4/M5). Pre-1.0 the create migration is edited in place: re-run it on a fresh
-  database.
+  database. A takeover of an expired or stale row gets a new `public_id` and the new
+  operation's method, path and start time; `bucket` compares byte for byte on MySQL and
+  MariaDB too, and a bucket over 128 characters is stored as its SHA-256.
 
 - Idempotency: on machine doors the fingerprint includes the locale the response is
   served in, not the raw `Accept-Language` header, so `it-CH,it;q=0.9` and `it` replay the

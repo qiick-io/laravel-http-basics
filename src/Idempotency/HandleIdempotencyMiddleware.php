@@ -122,7 +122,7 @@ final class HandleIdempotencyMiddleware
         try {
             $claim = $this->store->claim($scope, $key, $fingerprint, $now, new IdempotencyContext(
                 $this->keyValidator->format(),
-                requestId: $this->requestIds->current()?->value,
+                requestId: $this->storableRequestId(),
             ));
         } catch (IdempotencyStoreException) {
             return $this->unavailable($request);
@@ -239,13 +239,34 @@ final class HandleIdempotencyMiddleware
         return str_starts_with($base, 'application/') && str_ends_with($base, '+json');
     }
 
+    /**
+     * The request id for the audit record, or null when a custom IdGenerator or
+     * accept_pattern produced one the record cannot hold: an audit column must never
+     * fail the request.
+     */
+    private function storableRequestId(): ?string
+    {
+        $requestId = $this->requestIds->current()?->value;
+
+        return $requestId !== null && preg_match(RequestId::PATTERN, $requestId) === 1 ? $requestId : null;
+    }
+
+    /**
+     * The bucket column holds 128 characters: a longer bucket from a product resolver
+     * is stored as its SHA-256, which keeps it unique and never truncated.
+     */
+    private function storableBucket(string $bucket): string
+    {
+        return strlen($bucket) > 128 ? 'sha256:'.hash('sha256', $bucket) : $bucket;
+    }
+
     private function resolveBucket(Request $request): ?string
     {
         $bucket = $this->credentialBuckets->bucket($request);
 
         // Empty string buckets fall through to anonymous/unavailable the same way.
         if ($bucket !== null && $bucket !== '') {
-            return $bucket;
+            return $this->storableBucket($bucket);
         }
 
         if ($this->anonymousEnabled) {

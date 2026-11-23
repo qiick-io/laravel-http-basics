@@ -21,7 +21,15 @@ return new class extends Migration
             $table->id();
             // UUIDv7 written by the store: the id a product may expose, never `id`.
             $table->uuid('public_id')->unique();
-            $table->string('bucket', 128);
+            $bucket = $table->string('bucket', 128);
+
+            // MySQL and MariaDB compare with a case- and accent-insensitive collation by
+            // default; buckets are opaque identifiers and must compare byte for byte, as
+            // on PostgreSQL and SQLite.
+            if (in_array(Schema::getConnection()->getDriverName(), ['mysql', 'mariadb'], true)) {
+                $bucket->collation('utf8mb4_bin');
+            }
+
             // Versions the bucket scheme (the anonymous HMAC components).
             $table->unsignedSmallInteger('bucket_version')->default(1);
             $table->uuid('credential_public_id')->nullable()->index();
@@ -47,9 +55,12 @@ return new class extends Migration
             $table->string('body_encoding', 16)->default('utf-8');
             $table->string('request_id', 128)->nullable();
             // W3C trace-id, lowercase hex.
+            // Indexed now, empty until the trace-context module fills it: adding an index
+            // to a hot table after 1.0 would cost more than carrying it.
             $table->char('trace_id', 32)->nullable()->index();
             // Namespaced keys; never secrets, never tracestate.
-            $table->json('metadata')->nullable();
+            // jsonb on PostgreSQL, so products can index or filter it later without a rewrite.
+            $table->jsonb('metadata')->nullable();
             // Row format, including how headers_json is serialised.
             $table->unsignedSmallInteger('schema_version')->default(1);
             // A past event: Laravel's default type (C11).

@@ -21,6 +21,13 @@ use JsonException;
 final class Fingerprinter
 {
     /**
+     * Bump with every change to the material below; records keep the version they
+     * were fingerprinted with. 1 = method, path, query, canonical JSON body, bucket
+     * and the served locale.
+     */
+    public const int VERSION = 1;
+
+    /**
      * @throws JsonException When the body is not valid JSON.
      * @throws PayloadTooLargeException When the body exceeds maxBytes.
      */
