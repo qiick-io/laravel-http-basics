@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Idempotency: `require_json` accepts `application/<name>+json` only with a non-empty RFC
+  6838 name before `+json` (`application/+json` is now 415), and the English and Italian
+  415 messages name both accepted media types.
+
 - Idempotency: a lock backend failure (Redis down mid-request) is a 503 store failure in
   both stores, a lock that cannot be released no longer turns a finished claim into an
   error, a failing `abandon()` never replaces the handler's response, and the `:sealed`
