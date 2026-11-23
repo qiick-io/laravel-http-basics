@@ -162,6 +162,7 @@ it('enforces max_uncompressed_ratio on zip archives (review U5)', function (): v
         allowedMimeTypes: ['application/zip', 'application/x-zip-compressed'],
         maxBytes: 10_000_000,
         maxUncompressedRatio: 10,
+        allowsArchives: true,
     ));
 
     expect(fn () => $validator->validatePath($zipPath, 'bomb.zip', 'files', 'file', 'application/zip'))
@@ -204,6 +205,7 @@ function uploadZipValidator(int $ratio, ?int $maxUncompressedBytes = null): Uplo
         maxBytes: 10_000_000,
         maxUncompressedRatio: $ratio,
         maxUncompressedBytes: $maxUncompressedBytes,
+        allowsArchives: true,
     ));
 }
 

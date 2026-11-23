@@ -23,6 +23,7 @@ final class UploadValidator
         private MalwareScanner $scanner,
         private IdGenerator $ids,
         private DetectedMimeExtension $mimeExtensions = new DetectedMimeExtension,
+        private ZipLayoutVerifier $zipLayouts = new ZipLayoutVerifier,
     ) {}
 
     /**
@@ -62,6 +63,10 @@ final class UploadValidator
             throw UploadRejectedException::forbiddenType($safeName);
         }
 
+        if ($this->hardFloor->isArchive($safeName) && ! $policy->allowsArchives()) {
+            throw UploadRejectedException::forbiddenType($safeName);
+        }
+
         $suffixes = $this->hardFloor->suffixes($safeName);
         // Null when the name has no suffix: no allowlist accepts it and no magic signature applies.
         $clientExtension = array_pop($suffixes);
@@ -91,6 +96,10 @@ final class UploadValidator
         }
 
         if ($this->hardFloor->isBlockedMime($detectedMime, $policy->allowsSvg())) {
+            throw UploadRejectedException::forbiddenType($safeName);
+        }
+
+        if ($this->hardFloor->isArchiveMime($detectedMime) && ! $policy->allowsArchives()) {
             throw UploadRejectedException::forbiddenType($safeName);
         }
 
@@ -213,7 +222,8 @@ final class UploadValidator
         }
 
         $archive = new \ZipArchive;
-        $openResult = $archive->open($absolutePath, \ZipArchive::RDONLY);
+        // CHECKCONS refuses a local header that contradicts the central directory.
+        $openResult = $archive->open($absolutePath, \ZipArchive::RDONLY | \ZipArchive::CHECKCONS);
 
         if ($openResult === \ZipArchive::ER_NOZIP) {
             $this->assertNoHiddenArchive($absolutePath, $sizeBytes, $safeName);
@@ -223,6 +233,11 @@ final class UploadValidator
 
         if ($openResult !== true) {
             throw UploadRejectedException::contentMismatch($safeName);
+        }
+
+        // Catches what the name and the sniffed MIME missed, a PDF+ZIP polyglot included.
+        if (! $policy->allowsArchives()) {
+            throw UploadRejectedException::forbiddenType($safeName);
         }
 
         // Refused before any entry is inflated, so a central directory of empty
@@ -247,7 +262,7 @@ final class UploadValidator
                 // Raw bytes: libzip would otherwise decode a non-UTF-8 name from CP437 and hide its controls.
                 $entryName = $archive->getNameIndex($entryIndex, \ZipArchive::FL_ENC_RAW);
 
-                if (! is_string($entryName) || ! $this->isSafeEntryName($entryName)) {
+                if (! is_string($entryName) || ! $this->isSafeEntryName($entryName) || $this->isSymbolicLink($archive, $entryIndex)) {
                     throw UploadRejectedException::forbiddenType($safeName);
                 }
 
@@ -266,6 +281,20 @@ final class UploadValidator
         } finally {
             restore_error_handler();
         }
+
+        if (! $this->zipLayouts->coversWholeFile($absolutePath, $sizeBytes, $archive)) {
+            throw UploadRejectedException::contentMismatch($safeName);
+        }
+    }
+
+    /**
+     * A link entry lets a later entry write through it, outside the extraction directory.
+     */
+    private function isSymbolicLink(\ZipArchive $archive, int $entryIndex): bool
+    {
+        $archive->getExternalAttributesIndex($entryIndex, $operatingSystem, $attributes);
+
+        return $operatingSystem === \ZipArchive::OPSYS_UNIX && is_int($attributes) && (($attributes >> 16) & 0o170000) === 0o120000;
     }
 
     /**
@@ -279,15 +308,12 @@ final class UploadValidator
 
     /**
      * Other ZIP readers (unzip, Python's zipfile) accept data in front of an archive
-     * that libzip refuses, so a file whose tail holds an end-of-central-directory
-     * record is refused rather than passed as "not an archive". Readers search back
-     * 22 bytes of record plus the longest comment (65 535), and so does this.
+     * that libzip refuses, so a file whose tail holds a readable end-of-central-directory
+     * record is refused rather than passed as "not an archive".
      */
     private function assertNoHiddenArchive(string $absolutePath, int $sizeBytes, string $safeName): void
     {
-        $tail = file_get_contents($absolutePath, offset: max(0, $sizeBytes - 65_557));
-
-        if (! is_string($tail) || str_contains($tail, "PK\x05\x06")) {
+        if ($this->zipLayouts->hasReadableEndRecord($absolutePath, $sizeBytes)) {
             throw UploadRejectedException::contentMismatch($safeName);
         }
     }

@@ -44,6 +44,55 @@ final class HardFloor
     }
 
     /**
+     * Archive and compressed suffixes, refused unless the context allows archives.
+     * Office Open XML, OpenDocument, EPUB and app packages are ZIP files too.
+     *
+     * @return list<string>
+     */
+    public static function archiveExtensions(): array
+    {
+        return [
+            'zip', 'zipx', '7z', 'rar', 'tar', 'gz', 'tgz', 'bz2', 'tbz', 'tbz2', 'xz', 'txz',
+            'zst', 'lz', 'lzma', 'z', 'cab', 'cpio', 'arj', 'lzh', 'ace', 'xar', 'dmg', 'pkg',
+            'ear', 'apk', 'aab', 'ipa', 'xpi', 'crx', 'whl', 'nupkg', 'vsix', 'epub',
+            'docx', 'dotx', 'xlsx', 'xltx', 'pptx', 'potx', 'ppsx',
+            'odt', 'ott', 'ods', 'ots', 'odp', 'otp', 'odg',
+        ];
+    }
+
+    /**
+     * Sniffed MIME types of archives, refused unless the context allows archives.
+     *
+     * @return list<string>
+     */
+    public static function archiveMimeTypes(): array
+    {
+        return [
+            'application/zip',
+            'application/x-zip-compressed',
+            'application/x-7z-compressed',
+            'application/x-rar',
+            'application/vnd.rar',
+            'application/x-tar',
+            'application/gzip',
+            'application/x-gzip',
+            'application/x-bzip2',
+            'application/x-xz',
+            'application/zstd',
+            'application/x-lzip',
+            'application/x-lzma',
+            'application/x-compress',
+            'application/vnd.ms-cab-compressed',
+            'application/x-cpio',
+            'application/x-archive',
+            'application/x-xar',
+            'application/x-apple-diskimage',
+            'application/epub+zip',
+            'application/vnd.android.package-archive',
+        ];
+    }
+
+    /**
      * Sniffed MIME types that are always refused (unless SVG is explicitly allowed).
      *
      * @return list<string>
@@ -78,6 +127,22 @@ final class HardFloor
         }
 
         return $this->hasSuffixIn($fileName, self::extensions());
+    }
+
+    public function isArchive(string $fileName): bool
+    {
+        return $this->hasSuffixIn($fileName, self::archiveExtensions());
+    }
+
+    /**
+     * Office Open XML and OpenDocument types are matched by prefix: each format has
+     * many subtypes, and every one is a ZIP.
+     */
+    public function isArchiveMime(string $mimeType): bool
+    {
+        return in_array($mimeType, self::archiveMimeTypes(), true)
+            || str_starts_with($mimeType, 'application/vnd.openxmlformats-officedocument.')
+            || str_starts_with($mimeType, 'application/vnd.oasis.opendocument.');
     }
 
     public function isSvg(string $fileName): bool

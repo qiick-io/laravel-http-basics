@@ -216,20 +216,45 @@ filename suffix and on the sniffed MIME, the extension and MIME allowlists,
 The storage name is a random id plus an extension chosen from the sniffed MIME,
 never the client suffix.
 
+Archives are refused by default. A context accepts them only with
+`allows_archives: true`; otherwise a name with an archive suffix (`zip`, `7z`,
+`tar.gz`, `docx`, `xlsx`, `odt`, `epub`, `apk`, …, see
+`HardFloor::archiveExtensions()`), a sniffed archive MIME, or a file libzip opens
+as a ZIP (a PDF+ZIP polyglot included) is refused with `upload_forbidden_type`.
+A context that turns archives on must also unpack them safely.
+
 Archive budget: any file libzip opens as a ZIP (docx, jar and polyglots
 included) is inflated in streaming and its real bytes are counted, because the
 sizes in its headers are attacker-controlled. Reading stops at `size ×
 max_uncompressed_ratio`, capped by `max_uncompressed_bytes`; either limit works
 alone, a zero or negative limit allows nothing, and leaving both `null` turns
-archive inspection off. An archive over 10 000 entries is refused before any
-entry is read. A corrupt archive, a CRC mismatch, an encrypted entry, or a file
-libzip cannot open but whose last 64 KiB hold a ZIP directory (data prepended to
-an archive, which unzip still extracts) is refused with `upload_content_mismatch`.
+archive inspection off (the archive name and MIME check above still runs). An
+archive over 10 000 entries is refused before any entry is read.
+
+Streaming readers (libarchive from a pipe, Java's `ZipInputStream`) walk the
+local headers instead of the central directory libzip reads. So the local
+headers, walked in central-directory order, must cover the file exactly from
+byte 0 to the central directory, every local header must agree with its
+directory entry, the directory must end where the only end record starts, and
+that record's comment must run to the end of the file. A local header the
+directory does not list (a hidden bomb), a contradicting local name, data before
+the first entry or after the end record, and a second end record are refused
+with `upload_content_mismatch`, as are a corrupt archive, a CRC mismatch, and an
+encrypted entry.
+
+A file libzip cannot open is refused with `upload_content_mismatch` when its
+last 64 KiB hold an end record that a tolerant reader (unzip, Python's
+`zipfile`) would follow: one with a central directory right before it, or a
+ZIP64 one. A stray `PK\x05\x06` in an ordinary file is not refused. Residual
+risk: a polyglot followed by more than 64 KiB of trailing data is not measured;
+unzip, bsdtar and Python's `zipfile` all refuse to open such a file.
+
 Entry names with a `..` segment, an absolute or drive path, or a control
-character are refused with `upload_forbidden_type`. Nested archives are counted
-by their compressed bytes and are not opened. The floor does not check entry
-names against the extension floor (`shell.php` inside a zip passes): a product
-that unpacks an archive must validate every extracted file as its own upload.
+character, and symbolic link entries, are refused with `upload_forbidden_type`.
+Nested archives are counted by their compressed bytes and are not opened. The
+floor does not check entry names against the extension floor (`shell.php`
+inside a zip passes): a product that unpacks an archive must validate every
+extracted file as its own upload.
 
 A floor cannot catch polyglots (`GIF89a<?php …`, a PNG header followed by
 HTML). Serve uploads with `X-Content-Type-Options: nosniff` and

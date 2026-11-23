@@ -35,6 +35,11 @@ return [
                 ],
                 'max_bytes' => 10 * 1024 * 1024,
                 'allows_svg' => false,
+                /*
+                 * Archives (zip, docx, 7z, tar.gz, …) are refused unless true. A
+                 * context that accepts them must validate every extracted file.
+                 */
+                'allows_archives' => false,
                 'content_type_mismatch' => 'reject',
                 'max_uncompressed_ratio' => 100,
                 /*

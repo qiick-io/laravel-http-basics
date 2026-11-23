@@ -35,6 +35,7 @@ final class ConfigUploadPolicyResolver implements UploadPolicyResolver
             $this->intOrNull($config['max_uncompressed_ratio'] ?? null),
             $this->stringListMap(is_array($config['magic_signatures'] ?? null) ? $config['magic_signatures'] : $this->defaultMagic),
             $this->intOrNull($config['max_uncompressed_bytes'] ?? null),
+            (bool) ($config['allows_archives'] ?? false),
         );
     }
 

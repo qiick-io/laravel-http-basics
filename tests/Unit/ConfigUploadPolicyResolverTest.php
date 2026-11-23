@@ -84,6 +84,7 @@ it('coerces loose config values without failing open', function (): void {
     $resolver = new ConfigUploadPolicyResolver([
         'loose' => [
             'allows_svg' => 1,
+            'allows_archives' => 1,
             'content_type_mismatch' => 123,
             'max_bytes' => 0,
             'max_uncompressed_bytes' => 4096,
@@ -100,11 +101,14 @@ it('coerces loose config values without failing open', function (): void {
     $barePolicy = $resolver->forContext('bare');
 
     expect($loosePolicy->allowsSvg())->toBeTrue()
+        ->and($loosePolicy->allowsArchives())->toBeTrue()
         ->and($loosePolicy->contentTypeMismatch())->toBe(MismatchMode::Reject)
         ->and($loosePolicy->maxBytes())->toBe(0)
         ->and($loosePolicy->maxUncompressedBytes())->toBe(4096)
         ->and($loosePolicy->magicSignatures())->toBe(['png' => ['89504E470D0A1A0A']])
         ->and($barePolicy->allowsSvg())->toBeFalse()
+        // Archives stay refused unless a context opts in.
+        ->and($barePolicy->allowsArchives())->toBeFalse()
         ->and($barePolicy->maxUncompressedBytes())->toBeNull()
         ->and($barePolicy->magicSignatures())->toBe([]);
 });

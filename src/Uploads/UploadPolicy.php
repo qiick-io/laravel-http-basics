@@ -23,6 +23,12 @@ interface UploadPolicy
 
     public function allowsSvg(): bool;
 
+    /**
+     * Archives (zip, docx, 7z, tar.gz, …) are refused unless the context opts in:
+     * a product that accepts one must also unpack it safely.
+     */
+    public function allowsArchives(): bool;
+
     public function contentTypeMismatch(): MismatchMode;
 
     public function maxUncompressedRatio(): ?int;

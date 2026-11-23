@@ -23,6 +23,7 @@ final class ArrayUploadPolicy implements UploadPolicy
         private ?int $maxUncompressedRatio = null,
         private array $magicSignatures = [],
         private ?int $maxUncompressedBytes = null,
+        private bool $allowsArchives = false,
     ) {}
 
     public function allowedExtensions(): ?array
@@ -43,6 +44,11 @@ final class ArrayUploadPolicy implements UploadPolicy
     public function allowsSvg(): bool
     {
         return $this->allowsSvg;
+    }
+
+    public function allowsArchives(): bool
+    {
+        return $this->allowsArchives;
     }
 
     public function contentTypeMismatch(): MismatchMode

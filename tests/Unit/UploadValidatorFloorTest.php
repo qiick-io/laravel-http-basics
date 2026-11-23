@@ -22,6 +22,7 @@ use Qiick\HttpBasics\Uploads\UploadPolicyResolver;
 use Qiick\HttpBasics\Uploads\UploadRejectedException;
 use Qiick\HttpBasics\Uploads\UploadValidator;
 use Qiick\HttpBasics\Uploads\ValidatedUpload;
+use Qiick\HttpBasics\Uploads\ZipLayoutVerifier;
 
 const FLOOR_PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 const FLOOR_JPEG_BYTES = "\xFF\xD8\xFF\xE0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00";
@@ -227,16 +228,16 @@ it('accepts SVG content and suffix only when the context allows SVG', function (
 it('accepts an honest archive within its inflation budget', function (): void {
     $honestZip = floorZip(['a.txt' => 'hello world', 'b.txt' => 'second entry']);
 
-    expect(floorOutcome(new ArrayUploadPolicy(maxUncompressedRatio: 10), $honestZip, 'bundle.zip'))->toBe('accepted');
+    expect(floorOutcome(new ArrayUploadPolicy(allowsArchives: true, maxUncompressedRatio: 10), $honestZip, 'bundle.zip'))->toBe('accepted');
 });
 
 it('skips the archive check for non-archives and when no limit is set', function (): void {
     $bomb = floorZip(['pad.bin' => str_repeat("\0", 1024 * 1024)]);
 
-    expect(floorOutcome(new ArrayUploadPolicy(maxUncompressedRatio: 10), floorFile(floorPng()), 'shot.png'))->toBe('accepted')
-        ->and(floorOutcome(new ArrayUploadPolicy, $bomb, 'bomb.zip'))->toBe('accepted')
+    expect(floorOutcome(new ArrayUploadPolicy(allowsArchives: true, maxUncompressedRatio: 10), floorFile(floorPng()), 'shot.png'))->toBe('accepted')
+        ->and(floorOutcome(new ArrayUploadPolicy(allowsArchives: true), $bomb, 'bomb.zip'))->toBe('accepted')
         // With neither limit set the product opted out of archive inspection entirely.
-        ->and(floorOutcome(new ArrayUploadPolicy, floorZip(['../evil.php' => 'x']), 'a.zip'))->toBe('accepted');
+        ->and(floorOutcome(new ArrayUploadPolicy(allowsArchives: true), floorZip(['../evil.php' => 'x']), 'a.zip'))->toBe('accepted');
 });
 
 it('rejects an archive whose entries together exceed the budget', function (): void {
@@ -244,11 +245,11 @@ it('rejects an archive whose entries together exceed the budget', function (): v
     $zipPath = floorZip(['a.txt' => str_repeat('a', 4000), 'b.txt' => str_repeat('b', 4000)]);
     $ratio = intdiv(6000, (int) filesize($zipPath));
 
-    expect(floorOutcome(new ArrayUploadPolicy(maxUncompressedRatio: $ratio), $zipPath, 'pair.zip'))->toBe('upload_too_large');
+    expect(floorOutcome(new ArrayUploadPolicy(allowsArchives: true, maxUncompressedRatio: $ratio), $zipPath, 'pair.zip'))->toBe('upload_too_large');
 });
 
 it('caps the inflation budget at max_uncompressed_bytes', function (): void {
-    $policy = new ArrayUploadPolicy(maxUncompressedRatio: 1000, maxUncompressedBytes: 1000);
+    $policy = new ArrayUploadPolicy(allowsArchives: true, maxUncompressedRatio: 1000, maxUncompressedBytes: 1000);
 
     expect(floorOutcome($policy, floorZip(['a.txt' => str_repeat('a', 1001)]), 'a.zip'))->toBe('upload_too_large')
         ->and(floorOutcome($policy, floorZip(['a.txt' => str_repeat('a', 1000)]), 'a.zip'))->toBe('accepted');
@@ -257,7 +258,7 @@ it('caps the inflation budget at max_uncompressed_bytes', function (): void {
 it('measures any archive libzip opens, whatever its name or sniffed type', function (): void {
     $bombAsDocument = floorZip(['word/document.xml' => str_repeat("\0", 1024 * 1024)]);
 
-    expect(floorOutcome(new ArrayUploadPolicy(maxUncompressedRatio: 10), $bombAsDocument, 'report.docx'))->toBe('upload_too_large');
+    expect(floorOutcome(new ArrayUploadPolicy(allowsArchives: true, maxUncompressedRatio: 10), $bombAsDocument, 'report.docx'))->toBe('upload_too_large');
 });
 
 it('rejects a corrupt or encrypted archive it cannot measure', function (): void {
@@ -270,7 +271,7 @@ it('rejects a corrupt or encrypted archive it cannot measure', function (): void
     $archive->setEncryptionName('a.txt', ZipArchive::EM_AES_256, 'password');
     $archive->close();
 
-    $policy = new ArrayUploadPolicy(maxUncompressedRatio: 10);
+    $policy = new ArrayUploadPolicy(allowsArchives: true, maxUncompressedRatio: 10);
 
     expect(floorOutcome($policy, $truncated, 'a.zip'))->toBe('upload_content_mismatch')
         ->and(floorOutcome($policy, $encrypted, 'a.zip'))->toBe('upload_content_mismatch');
@@ -278,7 +279,7 @@ it('rejects a corrupt or encrypted archive it cannot measure', function (): void
 
 it('caps the number of archive entries at 10 000', function (): void {
     $entries = array_fill_keys(array_map(static fn (int $entryNumber): string => "e{$entryNumber}", range(1, 10_000)), '');
-    $policy = new ArrayUploadPolicy(maxUncompressedRatio: 10);
+    $policy = new ArrayUploadPolicy(allowsArchives: true, maxUncompressedRatio: 10);
 
     expect(floorOutcome($policy, floorZip($entries), 'many.zip'))->toBe('accepted')
         ->and(floorOutcome($policy, floorZip($entries + ['one-more' => '']), 'many.zip'))->toBe('upload_too_large');
@@ -308,7 +309,7 @@ it('refuses a corrupt deflate stream instead of failing with a 500 (re-review U-
     // The compressed data starts after the 30-byte local header and the 5-byte name.
     file_put_contents($zipPath, substr_replace($bytes, str_repeat("\xFF", 16), 35, 16));
 
-    expect(floorOutcome(new ArrayUploadPolicy(maxUncompressedRatio: 1000), $zipPath, 'a.zip'))->toBe('upload_content_mismatch');
+    expect(floorOutcome(new ArrayUploadPolicy(allowsArchives: true, maxUncompressedRatio: 1000), $zipPath, 'a.zip'))->toBe('upload_content_mismatch');
 });
 
 it('refuses an archive whose CRC does not match its data (re-review U-R2)', function (): void {
@@ -316,7 +317,7 @@ it('refuses an archive whose CRC does not match its data (re-review U-R2)', func
     floorPatchZip($zipPath, "PK\x03\x04", 14, "\0\0\0\0");
     floorPatchZip($zipPath, "PK\x01\x02", 16, "\0\0\0\0");
 
-    expect(floorOutcome(new ArrayUploadPolicy(maxUncompressedRatio: 1000), $zipPath, 'a.zip'))->toBe('upload_content_mismatch');
+    expect(floorOutcome(new ArrayUploadPolicy(allowsArchives: true, maxUncompressedRatio: 1000), $zipPath, 'a.zip'))->toBe('upload_content_mismatch');
 });
 
 it('refuses a PDF+ZIP polyglot libzip cannot open as an archive (re-review U-R3)', function (): void {
@@ -331,9 +332,12 @@ it('refuses a PDF+ZIP polyglot libzip cannot open as an archive (re-review U-R3)
 });
 
 it('looks for an end-of-central-directory record only where a ZIP reader does', function (): void {
-    // 22 bytes of record plus the longest comment (65 535) is as far back as a reader searches.
-    $withinReach = floorFile("PK\x05\x06".str_repeat('a', 65_557 - 4));
-    $outOfReach = floorFile("PK\x05\x06".str_repeat('a', 65_558 - 4));
+    // Leading text (so libzip says "not a zip"), a directory header, a record that points
+    // back at it, then padding. 22 bytes of record plus the longest comment (65 535) is
+    // how far back a reader looks.
+    $plausibleRecord = "PK\x05\x06".pack('vvvvVVv', 0, 0, 1, 1, 4, 0, 0);
+    $withinReach = floorFile("notes\nPK\x01\x02".$plausibleRecord.str_repeat('a', 65_557 - 22));
+    $outOfReach = floorFile("notes\nPK\x01\x02".$plausibleRecord.str_repeat('a', 65_558 - 22));
     $policy = new ArrayUploadPolicy(maxUncompressedRatio: 10);
 
     expect(floorOutcome($policy, $withinReach, 'note.txt'))->toBe('upload_content_mismatch')
@@ -341,7 +345,7 @@ it('looks for an end-of-central-directory record only where a ZIP reader does', 
 });
 
 it('applies max_uncompressed_bytes even when no ratio is set', function (): void {
-    $policy = new ArrayUploadPolicy(maxUncompressedBytes: 1000);
+    $policy = new ArrayUploadPolicy(allowsArchives: true, maxUncompressedBytes: 1000);
 
     expect(floorOutcome($policy, floorZip(['a.txt' => str_repeat('a', 1001)]), 'a.zip'))->toBe('upload_too_large')
         ->and(floorOutcome($policy, floorZip(['a.txt' => str_repeat('a', 1000)]), 'a.zip'))->toBe('accepted');
@@ -350,13 +354,13 @@ it('applies max_uncompressed_bytes even when no ratio is set', function (): void
 it('fails closed on a zero or negative archive budget', function (ArrayUploadPolicy $policy): void {
     expect(floorOutcome($policy, floorZip(['a.txt' => 'x']), 'a.zip'))->toBe('upload_too_large');
 })->with([
-    'negative ratio' => [new ArrayUploadPolicy(maxUncompressedRatio: -1)],
-    'zero ceiling' => [new ArrayUploadPolicy(maxUncompressedRatio: 10, maxUncompressedBytes: 0)],
-    'negative ceiling' => [new ArrayUploadPolicy(maxUncompressedBytes: -5)],
+    'negative ratio' => [new ArrayUploadPolicy(allowsArchives: true, maxUncompressedRatio: -1)],
+    'zero ceiling' => [new ArrayUploadPolicy(allowsArchives: true, maxUncompressedRatio: 10, maxUncompressedBytes: 0)],
+    'negative ceiling' => [new ArrayUploadPolicy(allowsArchives: true, maxUncompressedBytes: -5)],
 ]);
 
 it('refuses archive entries whose names escape or hide', function (string $entryName): void {
-    expect(floorOutcome(new ArrayUploadPolicy(maxUncompressedRatio: 10), floorZip([$entryName => 'x']), 'a.zip'))->toBe('upload_forbidden_type');
+    expect(floorOutcome(new ArrayUploadPolicy(allowsArchives: true, maxUncompressedRatio: 10), floorZip([$entryName => 'x']), 'a.zip'))->toBe('upload_forbidden_type');
 })->with([
     'parent traversal' => '../../../../etc/cron.d/evil',
     'traversal inside' => 'docs/../../evil.php',
@@ -369,24 +373,27 @@ it('refuses archive entries whose names escape or hide', function (string $entry
 it('accepts ordinary nested entry names', function (): void {
     $zipPath = floorZip(['docs/readme.txt' => 'x', 'docs/v1..v2/notes.txt' => 'y', 'img/' => '']);
 
-    expect(floorOutcome(new ArrayUploadPolicy(maxUncompressedRatio: 10), $zipPath, 'a.zip'))->toBe('accepted');
+    expect(floorOutcome(new ArrayUploadPolicy(allowsArchives: true, maxUncompressedRatio: 10), $zipPath, 'a.zip'))->toBe('accepted');
 });
 
 it('puts the previous error handler back after measuring an archive', function (): void {
-    floorOutcome(new ArrayUploadPolicy(maxUncompressedRatio: 10), floorZip(['a.txt' => 'x']), 'a.zip');
+    floorOutcome(new ArrayUploadPolicy(allowsArchives: true, maxUncompressedRatio: 10), floorZip(['a.txt' => 'x']), 'a.zip');
 
     expect(fn () => trigger_error('unrelated warning', E_USER_WARNING))->toThrow(ErrorException::class, 'unrelated warning');
 });
 
 /**
  * Hand-built ZIP for structures ZipArchive will not write: local headers the central
- * directory omits or contradicts, Unix modes, data descriptors, trailing records.
+ * directory omits or contradicts, Unix modes, data descriptors, ZIP64 end records,
+ * bytes before, between or after the records. Offsets in the directory always point
+ * at the real local headers, so libzip opens what a careful attacker would send.
  *
- * @param  list<array{name: string, data: string, localName?: string, isListed?: bool, unixMode?: int, hasDataDescriptor?: bool}>  $entries
+ * @param  list<array{name: string, data: string, localName?: string, isListed?: bool, unixMode?: int, hasDataDescriptor?: bool, hasDescriptorSignature?: bool, hasZip64Descriptor?: bool, localExtra?: string}>  $entries
+ * @param  array{comment?: string, afterEnd?: string, leadingBytes?: string, beforeDirectory?: string, isZip64?: bool, beforeZip64Record?: string, beforeZip64Locator?: string, zip64RecordBytes?: int}  $layout
  */
-function craftedZip(array $entries, string $comment = '', string $afterEnd = ''): string
+function craftedZipBytes(array $entries, array $layout = []): string
 {
-    $localSection = '';
+    $localSection = $layout['leadingBytes'] ?? '';
     $centralSection = '';
     $listedCount = 0;
 
@@ -394,6 +401,7 @@ function craftedZip(array $entries, string $comment = '', string $afterEnd = '')
         $compressed = (string) gzdeflate($entry['data']);
         $crc = crc32($entry['data']);
         $hasDataDescriptor = $entry['hasDataDescriptor'] ?? false;
+        $localExtra = $entry['localExtra'] ?? '';
         $flags = $hasDataDescriptor ? 0x08 : 0;
         $localName = $entry['localName'] ?? $entry['name'];
         $localOffset = strlen($localSection);
@@ -401,10 +409,12 @@ function craftedZip(array $entries, string $comment = '', string $afterEnd = '')
         $localSizes = $hasDataDescriptor ? pack('VVV', 0, 0, 0) : pack('VVV', $crc, strlen($compressed), strlen($entry['data']));
 
         $localSection .= "PK\x03\x04".pack('vvvvv', 20, $flags, 8, 0, 0).$localSizes
-            .pack('vv', strlen($localName), 0).$localName.$compressed;
+            .pack('vv', strlen($localName), strlen($localExtra)).$localName.$localExtra.$compressed;
 
         if ($hasDataDescriptor) {
-            $localSection .= "PK\x07\x08".pack('VVV', $crc, strlen($compressed), strlen($entry['data']));
+            $isZip64Descriptor = $entry['hasZip64Descriptor'] ?? false;
+            $localSection .= ($entry['hasDescriptorSignature'] ?? true ? "PK\x07\x08" : '').pack('V', $crc)
+                .($isZip64Descriptor ? pack('PP', strlen($compressed), strlen($entry['data'])) : pack('VV', strlen($compressed), strlen($entry['data'])));
         }
 
         if (! ($entry['isListed'] ?? true)) {
@@ -419,9 +429,36 @@ function craftedZip(array $entries, string $comment = '', string $afterEnd = '')
             .pack('VV', $unixMode === null ? 0 : $unixMode << 16, $localOffset).$entry['name'];
     }
 
-    $endRecord = "PK\x05\x06".pack('vvvvVVv', 0, 0, $listedCount, $listedCount, strlen($centralSection), strlen($localSection), strlen($comment)).$comment;
+    $localSection .= $layout['beforeDirectory'] ?? '';
+    $directoryOffset = strlen($localSection);
+    $comment = $layout['comment'] ?? '';
+    $zip64Records = '';
 
-    return floorFile($localSection.$centralSection.$endRecord.$afterEnd);
+    if ($layout['isZip64'] ?? false) {
+        $centralSection .= $layout['beforeZip64Record'] ?? '';
+        $zip64RecordAt = $directoryOffset + strlen($centralSection);
+        $recordBytes = $layout['zip64RecordBytes'] ?? 56;
+        $directoryBytes = strlen($centralSection) - strlen($layout['beforeZip64Record'] ?? '');
+        // A record shorter than the 56-byte minimum is cut, with a size field that agrees.
+        $zip64Records = substr("PK\x06\x06".pack('PvvVVPPPP', $recordBytes - 12, 45, 45, 0, 0, $listedCount, $listedCount, $directoryBytes, $directoryOffset)
+            .str_repeat("\0", max(0, $recordBytes - 56)), 0, $recordBytes)
+            .($layout['beforeZip64Locator'] ?? '')
+            ."PK\x06\x07".pack('VPV', 0, $zip64RecordAt, 1);
+        $endRecord = "PK\x05\x06".pack('vvvvVVv', 0, 0, 0xFFFF, 0xFFFF, 0xFFFF_FFFF, 0xFFFF_FFFF, strlen($comment));
+    } else {
+        $endRecord = "PK\x05\x06".pack('vvvvVVv', 0, 0, $listedCount, $listedCount, strlen($centralSection), $directoryOffset, strlen($comment));
+    }
+
+    return $localSection.$centralSection.$zip64Records.$endRecord.$comment.($layout['afterEnd'] ?? '');
+}
+
+/**
+ * @param  list<array{name: string, data: string, localName?: string, isListed?: bool, unixMode?: int, hasDataDescriptor?: bool, hasDescriptorSignature?: bool, localExtra?: string}>  $entries
+ * @param  array{comment?: string, afterEnd?: string, leadingBytes?: string, beforeDirectory?: string, isZip64?: bool, beforeZip64Locator?: string, zip64RecordBytes?: int}  $layout
+ */
+function craftedZip(array $entries, array $layout = []): string
+{
+    return floorFile(craftedZipBytes($entries, $layout));
 }
 
 it('accepts a hand-built archive whose local headers match its central directory', function (bool $hasDataDescriptor): void {
@@ -499,3 +536,123 @@ it('refuses compressed and archive suffixes by name unless archives are allowed'
     expect(floorOutcome(new ArrayUploadPolicy, floorFile('plain text'), $clientName))->toBe('upload_forbidden_type')
         ->and(floorOutcome(new ArrayUploadPolicy(allowsArchives: true), floorFile('plain text'), $clientName))->toBe('accepted');
 })->with(['a.zip', 'a.7z', 'a.rar', 'a.tar.gz', 'a.tgz', 'a.docx', 'a.odt', 'a.epub', 'a.apk']);
+
+/**
+ * Asks the verifier alone about the bytes, with the entry list libzip reads (no
+ * CHECKCONS) from `$openedBytes`: the same bytes, or an intact twin when libzip
+ * itself would refuse the broken ones.
+ */
+function zipLayoutCovers(string $bytes, ?string $openedBytes = null): bool
+{
+    $path = floorFile($bytes);
+    $openedPath = floorFile($openedBytes ?? $bytes);
+    $archive = new ZipArchive;
+    expect($archive->open($openedPath, ZipArchive::RDONLY))->toBeTrue();
+
+    try {
+        return (new ZipLayoutVerifier)->coversWholeFile($path, strlen($bytes), $archive);
+    } finally {
+        $archive->close();
+        @unlink($path);
+        @unlink($openedPath);
+    }
+}
+
+const ZIP_TIMESTAMP_EXTRA = "\x55\x54\x05\x00\x01\x00\x00\x00\x00";
+const ZIP64_EXTRA = "\x01\x00\x10\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00";
+
+it('accepts local headers that tile the file up to the central directory', function (array $entries, array $layout): void {
+    expect(zipLayoutCovers(craftedZipBytes($entries, $layout)))->toBeTrue();
+})->with([
+    'one entry' => [[['name' => 'a.txt', 'data' => 'hello']], []],
+    'an archive comment' => [[['name' => 'a.txt', 'data' => 'hello']], ['comment' => 'release 1.0']],
+    'the longest comment' => [[['name' => 'a.txt', 'data' => 'hello']], ['comment' => str_repeat('c', 65_535)]],
+    'descriptors with and without signature' => [[
+        ['name' => 'a.txt', 'data' => 'hello', 'hasDataDescriptor' => true],
+        ['name' => 'b.txt', 'data' => 'world', 'hasDataDescriptor' => true, 'hasDescriptorSignature' => false],
+    ], []],
+    'a 32-bit descriptor after a non-ZIP64 extra' => [[
+        ['name' => 'a.txt', 'data' => 'hello', 'hasDataDescriptor' => true, 'localExtra' => ZIP_TIMESTAMP_EXTRA],
+    ], []],
+    'a ZIP64 descriptor after another extra field' => [[
+        ['name' => 'a.txt', 'data' => 'hello', 'hasDataDescriptor' => true, 'hasZip64Descriptor' => true, 'localExtra' => ZIP_TIMESTAMP_EXTRA.ZIP64_EXTRA],
+    ], []],
+    'a ZIP64 descriptor after an empty ZIP64 extra' => [[
+        ['name' => 'a.txt', 'data' => 'hello', 'hasDataDescriptor' => true, 'hasZip64Descriptor' => true, 'localExtra' => "\x01\x00\x00\x00"],
+    ], []],
+    'ZIP64 end records' => [[['name' => 'a.txt', 'data' => 'hello']], ['isZip64' => true]],
+    'a ZIP64 record with extensible data' => [[['name' => 'a.txt', 'data' => 'hello']], ['isZip64' => true, 'zip64RecordBytes' => 60]],
+]);
+
+it('refuses bytes a streaming reader would see but the central directory skips', function (array $entries, array $layout): void {
+    expect(zipLayoutCovers(craftedZipBytes($entries, $layout)))->toBeFalse();
+})->with([
+    'an unlisted local header' => [[['name' => 'b.txt', 'data' => 'hidden', 'isListed' => false], ['name' => 'a.txt', 'data' => 'hello']], []],
+    'leading bytes' => [[['name' => 'a.txt', 'data' => 'hello']], ['leadingBytes' => '%PDF-1.4 '.str_repeat('x', 64)]],
+    'a gap before the central directory' => [[['name' => 'a.txt', 'data' => 'hello']], ['beforeDirectory' => str_repeat("\0", 16)]],
+    'bytes after the end record' => [[['name' => 'a.txt', 'data' => 'hello']], ['afterEnd' => 'trailing']],
+    'a short signature after the end record' => [[['name' => 'a.txt', 'data' => 'hello']], ['afterEnd' => "PK\x05\x06".str_repeat("\0", 17)]],
+    'a ZIP64 descriptor sized as 32-bit' => [[['name' => 'a.txt', 'data' => 'hello', 'hasDataDescriptor' => true, 'localExtra' => ZIP64_EXTRA]], []],
+    'a 32-bit descriptor sized as ZIP64' => [[['name' => 'a.txt', 'data' => 'hello', 'hasDataDescriptor' => true, 'hasZip64Descriptor' => true, 'localExtra' => ZIP_TIMESTAMP_EXTRA]], []],
+    'a gap before the ZIP64 record' => [[['name' => 'a.txt', 'data' => 'hello']], ['isZip64' => true, 'beforeZip64Record' => 'gap']],
+    'a gap before the ZIP64 locator' => [[['name' => 'a.txt', 'data' => 'hello']], ['isZip64' => true, 'beforeZip64Locator' => 'gap']],
+]);
+
+it('refuses a ZIP64 record under the 56-byte minimum', function (): void {
+    $entries = [['name' => 'a.txt', 'data' => 'hello']];
+
+    expect(zipLayoutCovers(
+        craftedZipBytes($entries, ['isZip64' => true, 'zip64RecordBytes' => 55]),
+        craftedZipBytes($entries, ['isZip64' => true]),
+    ))->toBeFalse();
+});
+
+it('refuses ZIP64 end records that do not chain', function (string $signature, string $replacement): void {
+    $bytes = craftedZipBytes([['name' => 'a.txt', 'data' => 'hello']], ['isZip64' => true]);
+
+    expect(zipLayoutCovers(str_replace($signature, $replacement, $bytes), $bytes))->toBeFalse();
+})->with([
+    'no locator' => ["PK\x06\x07", 'PKxx'],
+    'no ZIP64 record' => ["PK\x06\x06", 'PKxx'],
+]);
+
+it('stops at a local header cut short by the end of the file', function (): void {
+    // The directory claims a long first entry, so the second header would start past the end.
+    $twin = craftedZipBytes([['name' => 'a.txt', 'data' => random_bytes(5000)], ['name' => 'b.txt', 'data' => 'x']]);
+    $short = craftedZipBytes([['name' => 'a.txt', 'data' => 'hello'], ['name' => 'b.txt', 'data' => 'x']]);
+
+    expect(zipLayoutCovers($short, $twin))->toBeFalse();
+});
+
+/**
+ * Asks the verifier whether a reader that tolerates leading data would open the bytes.
+ */
+function zipTailIsReadable(string $bytes): bool
+{
+    $path = floorFile($bytes);
+
+    try {
+        return (new ZipLayoutVerifier)->hasReadableEndRecord($path, strlen($bytes));
+    } finally {
+        @unlink($path);
+    }
+}
+
+it('finds an archive a tolerant reader would open behind leading data', function (string $bytes): void {
+    expect(zipTailIsReadable($bytes))->toBeTrue();
+})->with([
+    'archive after text' => ["notes\n".craftedZipBytes([['name' => 'a.txt', 'data' => 'hello']])],
+    'archive, then a stray signature' => ["notes\n".craftedZipBytes([['name' => 'a.txt', 'data' => 'hello']])."junk PK\x05\x06 junk"],
+    'ZIP64 directory size' => ["notes\nPK\x05\x06".pack('vvvvVVv', 0, 0, 0, 0, 0xFFFF_FFFF, 0, 0)],
+    'ZIP64 directory offset' => ["notes\nPK\x05\x06".pack('vvvvVVv', 0, 0, 0, 0, 0, 0xFFFF_FFFF, 0)],
+    'ZIP64 record at the first byte' => ["PK\x05\x06".pack('vvvvVVv', 0, 0, 0, 0, 0xFFFF_FFFF, 0xFFFF_FFFF, 0).'tail'],
+]);
+
+it('ignores end-of-directory signatures no reader could follow', function (string $bytes): void {
+    expect(zipTailIsReadable($bytes))->toBeFalse();
+})->with([
+    'no signature' => ['plain text'],
+    'a stray signature' => [str_repeat('a', 100)."PK\x05\x06".str_repeat('b', 100)],
+    'a signature cut short by the end of the file' => [str_repeat('a', 100)."PK\x05\x06".str_repeat("\0", 17)],
+    'an empty directory' => ["notes\nPK\x05\x06".pack('vvvvVVv', 0, 0, 0, 0, 0, 0, 0)],
+]);
