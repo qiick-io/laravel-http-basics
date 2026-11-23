@@ -253,15 +253,17 @@ final class CacheIdempotencyStore implements IdempotencyStore
             return null;
         }
 
-        // A sealed record stores neither a body nor a status code.
-        if (($existing['body'] ?? null) === null && ($existing['status_code'] ?? null) === null) {
+        $statusCode = $this->intValue($existing['status_code'] ?? null);
+
+        // A completed record without a readable status code means the handler ran but
+        // its response was not stored (sealed, or corrupt): never re-execute or guess.
+        if ($statusCode === null) {
             return new IdempotencyClaim(ClaimOutcome::NotReplayable, null, null, $scope, $key);
         }
 
         if (($existing['fingerprint'] ?? null) === $fingerprint) {
             $replay = new ReplayableResponse(
-                // An unreadable status code replays as 200, like a body without one.
-                $this->intValue($existing['status_code'] ?? null) ?? 200,
+                $statusCode,
                 $this->headersValue($existing['headers'] ?? null),
                 $this->stringValue($existing['body'] ?? null),
             );

@@ -170,6 +170,19 @@ Refusals use fleet JSON (`message` + `error`): `idempotency_key_required`,
 `idempotency_unavailable` (503). Replays force the **current** `X-Request-Id` and strip
 stale `X-RateLimit-*` headers.
 
+**Handlers must be atomic.** A 5xx, a 429 or an exception frees the key, so a retry
+runs the handler again. That is only safe when a failing handler leaves nothing
+behind: wrap its writes in one database transaction, make no external call (payment,
+email, webhook) before the point where it can still fail, or make those calls
+idempotent themselves (pass the same key downstream). A handler that writes or calls
+out and then throws will run twice.
+
+On machine doors the fingerprint includes the locale the response is served in, so
+a retry that negotiates to the same locale replays (`it-CH,it;q=0.9` and `it`; an
+unsupported `fr`, no header and `en` when `en` is the default). The database store
+treats an `expires_at` it cannot read as never expiring, so such a row keeps
+answering instead of letting the handler run again.
+
 ## Threat model (short)
 
 | Topic | Contract |

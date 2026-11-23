@@ -87,3 +87,22 @@ it('fails closed on lease mismatch complete', function (): void {
 
     $store->complete($tampered, new ReplayableResponse(200, [], 'x'), $now);
 })->throws(IdempotencyStoreException::class);
+
+it('answers a completed record with an unreadable status code like the real stores', function (mixed $statusCode): void {
+    $store = new InMemoryIdempotencyStore(lockTtlSeconds: 30, staleAfterSeconds: 5);
+    $scope = new IdempotencyScope('bucket-a', 'POST', '/items');
+    $now = new DateTimeImmutable('2026-01-01T00:00:00Z');
+    $key = '550e8400-e29b-41d4-a716-446655440099';
+
+    $claim = $store->claim($scope, $key, 'fp', $now);
+    $store->complete($claim, new ReplayableResponse(201, [], 'stored'), $now);
+
+    // The double has no public way to corrupt a record; the real stores can read one back.
+    $records = new ReflectionProperty($store, 'records');
+    $stored = $records->getValue($store);
+    $recordKey = array_key_first($stored);
+    $stored[$recordKey]['status_code'] = $statusCode;
+    $records->setValue($store, $stored);
+
+    expect($store->claim($scope, $key, 'fp', $now)->outcome)->toBe(ClaimOutcome::NotReplayable);
+})->with(['not numeric' => ['abc'], 'missing' => [null]]);

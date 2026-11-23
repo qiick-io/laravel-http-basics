@@ -193,14 +193,17 @@ final class InMemoryIdempotencyStore implements IdempotencyStore
             return null;
         }
 
-        if ((! array_key_exists('body', $existing) || $existing['body'] === null)
-            && ($existing['status_code'] ?? null) === null) {
+        $statusCode = $existing['status_code'] ?? null;
+
+        // Same contract as the real stores: no readable status code means the handler
+        // ran but its response was not stored, so never re-execute or guess.
+        if (! is_numeric($statusCode)) {
             return new IdempotencyClaim(ClaimOutcome::NotReplayable, null, null, $scope, $key);
         }
 
         if (($existing['fingerprint'] ?? '') === $fingerprint) {
             $replay = new ReplayableResponse(
-                $this->intValue($existing['status_code'] ?? 200, 200),
+                (int) $statusCode,
                 $this->headersValue($existing['headers'] ?? []),
                 $this->stringValue($existing['body'] ?? ''),
             );

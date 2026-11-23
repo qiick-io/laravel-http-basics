@@ -190,7 +190,7 @@ it('replays completed records that store numeric strings and array headers', fun
         ]);
 });
 
-it('defaults status code and headers when completed payloads omit them', function (): void {
+it('defaults headers and body when completed payloads omit them', function (): void {
     [$store, $repository] = cacheIdempotencyStore();
     $scope = new IdempotencyScope('bucket-a', 'POST', '/items');
     $now = new DateTimeImmutable('2026-01-01T00:00:00Z');
@@ -199,7 +199,7 @@ it('defaults status code and headers when completed payloads omit them', functio
     $repository->put($scope->cacheKey($key), [
         'fingerprint' => 'fp',
         'status' => 'completed',
-        'status_code' => new stdClass,
+        'status_code' => 204,
         'headers' => 'not-array',
         'body' => null,
     ], 60);
@@ -207,7 +207,7 @@ it('defaults status code and headers when completed payloads omit them', functio
     $replay = $store->claim($scope, $key, 'fp', $now);
 
     expect($replay->outcome)->toBe(ClaimOutcome::Replay)
-        ->and($replay->replay?->status)->toBe(200)
+        ->and($replay->replay?->status)->toBe(204)
         ->and($replay->replay?->headers)->toBe([])
         ->and($replay->replay?->body)->toBe('');
 });
@@ -775,7 +775,7 @@ it('leaves a marker alone when abandon carries another lease or none', function 
     expect($repository->get($scope->cacheKey('held')))->toBeArray();
 })->with(['foreign lease' => ['someone-else'], 'empty lease' => [''], 'no lease' => [null]]);
 
-it('replays an unreadable status code as 200 and joins scalar header lists', function (): void {
+it('replays a numeric-string status code and joins scalar header lists', function (): void {
     [$store, $repository] = cacheIdempotencyStore();
     $scope = new IdempotencyScope('bucket-a', 'POST', '/items');
     $now = new DateTimeImmutable('2026-01-01T00:00:00Z');
@@ -783,13 +783,39 @@ it('replays an unreadable status code as 200 and joins scalar header lists', fun
     $repository->put($scope->cacheKey('legacy'), [
         'fingerprint' => 'fp',
         'status' => 'completed',
-        'status_code' => 'abc',
+        'status_code' => '201',
         'headers' => ['X-Versions' => [1, 2]],
         'body' => '{}',
     ], 60);
 
     $replay = $store->claim($scope, 'legacy', 'fp', $now)->replay;
 
-    expect($replay?->status)->toBe(200)
+    expect($replay?->status)->toBe(201)
         ->and($replay?->headers)->toBe(['X-Versions' => '1, 2']);
+});
+
+it('never replays a completed record whose status code is unreadable', function (mixed $statusCode): void {
+    [$store, $repository] = cacheIdempotencyStore();
+    $scope = new IdempotencyScope('bucket-a', 'POST', '/items');
+
+    $repository->put($scope->cacheKey('corrupt'), [
+        'fingerprint' => 'fp',
+        'status' => 'completed',
+        'status_code' => $statusCode,
+        'headers' => [],
+        'body' => 'stored',
+    ], 60);
+
+    // The handler already ran; replaying a guessed 200 or re-running it would both lie.
+    expect($store->claim($scope, 'corrupt', 'fp', new DateTimeImmutable('2026-01-01T00:00:00Z'))->outcome)
+        ->toBe(ClaimOutcome::NotReplayable);
+})->with(['not numeric' => ['abc'], 'missing' => [null], 'not a scalar' => [new stdClass]]);
+
+it('marks a fresh claim as in progress in the cache', function (): void {
+    [$store, $repository] = cacheIdempotencyStore();
+    $scope = new IdempotencyScope('bucket-a', 'POST', '/items');
+
+    $store->claim($scope, 'fresh', 'fp', new DateTimeImmutable('2026-01-01T00:00:00Z'));
+
+    expect($repository->get($scope->cacheKey('fresh'))['status'] ?? null)->toBe('in_progress');
 });
