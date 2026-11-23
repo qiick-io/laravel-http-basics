@@ -1,0 +1,12 @@
+{
+    "status": 404,
+    "headers": {"content-type": "application/problem+json"},
+    "body": {
+        "type": "https://errors.example.test/problems/not_found",
+        "title": "Not Found",
+        "status": 404,
+        "detail": "The route api/missing could not be found.",
+        "instance": "urn:request:api/missing",
+        "error": "not_found"
+    }
+}

@@ -1,0 +1,11 @@
+{
+    "status": 410,
+    "headers": {"content-type": "application/problem+json", "x-trace-id": "trace-410", "content-length": null},
+    "body": {
+        "type": "about:blank",
+        "title": "Gone",
+        "status": 410,
+        "detail": "Gone",
+        "error": "http_error"
+    }
+}

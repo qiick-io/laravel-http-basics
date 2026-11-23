@@ -1,0 +1,11 @@
+{
+    "status": 404,
+    "headers": {"content-type": "application/problem+json"},
+    "body": {
+        "type": "about:blank",
+        "title": "Not Found",
+        "status": 404,
+        "detail": "The route api/missing could not be found.",
+        "error": "not_found"
+    }
+}

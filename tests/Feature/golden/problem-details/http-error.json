@@ -1,0 +1,11 @@
+{
+    "status": 418,
+    "headers": {"content-type": "application/problem+json"},
+    "body": {
+        "type": "about:blank",
+        "title": "I'm a teapot",
+        "status": 418,
+        "detail": "I'm a teapot",
+        "error": "http_error"
+    }
+}
