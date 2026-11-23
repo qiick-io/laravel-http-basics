@@ -308,3 +308,34 @@ it('honours a TrustProxies subclass $proxies when at() is unset', function (): v
         app()->forgetInstance(TrustProxies::class);
     }
 });
+
+it('ignores a container binding that is not a TrustProxies middleware', function (): void {
+    TrustProxies::at(['10.0.0.1']);
+    app()->instance(TrustProxies::class, new stdClass);
+
+    try {
+        $detector = new ConfigTrustedProxyDetector(Config::getFacadeRoot());
+
+        expect($detector->isTrusted(Request::create('/', 'GET', server: ['REMOTE_ADDR' => '10.0.0.1'])))->toBeTrue();
+
+        TrustProxies::flushState();
+
+        expect($detector->isTrusted(Request::create('/', 'GET', server: ['REMOTE_ADDR' => '10.0.0.1'])))->toBeFalse();
+    } finally {
+        app()->forgetInstance(TrustProxies::class);
+    }
+});
+
+it('honours the conventional App\Http\Middleware\TrustProxies subclass', function (): void {
+    require_once dirname(__DIR__).'/Fixtures/App/TrustProxies.php';
+    App\Http\Middleware\TrustProxies::$testProxies = ['10.4.4.4'];
+
+    try {
+        $detector = new ConfigTrustedProxyDetector(Config::getFacadeRoot());
+
+        expect($detector->isTrusted(Request::create('/', 'GET', server: ['REMOTE_ADDR' => '10.4.4.4'])))->toBeTrue()
+            ->and($detector->isTrusted(Request::create('/', 'GET', server: ['REMOTE_ADDR' => '10.4.4.5'])))->toBeFalse();
+    } finally {
+        App\Http\Middleware\TrustProxies::$testProxies = null;
+    }
+});

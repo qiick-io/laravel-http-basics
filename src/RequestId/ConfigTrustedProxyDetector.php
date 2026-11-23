@@ -38,9 +38,8 @@ final class ConfigTrustedProxyDetector implements TrustedProxyDetector
         $list = $this->normalizeProxyList($proxies);
         $remote = $request->server->get('REMOTE_ADDR');
 
-        // Empty list / empty remote both refuse; combined so RemoveEarlyReturn on a
-        // lone empty-list guard cannot hide behind an equivalent later failure.
-        if ($list === [] || ! is_string($remote) || ! $this->isNonEmptyString($remote)) {
+        // IpUtils never matches an empty REMOTE_ADDR, an empty entry or an empty list.
+        if (! is_string($remote)) {
             return false;
         }
 
@@ -62,19 +61,16 @@ final class ConfigTrustedProxyDetector implements TrustedProxyDetector
     {
         $fromAt = $this->trustProxiesAt();
         if ($this->isUsableProxyConfig($fromAt)) {
-            /** @var list<string>|string $fromAt */
             return $this->stringOrStringList($fromAt);
         }
 
         $fromInstance = $this->trustProxiesInstanceProxies();
         if ($this->isUsableProxyConfig($fromInstance)) {
-            /** @var list<string>|string $fromInstance */
             return $this->stringOrStringList($fromInstance);
         }
 
         $fromConfig = $this->config->get('trustedproxy.proxies');
         if ($this->isUsableProxyConfig($fromConfig)) {
-            /** @var list<string>|string $fromConfig */
             return $this->stringOrStringList($fromConfig);
         }
 
@@ -87,6 +83,8 @@ final class ConfigTrustedProxyDetector implements TrustedProxyDetector
 
     /**
      * Laravel's `?:` treats [] and '' as missing — fall through to the next source.
+     *
+     * @phpstan-assert-if-true non-empty-array<mixed>|non-empty-string $proxies
      */
     private function isUsableProxyConfig(mixed $proxies): bool
     {
@@ -115,24 +113,7 @@ final class ConfigTrustedProxyDetector implements TrustedProxyDetector
      */
     private function normalizeProxyList(array|string $proxies): array
     {
-        if (is_string($proxies)) {
-            $list = [];
-            foreach (explode(',', $proxies) as $part) {
-                $trimmed = trim($part);
-                if ($this->isNonEmptyString($trimmed)) {
-                    $list[] = $trimmed;
-                }
-            }
-
-            return $this->expandPrivateSubnetTokens($list);
-        }
-
-        $list = [];
-        foreach ($proxies as $ip) {
-            if ($this->isNonEmptyString($ip)) {
-                $list[] = $ip;
-            }
-        }
+        $list = is_string($proxies) ? array_map(trim(...), explode(',', $proxies)) : $proxies;
 
         return $this->expandPrivateSubnetTokens($list);
     }
@@ -182,13 +163,6 @@ final class ConfigTrustedProxyDetector implements TrustedProxyDetector
         return $list;
     }
 
-    private function isNonEmptyString(string $value): bool
-    {
-        // strlen keeps EmptyStringToNotEmpty off the comparison; a zero-length
-        // token must never count as a trusted proxy entry.
-        return strlen($value) > 0; // @pest-mutate-ignore: IncrementInteger, DecrementInteger, GreaterToGreaterOrEqual
-    }
-
     /**
      * Same implicit-`*` platforms TrustProxies recognises when proxies are null.
      */
@@ -219,9 +193,9 @@ final class ConfigTrustedProxyDetector implements TrustedProxyDetector
      * Read a concrete TrustProxies subclass `$proxies` when the app registers one
      * (container binding or the conventional App\Http\Middleware\TrustProxies).
      *
-     * @return array<int, string>|string|null
+     * @return array<mixed>|string
      */
-    private function trustProxiesInstanceProxies(): array|string|null
+    private function trustProxiesInstanceProxies(): array|string
     {
         $property = new \ReflectionProperty(TrustProxies::class, 'proxies');
 
@@ -234,8 +208,7 @@ final class ConfigTrustedProxyDetector implements TrustedProxyDetector
             }
         }
 
-        // null and [] are both "unusable" for isUsableProxyConfig — keep null.
-        return null; // @pest-mutate-ignore: AlwaysReturnEmptyArray
+        return [];
     }
 
     /**
@@ -250,7 +223,7 @@ final class ConfigTrustedProxyDetector implements TrustedProxyDetector
                 $application = app();
                 if ($application->bound(TrustProxies::class)) {
                     $resolved = $application->make(TrustProxies::class);
-                    if ($resolved instanceof TrustProxies) { // @pest-mutate-ignore: InstanceOfToTrue
+                    if ($resolved instanceof TrustProxies) {
                         $instances[] = $resolved;
                     }
                 }
@@ -272,17 +245,9 @@ final class ConfigTrustedProxyDetector implements TrustedProxyDetector
      */
     private function conventionalAppTrustProxiesClass(): ?string
     {
-        // Optional App\ middleware subclass; container binding is the tested path.
+        // is_subclass_of() autoloads the class and is false when it does not exist.
         $appTrustProxies = 'App\\Http\\Middleware\\TrustProxies';
 
-        if (! class_exists($appTrustProxies)) { // @pest-mutate-ignore: IfNegated, RemoveNot
-            return null; // @pest-mutate-ignore: RemoveEarlyReturn
-        }
-
-        if (! is_subclass_of($appTrustProxies, TrustProxies::class)) { // @pest-mutate-ignore: IfNegated, RemoveNot
-            return null; // @pest-mutate-ignore: RemoveEarlyReturn
-        }
-
-        return $appTrustProxies; // @pest-mutate-ignore: AlwaysReturnNull
+        return is_subclass_of($appTrustProxies, TrustProxies::class) ? $appTrustProxies : null;
     }
 }
