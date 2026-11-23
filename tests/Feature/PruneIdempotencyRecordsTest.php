@@ -71,3 +71,31 @@ it('keeps rows that expire later today in UTC when the prune command runs in a n
     expect(DB::table('idempotency_records')->pluck('key_hash')->all())
         ->toBe([hash('sha256', 'key-live')]);
 });
+
+it('prunes on the configured idempotency connection, not the default one', function (): void {
+    // The store writes to http-basics.idempotency.database.connection; prune must follow it.
+    config(['database.connections.idempotency' => [
+        'driver' => 'sqlite',
+        'database' => ':memory:',
+        'prefix' => '',
+    ]]);
+    config(['http-basics.idempotency.database.connection' => 'idempotency']);
+
+    Schema::connection('idempotency')->create('idempotency_records', function ($table): void {
+        $table->id();
+        $table->string('key_hash', 64);
+        $table->dateTime('expires_at');
+    });
+    DB::connection('idempotency')->table('idempotency_records')->insert([
+        ['key_hash' => 'live', 'expires_at' => '2026-01-01 12:30:00'],
+        ['key_hash' => 'expired', 'expires_at' => '2026-01-01 11:30:00'],
+    ]);
+    insertIdempotencyRecordExpiringAt('2026-01-01 11:30:00', 'default-connection');
+
+    expect((new IdempotencyRecord)->prunable()->pluck('key_hash')->all())->toBe(['expired']);
+
+    $this->artisan('http-basics:prune-idempotency')->assertSuccessful();
+
+    expect(DB::connection('idempotency')->table('idempotency_records')->pluck('key_hash')->all())->toBe(['live'])
+        ->and(DB::table('idempotency_records')->count())->toBe(1);
+});
