@@ -120,7 +120,10 @@ final class HandleIdempotencyMiddleware
         $now = new \DateTimeImmutable;
 
         try {
-            $claim = $this->store->claim($scope, $key, $fingerprint, $now);
+            $claim = $this->store->claim($scope, $key, $fingerprint, $now, new IdempotencyContext(
+                $this->keyValidator->format(),
+                requestId: $this->requestIds->current()?->value,
+            ));
         } catch (IdempotencyStoreException) {
             return $this->unavailable($request);
         }

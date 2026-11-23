@@ -15,6 +15,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Idempotency (breaking for custom stores): `IdempotencyStore::claim()` takes an
+  `IdempotencyContext` (key format, fingerprint version, request id, trace id,
+  credential public id, metadata), filled by the middleware. The idempotency migration
+  gains `public_id`, `bucket_version`, `credential_public_id`, `key_hash_algorithm`,
+  `key_format`, `fingerprint_algorithm`, `fingerprint_version`, `body_encoding`,
+  `request_id`, `trace_id`, `metadata`, `schema_version` and `completed_at` (standards
+  review M4/M5). Pre-1.0 the create migration is edited in place: re-run it on a fresh
+  database.
+
 - Idempotency: on machine doors the fingerprint includes the locale the response is
   served in, not the raw `Accept-Language` header, so `it-CH,it;q=0.9` and `it` replay the
   same response, and so do an unsupported `fr`, no header and `en` when `en` is the

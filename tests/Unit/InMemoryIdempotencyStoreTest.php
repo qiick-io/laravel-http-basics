@@ -17,12 +17,12 @@ it('replays completed records with the same fingerprint', function (): void {
     $key = '550e8400-e29b-41d4-a716-446655440000';
     $fingerprint = 'fp-1';
 
-    $claim = $store->claim($scope, $key, $fingerprint, $now, $context);
+    $claim = $store->claim($scope, $key, $fingerprint, $now, idempotencyContext());
     expect($claim->outcome)->toBe(ClaimOutcome::New);
 
     $store->complete($claim, new ReplayableResponse(201, ['Content-Type' => 'application/json'], '{"ok":true}'), $now);
 
-    $replay = $store->claim($scope, $key, $fingerprint, $now, $context);
+    $replay = $store->claim($scope, $key, $fingerprint, $now, idempotencyContext());
     expect($replay->outcome)->toBe(ClaimOutcome::Replay)
         ->and($replay->replay?->status)->toBe(201)
         ->and($replay->replay?->body)->toBe('{"ok":true}');

@@ -12,19 +12,37 @@ the create migration is edited in place. Tests load the same migration.
 
 | Column | Type | Notes |
 | --- | --- | --- |
-| `id` | bigint PK | |
+| `id` | bigint PK | Internal only |
+| `public_id` | `uuid`, unique | UUIDv7 written by the store; the id a product may expose |
 | `bucket` | `varchar(128)` | Server-side credential / anon bucket |
-| `key_hash` | `char(64)` | SHA-256 of the client key |
+| `bucket_version` | `smallint`, default `1` | Versions the bucket scheme (anonymous HMAC components) |
+| `credential_public_id` | `uuid` null, indexed | From `IdempotencyContext::$credentialPublicId` |
+| `key_hash` | `varchar(64)` | SHA-256 of the client key |
+| `key_hash_algorithm` | `varchar(32)`, default `sha256` | |
+| `key_format` | `varchar(16)` | `uuid` or `sf-string`, from the claim context |
 | `method` | `varchar(16)` | HTTP method |
 | `path` | `varchar(2048)` | Raw `getPathInfo()` |
-| `fingerprint` | `char(64)` | Request fingerprint (method, path+query, bucket, body, optional Accept-Language) |
-| `lease` | `char(64)` | Opaque owner token (NOT NULL) |
-| `status` | `varchar(32)` | `in_progress` / `completed` |
+| `fingerprint` | `varchar(64)` | Request fingerprint (method, path+query, bucket, body, served locale on machine doors) |
+| `fingerprint_algorithm` | `varchar(32)`, default `sha256` | |
+| `fingerprint_version` | `smallint`, default `1` | `IdempotencyContext::$fingerprintVersion`; 1 = today's fingerprint material |
+| `lease` | `varchar(64)` | Opaque owner token (NOT NULL) |
+| `status` | `varchar(32)`, default `in_progress` | `in_progress` / `completed` |
 | `status_code` | `smallint` null | Completed replayable responses only |
 | `headers_json` | `text` null | Allowlisted replay headers (`Idempotent-Replayed` is never stored) |
 | `body` | `longText` null | Capped by `max_response_bytes` (request bodies use `max_body_bytes`) |
+| `body_encoding` | `varchar(16)`, default `utf-8` | Leaves room for `base64` |
+| `request_id` | `varchar(128)` null | `X-Request-Id` of the claiming request |
+| `trace_id` | `char(32)` null, indexed | W3C trace-id, lowercase hex |
+| `metadata` | `json` null | Namespaced keys; never secrets, never `tracestate` |
+| `schema_version` | `smallint`, default `1` | Row format, including how `headers_json` is serialised |
+| `completed_at` | timestamp null | Set when the response is stored or the key sealed (UTC) |
 | `created_at`, `updated_at` | timestamp null | Laravel defaults; store writes UTC |
 | `expires_at` | `datetime` | Future-dated (C11 `dateTime`); enforced on read; index for prune |
+
+`key_hash`, `fingerprint` and `lease` are `varchar(64)`, not the `char(64)` of the
+standards review: PostgreSQL right-pads `CHAR` values shorter than the column, so
+equality comparisons on them break. Every value the store writes is exactly 64
+characters, so nothing else changes.
 
 **Unique** `(bucket, key_hash)`. **Index** `expires_at`.
 

@@ -39,6 +39,7 @@ final class CacheIdempotencyStore implements IdempotencyStore
         string $key,
         string $fingerprint,
         DateTimeImmutable $now,
+        IdempotencyContext $context,
     ): IdempotencyClaim {
         $recordKey = $scope->cacheKey($key);
         $existing = $this->liveRecord($recordKey, $now);

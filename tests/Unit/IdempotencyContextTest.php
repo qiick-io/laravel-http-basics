@@ -10,7 +10,6 @@ it('defaults to the current fingerprint version and no optional facts', function
 
     expect($context->keyFormat)->toBe(IdempotencyKeyFormat::SfString)
         ->and($context->fingerprintVersion)->toBe(1)
-        ->and(IdempotencyContext::CURRENT_FINGERPRINT_VERSION)->toBe(1)
         ->and($context->requestId)->toBeNull()
         ->and($context->traceId)->toBeNull()
         ->and($context->credentialPublicId)->toBeNull()

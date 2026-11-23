@@ -197,6 +197,11 @@ Refusals use fleet JSON (`message` + `error`): `idempotency_key_required`,
 `idempotency_unavailable` (503). Replays force the **current** `X-Request-Id` and strip
 stale `X-RateLimit-*` headers.
 
+A custom `IdempotencyStore` receives an `IdempotencyContext` with every claim: the
+key format, the fingerprint version, the request id, and room for a trace id, a
+credential public id and namespaced metadata. The database store writes them to the
+record (see `docs/reference-schema.md`).
+
 **Handlers must be atomic.** A 5xx, a 429 or an exception frees the key, so a retry
 runs the handler again. That is only safe when a failing handler leaves nothing
 behind: wrap its writes in one database transaction, make no external call (payment,

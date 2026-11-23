@@ -9,6 +9,7 @@ use Illuminate\Cache\Repository as CacheRepository;
 use Illuminate\Contracts\Cache\LockProvider;
 use Illuminate\Database\ConnectionInterface;
 use Illuminate\Database\QueryException;
+use Illuminate\Support\Str;
 use Qiick\HttpBasics\Contracts\IdempotencyStore;
 
 /**
@@ -45,6 +46,7 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
         string $key,
         string $fingerprint,
         DateTimeImmutable $now,
+        IdempotencyContext $context,
     ): IdempotencyClaim {
         $keyHash = hash('sha256', $key);
 
@@ -92,6 +94,12 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
             'fingerprint' => $fingerprint,
             'lease' => $lease,
             'status' => 'in_progress',
+            'key_format' => $context->keyFormat->value,
+            'fingerprint_version' => $context->fingerprintVersion,
+            'request_id' => $context->requestId,
+            'trace_id' => $context->traceId,
+            'credential_public_id' => $context->credentialPublicId,
+            'metadata' => $context->metadata === [] ? null : json_encode($context->metadata, JSON_THROW_ON_ERROR),
             'updated_at' => $utcNow,
             'expires_at' => $this->expiresAt($utcNow),
         ];
@@ -99,6 +107,7 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
         try {
             if ($existing === null) {
                 $this->connection->table($this->table)->insert([
+                    'public_id' => Str::uuid7()->toString(),
                     'bucket' => $scope->bucket,
                     'key_hash' => $keyHash,
                     'method' => $scope->method,
@@ -106,7 +115,8 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
                     'created_at' => $utcNow,
                 ] + $claimedColumns);
             } else {
-                // Taking over an expired or stale row must drop its old payload.
+                // Taking over an expired or stale row must drop its old payload; the row
+                // keeps its public_id.
                 $this->connection->table($this->table)
                     ->where('bucket', $scope->bucket)
                     ->where('key_hash', $keyHash)
@@ -114,6 +124,7 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
                         'status_code' => null,
                         'headers_json' => null,
                         'body' => null,
+                        'completed_at' => null,
                     ]);
             }
         } catch (QueryException $exception) {
@@ -287,6 +298,7 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
             ->where('status', 'in_progress')
             ->update([
                 'status' => 'completed',
+                'completed_at' => $utcNow,
                 'updated_at' => $utcNow,
                 'expires_at' => $this->expiresAt($utcNow),
             ] + $payloadColumns);

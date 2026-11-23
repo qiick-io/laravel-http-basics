@@ -10,9 +10,12 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
 use Qiick\HttpBasics\Idempotency\ClaimOutcome;
 use Qiick\HttpBasics\Idempotency\DatabaseIdempotencyStore;
 use Qiick\HttpBasics\Idempotency\IdempotencyClaim;
+use Qiick\HttpBasics\Idempotency\IdempotencyContext;
+use Qiick\HttpBasics\Idempotency\IdempotencyKeyFormat;
 use Qiick\HttpBasics\Idempotency\IdempotencyScope;
 use Qiick\HttpBasics\Idempotency\IdempotencyStoreException;
 use Qiick\HttpBasics\Idempotency\ReplayableResponse;
@@ -182,6 +185,8 @@ it('replays completed rows with defensive header and status parsing', function (
     $key = '550e8400-e29b-41d4-a716-446655440003';
 
     DB::table('idempotency_records')->insert([
+        'public_id' => (string) Str::uuid7(),
+        'key_format' => 'uuid',
         'bucket' => $scope->bucket,
         'key_hash' => hash('sha256', $key),
         'method' => 'POST',
@@ -223,6 +228,8 @@ it('defaults replay headers and body when the completed row is sparse', function
     $key = '550e8400-e29b-41d4-a716-446655440004';
 
     DB::table('idempotency_records')->insert([
+        'public_id' => (string) Str::uuid7(),
+        'key_format' => 'uuid',
         'bucket' => $scope->bucket,
         'key_hash' => hash('sha256', $key),
         'method' => 'POST',
@@ -257,6 +264,8 @@ it('never replays a completed row whose status code is unreadable', function ():
     $key = '550e8400-e29b-41d4-a716-446655440021';
 
     DB::table('idempotency_records')->insert([
+        'public_id' => (string) Str::uuid7(),
+        'key_format' => 'uuid',
         'bucket' => $scope->bucket,
         'key_hash' => hash('sha256', $key),
         'method' => 'POST',
@@ -357,6 +366,8 @@ it('uses updated_at then created_at when judging stale in-progress rows', functi
     $key = '550e8400-e29b-41d4-a716-446655440008';
 
     DB::table('idempotency_records')->insert([
+        'public_id' => (string) Str::uuid7(),
+        'key_format' => 'uuid',
         'bucket' => $scope->bucket,
         'key_hash' => hash('sha256', $key),
         'method' => 'POST',
@@ -535,6 +546,8 @@ it('parses datetime objects and invalid timestamp strings when judging staleness
     $key = '550e8400-e29b-41d4-a716-446655440018';
 
     DB::table('idempotency_records')->insert([
+        'public_id' => (string) Str::uuid7(),
+        'key_format' => 'uuid',
         'bucket' => $scope->bucket,
         'key_hash' => hash('sha256', $key),
         'method' => 'POST',
@@ -659,6 +672,8 @@ it('judges expiry in UTC when the application timezone is not UTC', function ():
 function insertCompletedIdempotencyRow(IdempotencyScope $scope, string $key, string $expiresAt): void
 {
     DB::table('idempotency_records')->insert([
+        'public_id' => (string) Str::uuid7(),
+        'key_format' => 'uuid',
         'bucket' => $scope->bucket,
         'key_hash' => hash('sha256', $key),
         'method' => 'POST',
@@ -818,6 +833,8 @@ it('falls back to created_at when an in-progress row has no updated_at', functio
     $key = '550e8400-e29b-41d4-a716-446655440029';
 
     DB::table('idempotency_records')->insert([
+        'public_id' => (string) Str::uuid7(),
+        'key_format' => 'uuid',
         'bucket' => $scope->bucket,
         'key_hash' => hash('sha256', $key),
         'method' => 'POST',
@@ -886,10 +903,10 @@ it('takes over a just-expired completed row even inside the stale window', funct
     expect($store->claim($scope, $key, 'fp', $now->modify('+3 seconds'), idempotencyContext())->outcome)->toBe(ClaimOutcome::New);
 });
 
-function richIdempotencyContext(): Qiick\HttpBasics\Idempotency\IdempotencyContext
+function richIdempotencyContext(): IdempotencyContext
 {
-    return new Qiick\HttpBasics\Idempotency\IdempotencyContext(
-        Qiick\HttpBasics\Idempotency\IdempotencyKeyFormat::SfString,
+    return new IdempotencyContext(
+        IdempotencyKeyFormat::SfString,
         fingerprintVersion: 2,
         requestId: 'req-0001-abcd',
         traceId: '4bf92f3577b34da6a3ce929d0e0e4736',

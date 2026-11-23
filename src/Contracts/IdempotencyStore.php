@@ -6,6 +6,7 @@ namespace Qiick\HttpBasics\Contracts;
 
 use DateTimeImmutable;
 use Qiick\HttpBasics\Idempotency\IdempotencyClaim;
+use Qiick\HttpBasics\Idempotency\IdempotencyContext;
 use Qiick\HttpBasics\Idempotency\IdempotencyScope;
 use Qiick\HttpBasics\Idempotency\IdempotencyStoreException;
 use Qiick\HttpBasics\Idempotency\ReplayableResponse;
@@ -15,11 +16,16 @@ use Qiick\HttpBasics\Idempotency\ReplayableResponse;
  */
 interface IdempotencyStore
 {
+    /**
+     * Stores may record `$context` (the database store fills its audit columns);
+     * it never changes the claim outcome.
+     */
     public function claim(
         IdempotencyScope $scope,
         string $key,
         string $fingerprint,
         DateTimeImmutable $now,
+        IdempotencyContext $context,
     ): IdempotencyClaim;
 
     /**
