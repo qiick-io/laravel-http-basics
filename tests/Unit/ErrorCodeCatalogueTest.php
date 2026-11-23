@@ -11,6 +11,7 @@ use Qiick\HttpBasics\Errors\FrameworkErrorCodeResolver;
 use Qiick\HttpBasics\Idempotency\IdempotencyRejection;
 use Qiick\HttpBasics\Idempotency\IdempotencyStoreException;
 use Qiick\HttpBasics\Idempotency\PayloadTooLargeException;
+use Qiick\HttpBasics\Uploads\UploadRejectedException;
 use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 use Symfony\Component\HttpKernel\Exception\MethodNotAllowedHttpException;
@@ -125,7 +126,29 @@ it('gives every exception the package lets escape a documented fleet code', func
             static fn (ErrorCode $code): array => [new IdempotencyRejection($code, 409), $code],
             $idempotencyCodes,
         ),
+        UploadRejectedException::class => [
+            [UploadRejectedException::forbiddenType('a.php'), ErrorCode::UploadForbiddenType],
+            [UploadRejectedException::typeNotAllowed('a.txt'), ErrorCode::UploadTypeNotAllowed],
+            [UploadRejectedException::contentMismatch('a.png'), ErrorCode::UploadContentMismatch],
+            [UploadRejectedException::tooLarge('a.zip'), ErrorCode::UploadTooLarge],
+            [UploadRejectedException::nameInvalid('a'), ErrorCode::UploadNameInvalid],
+            [UploadRejectedException::infected('a.pdf'), ErrorCode::UploadInfected],
+            [UploadRejectedException::scanFailed('a.pdf'), ErrorCode::UploadScanFailed],
+        ],
     ];
+
+    $uploadCodes = array_values(array_filter(
+        ErrorCode::cases(),
+        static fn (ErrorCode $code): bool => str_starts_with($code->value, 'upload_'),
+    ));
+
+    // Every upload_* case has a factory sample, and each sample keeps its wire value.
+    expect(array_map(static fn (array $sample): ErrorCode => $sample[1], $samplesByExceptionClass[UploadRejectedException::class]))
+        ->toBe($uploadCodes);
+
+    foreach ($samplesByExceptionClass[UploadRejectedException::class] as [$exception, $expectedCode]) {
+        expect($exception->errorCode())->toBe($expectedCode->value);
+    }
 
     expect($idempotencyCodes)->not->toBe([]);
 
