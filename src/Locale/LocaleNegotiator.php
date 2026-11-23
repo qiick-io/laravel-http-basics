@@ -117,10 +117,10 @@ final class LocaleNegotiator
 
     private function userLocale(mixed $user): ?string
     {
-        // An empty string is returned as is: it is never a supported locale.
         $locale = is_object($user) ? ($user->locale ?? null) : null;
 
-        return is_string($locale) ? $locale : null;
+        // Empty means "no preference", even if '' slipped into the supported list.
+        return is_string($locale) && $locale !== '' ? $locale : null;
     }
 
     private function defaultChain(bool $didReadAcceptLanguage = false): LocaleResolution
