@@ -70,3 +70,19 @@ it('refuses metadata the audit row should not hold', function (array $metadata):
     'an object' => [['model' => new ArrayObject(['secret' => 'x'])]],
     'an object deeper down' => [['upload' => ['file' => new SplFileInfo('/tmp')]]],
 ]);
+
+it('refuses nested metadata keys that are not plain names', function (array $metadata): void {
+    expect(fn () => new IdempotencyContext(IdempotencyKeyFormat::Uuid, metadata: $metadata))
+        ->toThrow(InvalidArgumentException::class, 'metadata');
+})->with([
+    'spaces in a nested key' => [['upload' => ['File Name' => 'x']]],
+    'a nested key with a dot' => [['upload' => ['file.name' => 'x']]],
+    'mixed list and keys' => [['upload' => [0 => 'a', 'name' => 'b']]],
+    'deeper still' => [['upload' => ['parts' => [['Bad Key' => 1]]]]],
+]);
+
+it('accepts nested plain names and lists', function (): void {
+    $metadata = ['upload' => ['file_name' => 'x', 'parts' => [['size' => 1], ['size' => 2]], 'tags' => []]];
+
+    expect((new IdempotencyContext(IdempotencyKeyFormat::Uuid, metadata: $metadata))->metadata)->toBe($metadata);
+});

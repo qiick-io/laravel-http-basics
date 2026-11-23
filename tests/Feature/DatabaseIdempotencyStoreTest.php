@@ -1030,3 +1030,16 @@ it('keeps buckets that differ only in letter case apart on every engine', functi
         ->and($lower->outcome)->toBe(ClaimOutcome::New)
         ->and(DB::table('idempotency_records')->count())->toBe(2);
 });
+
+it('keeps buckets that differ only by trailing spaces apart on every engine', function (): void {
+    // MySQL and MariaDB binary collations still PAD SPACE: 'a' and 'a ' compare equal.
+    $store = databaseIdempotencyStore();
+    $now = new DateTimeImmutable('2026-01-01T00:00:00Z');
+
+    $plain = $store->claim(new IdempotencyScope('user:a', 'POST', '/items'), 'key-pad', 'fp', $now, idempotencyContext());
+    $padded = $store->claim(new IdempotencyScope('user:a ', 'POST', '/items'), 'key-pad', 'fp', $now, idempotencyContext());
+
+    expect($plain->outcome)->toBe(ClaimOutcome::New)
+        ->and($padded->outcome)->toBe(ClaimOutcome::New)
+        ->and(DB::table('idempotency_records')->count())->toBe(2);
+});
