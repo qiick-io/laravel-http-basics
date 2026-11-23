@@ -597,3 +597,26 @@ it('wraps write failures as store exceptions and releases the lock', function ()
     $lockKey = $scope->cacheKey($key).':lock';
     expect($cache->getStore()->lock($lockKey, 1, 'probe')->get())->toBeTrue();
 });
+
+it('judges expiry in UTC when the application timezone is not UTC', function (): void {
+    // Laravel sets the PHP default timezone from app.timezone; stored datetimes are UTC wall-clock.
+    $originalTimezone = date_default_timezone_get();
+    date_default_timezone_set('Europe/Rome');
+
+    try {
+        $store = databaseIdempotencyStore(ttlSeconds: 7200);
+        $scope = new IdempotencyScope('bucket-a', 'POST', '/items');
+        $now = new DateTimeImmutable('2026-01-01T00:00:00Z');
+        $key = '550e8400-e29b-41d4-a716-446655440020';
+
+        $claim = $store->claim($scope, $key, 'fp', $now);
+        $store->complete($claim, new ReplayableResponse(201, [], 'created'), $now);
+
+        // 90 minutes in: well inside the 2-hour TTL, so the stored response must replay.
+        $retry = $store->claim($scope, $key, 'fp', $now->modify('+90 minutes'));
+
+        expect($retry->outcome)->toBe(ClaimOutcome::Replay);
+    } finally {
+        date_default_timezone_set($originalTimezone);
+    }
+});
