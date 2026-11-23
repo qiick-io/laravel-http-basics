@@ -430,6 +430,18 @@ it('ignores an empty-string user locale on web requests', function (): void {
     expect($negotiator->resolve($request)->source)->toBe(LocaleSource::Default);
 });
 
+it('treats an empty user locale as absent even when an empty locale is supported', function (): void {
+    // A misconfigured supported list must not turn "no locale" into the principal's choice.
+    $negotiator = makeNegotiator(['', 'en', 'de']);
+    $request = webRequest();
+    $request->setUserResolver(fn () => (object) ['locale' => '']);
+
+    $resolution = $negotiator->resolve($request);
+
+    expect($resolution->source)->toBe(LocaleSource::Default)
+        ->and($resolution->locale)->toBe('en');
+});
+
 it('drops a lone q=0 range instead of treating it as a match', function (): void {
     $negotiator = makeNegotiator(['en', 'de']);
     $request = machineRequest(headers: ['Accept-Language' => 'de;q=0']);
