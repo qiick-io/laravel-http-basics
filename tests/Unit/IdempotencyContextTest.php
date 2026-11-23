@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Qiick\HttpBasics\Idempotency\Fingerprinter;
 use Qiick\HttpBasics\Idempotency\IdempotencyContext;
 use Qiick\HttpBasics\Idempotency\IdempotencyKeyFormat;
 
@@ -43,4 +44,29 @@ it('refuses context the record could not store faithfully', function (array $arg
     'all-zero trace id' => [['traceId' => str_repeat('0', 32)], 'trace id'],
     'credential id that is not a UUID' => [['credentialPublicId' => 'key_123'], 'credential public id'],
     'metadata JSON cannot encode' => [['metadata' => ['ratio' => INF]], 'metadata'],
+]);
+
+it('defaults to the fingerprint version the Fingerprinter produces', function (): void {
+    expect((new IdempotencyContext(IdempotencyKeyFormat::Uuid))->fingerprintVersion)
+        ->toBe(Fingerprinter::VERSION);
+});
+
+it('accepts namespaced metadata of plain values up to 4 KiB', function (): void {
+    $metadata = ['upload' => ['size' => 12, 'ok' => true, 'tags' => ['a', null]], 'request.content_digest' => str_repeat('x', 4000)];
+
+    expect((new IdempotencyContext(IdempotencyKeyFormat::Uuid, metadata: $metadata))->metadata)->toBe($metadata)
+        ->and(strlen((string) json_encode(['k' => str_repeat('x', 4096 - 8)])))->toBe(4096)
+        ->and((new IdempotencyContext(IdempotencyKeyFormat::Uuid, metadata: ['k' => str_repeat('x', 4096 - 8)]))->metadata)->toHaveKey('k');
+});
+
+it('refuses metadata the audit row should not hold', function (array $metadata): void {
+    expect(fn () => new IdempotencyContext(IdempotencyKeyFormat::Uuid, metadata: $metadata))
+        ->toThrow(InvalidArgumentException::class, 'metadata');
+})->with([
+    'over 4 KiB' => [['k' => str_repeat('x', 4096 - 7)]],
+    'a list instead of keys' => [['a', 'b']],
+    'a key that is not namespaced' => [['Request Digest' => 'x']],
+    'an empty namespace segment' => [['request..digest' => 'x']],
+    'an object' => [['model' => new ArrayObject(['secret' => 'x'])]],
+    'an object deeper down' => [['upload' => ['file' => new SplFileInfo('/tmp')]]],
 ]);

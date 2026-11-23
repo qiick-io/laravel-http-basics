@@ -988,3 +988,45 @@ it('keeps the row id but takes the new claim context on takeover', function (): 
         ->and($row->metadata)->toBeNull()
         ->and($row->completed_at)->toBeNull();
 });
+
+it('gives a takeover a new public id and the new operation facts', function (): void {
+    // Review of #22 (B2): one public id must never name two operations.
+    $store = databaseIdempotencyStore(ttlSeconds: 2);
+    $now = new DateTimeImmutable('2026-01-01T00:00:00Z');
+    $orders = new IdempotencyScope('bucket-a', 'POST', '/api/orders');
+    $store->complete($store->claim($orders, 'key-reuse', 'fp-orders', $now, idempotencyContext()), new ReplayableResponse(201, [], 'order'), $now);
+    $first = DB::table('idempotency_records')->first();
+
+    $later = $now->modify('+1 minute');
+    $store->claim(new IdempotencyScope('bucket-a', 'DELETE', '/api/accounts/7'), 'key-reuse', 'fp-delete', $later, idempotencyContext());
+    $row = DB::table('idempotency_records')->first();
+
+    expect($row->public_id)->not->toBe($first->public_id)
+        ->and($row->method)->toBe('DELETE')
+        ->and($row->path)->toBe('/api/accounts/7')
+        ->and($row->created_at)->toBe('2026-01-01 00:01:00');
+});
+
+it('stamps the public id with the claim time', function (): void {
+    $store = databaseIdempotencyStore();
+    $now = new DateTimeImmutable('2026-01-01T00:00:00.123Z');
+
+    $store->claim(new IdempotencyScope('bucket-a', 'POST', '/items'), 'key-time', 'fp', $now, idempotencyContext());
+    // UUIDv7: the first 48 bits are Unix milliseconds.
+    $milliseconds = hexdec(substr(str_replace('-', '', (string) DB::table('idempotency_records')->value('public_id')), 0, 12));
+
+    expect($milliseconds)->toBe(1_767_225_600_123);
+});
+
+it('keeps buckets that differ only in letter case apart on every engine', function (): void {
+    // MySQL and MariaDB compare with a case-insensitive collation unless the column says otherwise.
+    $store = databaseIdempotencyStore();
+    $now = new DateTimeImmutable('2026-01-01T00:00:00Z');
+
+    $upper = $store->claim(new IdempotencyScope('user:Luca', 'POST', '/items'), 'key-case', 'fp', $now, idempotencyContext());
+    $lower = $store->claim(new IdempotencyScope('user:luca', 'POST', '/items'), 'key-case', 'fp', $now, idempotencyContext());
+
+    expect($upper->outcome)->toBe(ClaimOutcome::New)
+        ->and($lower->outcome)->toBe(ClaimOutcome::New)
+        ->and(DB::table('idempotency_records')->count())->toBe(2);
+});

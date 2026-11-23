@@ -1301,3 +1301,85 @@ it('hands the store the key format, fingerprint version and request id of the cl
         ->and($currentRequestId)->not->toBeNull()
         ->and($store->context?->requestId)->toBe($currentRequestId);
 });
+
+/**
+ * An in-memory store that remembers the context of the last claim.
+ */
+function contextCapturingStore(): IdempotencyStore
+{
+    return new class(new InMemoryIdempotencyStore) implements IdempotencyStore
+    {
+        public ?IdempotencyContext $context = null;
+
+        public function __construct(private InMemoryIdempotencyStore $inner) {}
+
+        public function claim(IdempotencyScope $scope, string $key, string $fingerprint, DateTimeImmutable $now, IdempotencyContext $context): IdempotencyClaim
+        {
+            $this->context = $context;
+
+            return $this->inner->claim($scope, $key, $fingerprint, $now, $context);
+        }
+
+        public function complete(IdempotencyClaim $claim, ReplayableResponse $response, DateTimeImmutable $now): void
+        {
+            $this->inner->complete($claim, $response, $now);
+        }
+
+        public function sealUnreplayable(IdempotencyClaim $claim, DateTimeImmutable $now): void
+        {
+            $this->inner->sealUnreplayable($claim, $now);
+        }
+
+        public function abandon(IdempotencyClaim $claim, DateTimeImmutable $now): void
+        {
+            $this->inner->abandon($claim, $now);
+        }
+    };
+}
+
+it('leaves an unstorable request id out of the claim context instead of failing the request', function (string $requestId): void {
+    // Review of #22 (B1): a custom IdGenerator or accept_pattern can produce ids the record cannot hold.
+    $store = contextCapturingStore();
+    Context::add(RequestIdResolver::VISIBLE_CONTEXT_KEY, $requestId);
+
+    $response = makeIdempotencyMiddleware($store, new FakeCredentialBucketResolver('tenant:1'))
+        ->handle(idempotencyRequest(), static fn () => response('ok', 201));
+
+    expect($response->getStatusCode())->toBe(201)
+        ->and($store->context?->requestId)->toBeNull();
+})->with([
+    '129 characters' => [str_repeat('r', 129)],
+    'outside the request-id alphabet' => ["req\xC3\x28-invalid-utf8"],
+]);
+
+it('keeps a storable request id in the claim context', function (): void {
+    Context::add(RequestIdResolver::VISIBLE_CONTEXT_KEY, str_repeat('r', 128));
+    $store = contextCapturingStore();
+
+    makeIdempotencyMiddleware($store, new FakeCredentialBucketResolver('tenant:1'))
+        ->handle(idempotencyRequest(), static fn () => response('ok', 201));
+
+    expect($store->context?->requestId)->toBe(str_repeat('r', 128));
+});
+
+it('stores a bucket too long for its column under a hash of it', function (): void {
+    // Review of #22: buckets over 128 characters used to fail every write on strict engines.
+    $longBucket = str_repeat('b', 200);
+    $middleware = makeIdempotencyMiddleware($this->store, new FakeCredentialBucketResolver($longBucket));
+
+    $middleware->handle(idempotencyRequest(), static fn () => response('first', 201));
+    $hashedScope = new IdempotencyScope('sha256:'.hash('sha256', $longBucket), 'POST', '/api/widgets');
+
+    expect($this->store->claim($hashedScope, '550e8400-e29b-41d4-a716-446655440010', 'other', new DateTimeImmutable, idempotencyContext())->outcome)
+        ->toBe(ClaimOutcome::Mismatch)
+        ->and($middleware->handle(idempotencyRequest(), static fn () => response('second', 201))->getContent())->toBe('first');
+});
+
+it('keeps a bucket of exactly 128 characters as it is', function (): void {
+    $bucket = str_repeat('b', 128);
+    makeIdempotencyMiddleware($this->store, new FakeCredentialBucketResolver($bucket))
+        ->handle(idempotencyRequest(), static fn () => response('first', 201));
+
+    expect($this->store->claim(new IdempotencyScope($bucket, 'POST', '/api/widgets'), '550e8400-e29b-41d4-a716-446655440010', 'other', new DateTimeImmutable, idempotencyContext())->outcome)
+        ->toBe(ClaimOutcome::Mismatch);
+});
