@@ -22,6 +22,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Idempotency: a lock backend failure (Redis down mid-request) is a 503 store failure in
+  both stores, a lock that cannot be released no longer turns a finished claim into an
+  error, a failing `abandon()` never replaces the handler's response, and the `:sealed`
+  marker is checked again once the lock is held.
+
+- Idempotency: every cache failure in `CacheIdempotencyStore` now surfaces as
+  `idempotency_unavailable` (503 with `Retry-After`) instead of a raw exception, an
+  in-progress marker the cache did not store refuses the claim instead of letting the
+  handler run unprotected, and `abandon()` is best effort like the database store.
+
+- Idempotency: middleware options follow a strict grammar. Each option is trimmed (Laravel
+  keeps the space in `:required, replayable=false`), keys are exact and case-sensitive,
+  `replayable=` takes only `true` or `false` (any letter case), and an unknown, misspelled
+  or repeated option throws. Before, `replayable=0`, `Replayable=false` or `replayble=false`
+  left the route replayable and replayed the first response of a secret-issuing route.
+
+- Idempotency: when the response and then its seal both fail to persist, the key is
+  sealed through a separate `:sealed` cache entry, so a retry after
+  `stale_after_seconds` answers `idempotency_not_replayable` instead of running the
+  handler again; the cache store no longer reports a seal it could not write.
+
 - CORS: with `supports_credentials`, boot now rejects `allowed_headers: ['*']`, which
   Fruitcake answers by echoing every requested header (`Authorization` included).
 

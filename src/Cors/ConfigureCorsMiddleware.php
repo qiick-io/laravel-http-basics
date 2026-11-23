@@ -11,10 +11,10 @@ use Symfony\Component\HttpFoundation\Response;
 /**
  * @api Writes normalised `cors.allowed_origins` for the current request before HandleCors.
  *
- * Resolver output is passed through {@see OriginNormalizer}. Boot validation can be
- * switched off and resolver data is runtime input, so every credentialed request
- * re-applies the guard here: wildcard origins and every `allowed_origins_patterns`
- * entry are dropped, whichever branch produced the origin list. Sets `Vary: Origin`
+ * Resolver output is passed through {@see OriginNormalizer}. Boot validation always
+ * runs, but config can still change after boot and resolver data is runtime input, so
+ * every credentialed request re-applies the guard here: wildcard origins and every
+ * `allowed_origins_patterns` entry are dropped, whichever branch produced the origin list. Sets `Vary: Origin`
  * when the resolver overwrote the list, because the ACAO then depends on the request.
  * Origin enforcement (API-key gates) stays in the product (externa).
  */
