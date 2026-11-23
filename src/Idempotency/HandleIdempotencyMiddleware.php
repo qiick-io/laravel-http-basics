@@ -153,20 +153,42 @@ final class HandleIdempotencyMiddleware
         $isReplayable = true;
         $maxHandlerSeconds = $this->defaultMaxHandlerSeconds;
 
-        foreach ($options as $option) {
-            if ($option === 'optional') {
-                $isKeyRequired = false;
-            } elseif ($option === 'required') {
-                $isKeyRequired = true;
-            } elseif (str_starts_with($option, 'replayable=')) {
-                $isReplayable = strtolower(substr($option, strlen('replayable='))) !== 'false';
-            } elseif (str_starts_with($option, 'lock_ttl_seconds=')) {
+        // Strict grammar: an ignored typo (Replayable=false, replayble=false) would leave a
+        // secret-issuing route replayable, so anything unrecognised or repeated throws.
+        $seenSettings = [];
+
+        foreach ($options as $rawOption) {
+            // Laravel keeps the space after a comma in `:required, replayable=false`.
+            [$name, $value] = explode('=', trim($rawOption), 2) + [1 => null];
+            // required and optional set the same thing.
+            $setting = $name === 'optional' ? 'required' : $name;
+
+            if (in_array($setting, $seenSettings, true)) {
+                throw new \InvalidArgumentException("Idempotency middleware option {$setting} is given twice.");
+            }
+
+            $seenSettings[] = $setting;
+
+            if ($setting === 'required' && $value === null) {
+                $isKeyRequired = $name === 'required';
+            } elseif ($name === 'replayable' && $value !== null) {
+                $isReplayable = match (strtolower($value)) {
+                    'true' => true,
+                    'false' => false,
+                    default => throw new \InvalidArgumentException('Idempotency middleware option replayable must be true or false.'),
+                };
+            } elseif ($name === 'lock_ttl_seconds') {
                 throw new \InvalidArgumentException(
                     'lock_ttl_seconds middleware option is not supported; configure http-basics.idempotency.lock_ttl_seconds (store lock TTL also drives Conflict Retry-After).',
                 );
-            } elseif (str_starts_with($option, 'max_handler_seconds=')) {
-                // Floor at 1; substr/cast mutants are equivalent for the option grammar under test.
-                $maxHandlerSeconds = max(1, (int) substr($option, strlen('max_handler_seconds=')));
+            } elseif ($name === 'max_handler_seconds' && $value !== null) {
+                if (preg_match('/\A-?\d+\z/', $value) !== 1) {
+                    throw new \InvalidArgumentException('Idempotency middleware option max_handler_seconds must be an integer.');
+                }
+
+                $maxHandlerSeconds = max(1, (int) $value);
+            } else {
+                throw new \InvalidArgumentException("Unknown idempotency middleware option [{$rawOption}].");
             }
         }
 
@@ -257,12 +279,9 @@ final class HandleIdempotencyMiddleware
             $response = $this->ensureResponse($next($request));
         } catch (\Throwable $throwable) {
             // The handler failed before answering: free the key so a retry can run it.
-            // A store failure here must not hide the handler's own exception.
-            try {
-                $this->store->abandon($claim, new \DateTimeImmutable);
-            } finally {
-                throw $throwable;
-            }
+            $this->abandon($claim);
+
+            throw $throwable;
         }
 
         $elapsedSeconds = (hrtime(true) - $startedAt) / 1_000_000_000;
@@ -279,7 +298,7 @@ final class HandleIdempotencyMiddleware
             $body = $response->getContent();
 
             if ($body === false || ! $this->isStorable($response, $body)) {
-                $this->store->abandon($claim, new \DateTimeImmutable);
+                $this->abandon($claim);
 
                 return $response;
             }
@@ -349,6 +368,19 @@ final class HandleIdempotencyMiddleware
         $rejection = new IdempotencyRejection($code, $status, $headers);
 
         return $this->errorRenderer->render($rejection, $request);
+    }
+
+    /**
+     * Best effort: the key goes stale on its own, and a store failure here must never
+     * replace the handler's response or hide its exception.
+     */
+    private function abandon(IdempotencyClaim $claim): void
+    {
+        try {
+            $this->store->abandon($claim, new \DateTimeImmutable);
+        } catch (\Throwable) {
+            // The handler's answer is what the client must see.
+        }
     }
 
     private function unavailable(Request $request): Response

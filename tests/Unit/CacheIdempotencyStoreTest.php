@@ -443,6 +443,11 @@ it('replays a completed record discovered after the lock is acquired', function 
 
         public function get($key): mixed
         {
+            // The sealed-key marker is read first and is not part of the race.
+            if (str_ends_with($key, ':sealed')) {
+                return $this->inner->get($key);
+            }
+
             $this->recordGets++;
 
             if ($this->recordGets === 1) {

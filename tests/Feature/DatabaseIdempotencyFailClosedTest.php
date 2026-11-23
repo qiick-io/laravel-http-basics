@@ -12,6 +12,7 @@ use Qiick\HttpBasics\Idempotency\DatabaseIdempotencyStore;
 use Qiick\HttpBasics\Idempotency\IdempotencyScope;
 use Qiick\HttpBasics\Idempotency\IdempotencyStoreException;
 use Qiick\HttpBasics\Idempotency\ReplayableResponse;
+use Qiick\HttpBasics\Tests\Support\FaultyCacheRepository;
 
 beforeEach(function (): void {
     Schema::dropIfExists('idempotency_records');
@@ -125,4 +126,48 @@ it('pruneExpired deletes rows past expires_at', function (): void {
 
     expect($store->pruneExpired($now))->toBe(1)
         ->and(DB::table('idempotency_records')->count())->toBe(0);
+});
+
+it('keeps a key unreplayable when the database rejects both the response and the seal', function (): void {
+    if (DB::connection()->getDriverName() !== 'sqlite') {
+        $this->markTestSkipped('The every-update trigger is written for SQLite.');
+    }
+
+    // A database that takes no writes after the claim: both complete() and its seal fail.
+    $cache = new Repository(new ArrayStore);
+    $store = new DatabaseIdempotencyStore(DB::connection(), $cache, 'idempotency_records', 86400, 30, 5);
+    $scope = new IdempotencyScope('bucket', 'POST', '/api/items');
+    $now = new DateTimeImmutable('2026-01-01T00:00:00Z');
+    $key = '550e8400-e29b-41d4-a716-446655440204';
+    $claim = $store->claim($scope, $key, 'fp', $now, idempotencyContext());
+    DB::statement("CREATE TRIGGER idempotency_reject_every_update BEFORE UPDATE ON idempotency_records BEGIN SELECT RAISE(ABORT, 'read-only'); END");
+
+    expect(fn () => $store->complete($claim, new ReplayableResponse(201, [], 'created'), $now))
+        ->toThrow(IdempotencyStoreException::class);
+
+    // Sealed through the cache, the key's lock is released like after any seal.
+    expect($cache->getStore()->lock($scope->cacheKey($key).':lock', 1, 'probe')->get())->toBeTrue();
+
+    // The database recovers; the row is still in progress and stale.
+    DB::statement('DROP TRIGGER idempotency_reject_every_update');
+    $cache->getStore()->lock($scope->cacheKey($key).':lock', 0)->forceRelease();
+
+    expect($store->claim($scope, $key, 'fp', $now->modify('+1 hour'), idempotencyContext())->outcome)->toBe(ClaimOutcome::NotReplayable);
+});
+
+it('says so when neither the database nor the cache can seal the key', function (): void {
+    if (DB::connection()->getDriverName() !== 'sqlite') {
+        $this->markTestSkipped('The every-update trigger is written for SQLite.');
+    }
+
+    $cache = new FaultyCacheRepository(new ArrayStore);
+    $store = new DatabaseIdempotencyStore(DB::connection(), $cache, 'idempotency_records', 86400, 30, 5);
+    $scope = new IdempotencyScope('bucket', 'POST', '/api/items');
+    $now = new DateTimeImmutable('2026-01-01T00:00:00Z');
+    $claim = $store->claim($scope, '550e8400-e29b-41d4-a716-446655440205', 'fp', $now, idempotencyContext());
+    DB::statement("CREATE TRIGGER idempotency_reject_every_update BEFORE UPDATE ON idempotency_records BEGIN SELECT RAISE(ABORT, 'read-only'); END");
+    $cache->isPutRefused = static fn (string $key): bool => true;
+
+    expect(fn () => $store->complete($claim, new ReplayableResponse(201, [], 'created'), $now))
+        ->toThrow(IdempotencyStoreException::class, 'Failed to persist idempotent response and to seal it unreplayable.');
 });

@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Illuminate\Cache\ArrayStore;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Context;
@@ -10,6 +11,7 @@ use Qiick\HttpBasics\Contracts\ErrorRenderer;
 use Qiick\HttpBasics\Contracts\IdempotencyStore;
 use Qiick\HttpBasics\Errors\ErrorCode;
 use Qiick\HttpBasics\Idempotency\AnonymousBucketResolver;
+use Qiick\HttpBasics\Idempotency\CacheIdempotencyStore;
 use Qiick\HttpBasics\Idempotency\ClaimOutcome;
 use Qiick\HttpBasics\Idempotency\Fingerprinter;
 use Qiick\HttpBasics\Idempotency\FleetErrorRenderer;
@@ -36,6 +38,7 @@ use Qiick\HttpBasics\RequestId\RequestIdSource;
 use Qiick\HttpBasics\Testing\FakeCredentialBucketResolver;
 use Qiick\HttpBasics\Testing\InMemoryIdempotencyStore;
 use Qiick\HttpBasics\Tests\Support\FakeHighResolutionClock;
+use Qiick\HttpBasics\Tests\Support\FaultyCacheRepository;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 use Symfony\Component\HttpKernel\Exception\HttpException;
@@ -202,11 +205,11 @@ it('distinguishes missing and invalid keys on non-replayable required routes', f
         ->and($invalidResponse->getData(true)['error'])->toBe('idempotency_key_invalid');
 });
 
-it('lets required override optional in middleware options', function (): void {
+it('requires a key when the route says required', function (): void {
     $middleware = makeIdempotencyMiddleware($this->store, new FakeCredentialBucketResolver('tenant:1'));
     $request = Request::create('/api/widgets', 'POST', server: ['CONTENT_TYPE' => 'application/json'], content: '{}');
 
-    $response = $middleware->handle($request, static fn () => response('x'), 'optional', 'required');
+    $response = $middleware->handle($request, static fn () => response('x'), 'required');
 
     expect($response->getStatusCode())->toBe(400)
         ->and($response->getData(true)['error'])->toBe('idempotency_key_required');
@@ -1145,6 +1148,117 @@ it('rethrows the handler failure even when abandoning the claim fails too', func
     expect(fn () => $middleware->handle(idempotencyRequest(), static function (): never {
         throw new RuntimeException('handler failed');
     }))->toThrow(RuntimeException::class, 'handler failed');
+});
+
+it('rejects a replayable option that is not true or false instead of replaying secrets', function (string $option): void {
+    // Red-team finding: replayable=0 used to mean "replayable" and replayed the first secret.
+    $middleware = makeIdempotencyMiddleware($this->store, new FakeCredentialBucketResolver('tenant:1'));
+    $runs = 0;
+
+    expect(fn () => $middleware->handle(idempotencyRequest(), static function () use (&$runs) {
+        $runs++;
+
+        return response('SECRET', 201);
+    }, $option))->toThrow(InvalidArgumentException::class, 'replayable must be true or false');
+
+    expect($runs)->toBe(0);
+})->with(['replayable=0', 'replayable=no', 'replayable=off', 'replayable=', 'replayable=1']);
+
+it('accepts replayable=true in any letter case', function (): void {
+    $middleware = makeIdempotencyMiddleware($this->store, new FakeCredentialBucketResolver('tenant:1'));
+
+    $middleware->handle(idempotencyRequest(), static fn () => response('first', 201), 'replayable=TRUE');
+    $retry = $middleware->handle(idempotencyRequest(), static fn () => response('second', 201), 'replayable=True');
+
+    expect($retry->getContent())->toBe('first');
+});
+
+it('answers a cache outage with 503 and Retry-After, without running the handler', function (): void {
+    $repository = new FaultyCacheRepository(new ArrayStore);
+    $repository->isGetThrowing = true;
+    $store = new CacheIdempotencyStore($repository, 3600, 60, 5);
+    $middleware = makeIdempotencyMiddleware($store, new FakeCredentialBucketResolver('tenant:1'), retryAfterSeconds: 7);
+    $runs = 0;
+
+    $response = $middleware->handle(idempotencyRequest(), static function () use (&$runs) {
+        $runs++;
+
+        return response('x', 201);
+    });
+
+    expect($response->getStatusCode())->toBe(503)
+        ->and($response->headers->get('Retry-After'))->toBe('7')
+        ->and($runs)->toBe(0);
+});
+
+it('refuses unknown, misspelled or duplicated options instead of replaying secrets', function (array $options, string $message): void {
+    // Review of #21: an unrecognised option was ignored, so a typo left the route replayable.
+    $middleware = makeIdempotencyMiddleware($this->store, new FakeCredentialBucketResolver('tenant:1'));
+    $runs = 0;
+
+    expect(fn () => $middleware->handle(idempotencyRequest(), static function () use (&$runs) {
+        $runs++;
+
+        return response('SECRET', 201);
+    }, ...$options))->toThrow(InvalidArgumentException::class, $message);
+
+    expect($runs)->toBe(0);
+})->with([
+    'capitalised key' => [['Replayable=false'], 'Unknown idempotency middleware option'],
+    'space before =' => [['replayable =false'], 'Unknown idempotency middleware option'],
+    'misspelled key' => [['replayble=false'], 'Unknown idempotency middleware option'],
+    'empty option' => [['required', ''], 'Unknown idempotency middleware option'],
+    'value on a flag' => [['required=true'], 'Unknown idempotency middleware option'],
+    'flag without value' => [['replayable'], 'Unknown idempotency middleware option'],
+    'replayable twice' => [['replayable=false', 'replayable=true'], 'given twice'],
+    'required and optional' => [['required', 'optional'], 'given twice'],
+    'max_handler_seconds twice' => [['max_handler_seconds=5', 'max_handler_seconds=6'], 'given twice'],
+    'max_handler_seconds not a number' => [['max_handler_seconds=abc'], 'max_handler_seconds must be an integer'],
+    'a second = in the value' => [['replayable=false=true'], 'replayable must be true or false'],
+]);
+
+it('trims each option, as Laravel keeps the space after a comma', function (): void {
+    $middleware = makeIdempotencyMiddleware($this->store, new FakeCredentialBucketResolver('tenant:1'));
+
+    $middleware->handle(idempotencyRequest(), static fn () => response('SECRET-FIRST', 201), 'required', ' replayable=false');
+    $second = $middleware->handle(idempotencyRequest(), static fn () => response('SECRET-SECOND', 201), 'required', ' replayable=false');
+
+    expect($second->getContent())->toBe('SECRET-SECOND')
+        ->and($second->headers->has('Idempotent-Replayed'))->toBeFalse();
+});
+
+it('keeps the handler response when abandoning the claim fails', function (): void {
+    $store = new class(new InMemoryIdempotencyStore) implements IdempotencyStore
+    {
+        public function __construct(private InMemoryIdempotencyStore $inner) {}
+
+        public function claim(IdempotencyScope $scope, string $key, string $fingerprint, DateTimeImmutable $now, IdempotencyContext $context): IdempotencyClaim
+        {
+            return $this->inner->claim($scope, $key, $fingerprint, $now, $context);
+        }
+
+        public function complete(IdempotencyClaim $claim, ReplayableResponse $response, DateTimeImmutable $now): void
+        {
+            $this->inner->complete($claim, $response, $now);
+        }
+
+        public function sealUnreplayable(IdempotencyClaim $claim, DateTimeImmutable $now): void
+        {
+            $this->inner->sealUnreplayable($claim, $now);
+        }
+
+        public function abandon(IdempotencyClaim $claim, DateTimeImmutable $now): void
+        {
+            throw new IdempotencyStoreException('lock release failed');
+        }
+    };
+    $middleware = makeIdempotencyMiddleware($store, new FakeCredentialBucketResolver('tenant:1'));
+
+    // A 500 from the handler is not stored: the claim is abandoned, and that fails too.
+    $response = $middleware->handle(idempotencyRequest(), static fn () => response('handler broke', 500));
+
+    expect($response->getStatusCode())->toBe(500)
+        ->and($response->getContent())->toBe('handler broke');
 });
 
 it('hands the store the key format, fingerprint version and request id of the claim', function (): void {

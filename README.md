@@ -202,6 +202,12 @@ key format, the fingerprint version, the request id, and room for a trace id, a
 credential public id and namespaced metadata. The database store writes them to the
 record (see `docs/reference-schema.md`).
 
+When the response cannot be stored, the store seals the key so a retry gets
+`idempotency_not_replayable` instead of running the handler again. If the record
+itself cannot be written either (a database outage, a cache item too large), a
+separate `:sealed` cache entry carries the seal; only when that write fails too does
+the request end with a 503 whose key can run again once it goes stale.
+
 **Handlers must be atomic.** A 5xx, a 429 or an exception frees the key, so a retry
 runs the handler again. That is only safe when a failing handler leaves nothing
 behind: wrap its writes in one database transaction, make no external call (payment,
@@ -226,7 +232,7 @@ answering instead of letting the handler run again.
 | Cross-credential replay | Server-side credential bucket + owner lease; unique `(bucket, key_hash)`; never a request-controlled bucket. |
 | Anonymous bucket | Best-effort de-duplication, **not** an identity boundary; HMAC secret rotatable (rotation invalidates anon records); depends on TrustProxies. |
 | Secret replay | Route `replayable=false` + header deny-list + text/JSON only; API-key issuance must be non-replayable. |
-| Retry storms / double execution | 409 while lock held; lease-conditional complete; fail closed on marker eviction. Config requires `max_handler_seconds` **strictly less than** store `lock_ttl_seconds` so a route cannot claim a handler budget that outlives the lock. Soft overrun remains possible: `max_handler_seconds` is checked **after** `$next` returns, so a hung or wall-clock-skewed handler can still hold the request past lock expiry; once the lock and `stale_after` elapse, another worker may claim `New` (crash-recovery takeover by design). Bound handlers and keep lock TTL above real p99 latency. |
+| Retry storms / double execution | 409 while lock held; lease-conditional complete. A cache store that evicts or loses the in-progress marker or the `:sealed` entry (an LRU cache under memory pressure, a restart without persistence) lets a retry run the handler again: use a shared, persistent cache (Redis with persistence and no eviction of these keys) or the database store for idempotency. Config requires `max_handler_seconds` **strictly less than** store `lock_ttl_seconds` so a route cannot claim a handler budget that outlives the lock. Soft overrun remains possible: `max_handler_seconds` is checked **after** `$next` returns, so a hung or wall-clock-skewed handler can still hold the request past lock expiry; once the lock and `stale_after` elapse, another worker may claim `New` (crash-recovery takeover by design). Bound handlers and keep lock TTL above real p99 latency. |
 | Cache poisoning | `Vary: Accept-Language` whenever Accept-Language was read on a machine door; authenticated responses documented `Cache-Control: private`. |
 | Proxy trust | Same configured proxies as TrustProxies, evaluated independently of middleware order / request static state. |
 
