@@ -95,7 +95,19 @@ final class CacheIdempotencyStore implements IdempotencyStore
             'started_at' => $now->getTimestamp(),
             'expires_at' => $now->getTimestamp() + $this->ttlSeconds,
         ];
-        $this->cache->put($recordKey, $marker, $this->ttlSeconds);
+        try {
+            $isStored = $this->cache->put($recordKey, $marker, $this->ttlSeconds);
+        } catch (\Throwable $exception) {
+            $isStored = false;
+            $cause = $exception;
+        }
+
+        // Without a stored marker nothing proves the claim: never let the handler run.
+        if (! $isStored) {
+            $lock->release();
+
+            throw new IdempotencyStoreException('Failed to write idempotency marker.', previous: $cause ?? null);
+        }
 
         return new IdempotencyClaim(ClaimOutcome::New, null, $lease, $scope, $key);
     }
@@ -114,7 +126,7 @@ final class CacheIdempotencyStore implements IdempotencyStore
         }
 
         $recordKey = $claim->scope->cacheKey($claim->key);
-        $existing = $this->cache->get($recordKey);
+        $existing = $this->read($recordKey);
 
         if (! is_array($existing) || ($existing['lease'] ?? null) !== $claim->lease) {
             throw new IdempotencyStoreException('Idempotency lease mismatch on complete.');
@@ -146,7 +158,7 @@ final class CacheIdempotencyStore implements IdempotencyStore
         }
 
         $recordKey = $claim->scope->cacheKey($claim->key);
-        $existing = $this->cache->get($recordKey);
+        $existing = $this->read($recordKey);
 
         if (! is_array($existing) || ($existing['lease'] ?? null) !== $claim->lease) {
             throw new IdempotencyStoreException('Idempotency lease mismatch on seal.');
@@ -191,14 +203,20 @@ final class CacheIdempotencyStore implements IdempotencyStore
         }
 
         $recordKey = $claim->scope->cacheKey($claim->key);
-        $existing = $this->cache->get($recordKey);
 
-        // Only the claim's own marker is removed: a foreign lease is a no-op.
-        if (! is_array($existing) || ($existing['lease'] ?? null) !== $claim->lease) {
-            return;
+        try {
+            $existing = $this->cache->get($recordKey);
+
+            // Only the claim's own marker is removed: a foreign lease is a no-op.
+            if (! is_array($existing) || ($existing['lease'] ?? null) !== $claim->lease) {
+                return;
+            }
+
+            $this->cache->forget($recordKey);
+        } catch (\Throwable) {
+            // Best effort, like the database store: the caller is already failing.
         }
 
-        $this->cache->forget($recordKey);
         $this->lockFor($recordKey, $claim->lease)->release();
     }
 
@@ -211,7 +229,7 @@ final class CacheIdempotencyStore implements IdempotencyStore
      */
     private function liveRecord(string $recordKey, DateTimeImmutable $now): ?array
     {
-        $existing = $this->cache->get($recordKey);
+        $existing = $this->read($recordKey);
 
         if (! is_array($existing)) {
             return null;
@@ -224,6 +242,18 @@ final class CacheIdempotencyStore implements IdempotencyStore
             && $expiresAt < $now->getTimestamp();
 
         return $isExpiredCompletion ? null : $existing;
+    }
+
+    /**
+     * @throws IdempotencyStoreException when the cache cannot be read
+     */
+    private function read(string $recordKey): mixed
+    {
+        try {
+            return $this->cache->get($recordKey);
+        } catch (\Throwable $exception) {
+            throw new IdempotencyStoreException('Failed to read idempotency marker.', previous: $exception);
+        }
     }
 
     private function lockFor(string $recordKey, string $owner): Lock

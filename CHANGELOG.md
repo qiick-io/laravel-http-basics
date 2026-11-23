@@ -22,6 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Idempotency: every cache failure in `CacheIdempotencyStore` now surfaces as
+  `idempotency_unavailable` (503 with `Retry-After`) instead of a raw exception, an
+  in-progress marker the cache did not store refuses the claim instead of letting the
+  handler run unprotected, and `abandon()` is best effort like the database store.
+
 - Idempotency: the `replayable=` middleware option accepts only `true` or `false` (any
   letter case) and throws for anything else; `replayable=0`, `off` or a stray space used
   to mean "replayable" and replayed the first response of a secret-issuing route.

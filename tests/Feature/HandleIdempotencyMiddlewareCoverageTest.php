@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Illuminate\Cache\ArrayStore;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Context;
@@ -10,6 +11,7 @@ use Qiick\HttpBasics\Contracts\ErrorRenderer;
 use Qiick\HttpBasics\Contracts\IdempotencyStore;
 use Qiick\HttpBasics\Errors\ErrorCode;
 use Qiick\HttpBasics\Idempotency\AnonymousBucketResolver;
+use Qiick\HttpBasics\Idempotency\CacheIdempotencyStore;
 use Qiick\HttpBasics\Idempotency\ClaimOutcome;
 use Qiick\HttpBasics\Idempotency\Fingerprinter;
 use Qiick\HttpBasics\Idempotency\FleetErrorRenderer;
@@ -35,6 +37,7 @@ use Qiick\HttpBasics\RequestId\RequestIdSource;
 use Qiick\HttpBasics\Testing\FakeCredentialBucketResolver;
 use Qiick\HttpBasics\Testing\InMemoryIdempotencyStore;
 use Qiick\HttpBasics\Tests\Support\FakeHighResolutionClock;
+use Qiick\HttpBasics\Tests\Support\FaultyCacheRepository;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 use Symfony\Component\HttpKernel\Exception\HttpException;
@@ -1160,4 +1163,22 @@ it('accepts replayable=true in any letter case', function (): void {
     $retry = $middleware->handle(idempotencyRequest(), static fn () => response('second', 201), 'replayable=True');
 
     expect($retry->getContent())->toBe('first');
+});
+
+it('answers a cache outage with 503 and Retry-After, without running the handler', function (): void {
+    $repository = new FaultyCacheRepository(new ArrayStore);
+    $repository->isGetThrowing = true;
+    $store = new CacheIdempotencyStore($repository, 3600, 60, 5);
+    $middleware = makeIdempotencyMiddleware($store, new FakeCredentialBucketResolver('tenant:1'), retryAfterSeconds: 7);
+    $runs = 0;
+
+    $response = $middleware->handle(idempotencyRequest(), static function () use (&$runs) {
+        $runs++;
+
+        return response('x', 201);
+    });
+
+    expect($response->getStatusCode())->toBe(503)
+        ->and($response->headers->get('Retry-After'))->toBe('7')
+        ->and($runs)->toBe(0);
 });
