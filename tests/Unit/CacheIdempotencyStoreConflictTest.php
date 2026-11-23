@@ -17,8 +17,8 @@ it('conflicts when the cache lock is already held', function (): void {
     $now = new DateTimeImmutable('2026-01-01T00:00:00Z');
     $key = '550e8400-e29b-41d4-a716-446655440011';
 
-    $first = $store->claim($scope, $key, 'fp', $now);
-    $second = $store->claim($scope, $key, 'fp', $now);
+    $first = $store->claim($scope, $key, 'fp', $now, idempotencyContext());
+    $second = $store->claim($scope, $key, 'fp', $now, idempotencyContext());
 
     expect($first->outcome)->toBe(ClaimOutcome::New)
         ->and($second->outcome)->toBe(ClaimOutcome::Conflict);
@@ -29,7 +29,7 @@ it('rejects completion when the lease token drifts', function (): void {
     $scope = new IdempotencyScope('bucket', 'POST', '/items');
     $now = new DateTimeImmutable('2026-01-01T00:00:00Z');
     $key = '550e8400-e29b-41d4-a716-446655440012';
-    $claim = $store->claim($scope, $key, 'fp', $now);
+    $claim = $store->claim($scope, $key, 'fp', $now, idempotencyContext());
 
     $tampered = new IdempotencyClaim(
         ClaimOutcome::New,

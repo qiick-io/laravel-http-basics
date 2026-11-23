@@ -81,7 +81,7 @@ it('complete() seals unreplayable on QueryException so a retry never re-claims N
     $scope = new IdempotencyScope('bucket', 'POST', '/api/items');
     $now = new DateTimeImmutable;
     $key = '550e8400-e29b-41d4-a716-446655440202';
-    $claim = $store->claim($scope, $key, 'fp', $now);
+    $claim = $store->claim($scope, $key, 'fp', $now, idempotencyContext());
 
     expect(fn () => $store->complete(
         $claim,
@@ -94,7 +94,7 @@ it('complete() seals unreplayable on QueryException so a retry never re-claims N
         ->and($row->body)->toBeNull()
         ->and($row->status_code)->toBeNull();
 
-    $again = $store->claim($scope, $key, 'fp', $now);
+    $again = $store->claim($scope, $key, 'fp', $now, idempotencyContext());
     expect($again->outcome)->toBe(ClaimOutcome::NotReplayable)
         ->and(DB::table('idempotency_records')->count())->toBe(1);
 });
@@ -105,12 +105,12 @@ it('treats expired completed rows as absent so keys do not replay forever', func
     $now = new DateTimeImmutable('2026-01-01 12:00:00');
     $key = '550e8400-e29b-41d4-a716-446655440203';
 
-    $claim = $store->claim($scope, $key, 'fp', $now);
+    $claim = $store->claim($scope, $key, 'fp', $now, idempotencyContext());
     $store->complete($claim, new ReplayableResponse(201, [], '{"ok":true}'), $now);
 
     DB::table('idempotency_records')->update(['expires_at' => $now->modify('-1 second')]);
 
-    $again = $store->claim($scope, $key, 'fp', $now->modify('+2 days'));
+    $again = $store->claim($scope, $key, 'fp', $now->modify('+2 days'), idempotencyContext());
     expect($again->outcome)->toBe(ClaimOutcome::New);
 });
 
@@ -118,7 +118,7 @@ it('pruneExpired deletes rows past expires_at', function (): void {
     $store = failClosedStore();
     $scope = new IdempotencyScope('bucket', 'POST', '/api/items');
     $now = new DateTimeImmutable('2026-01-01 12:00:00');
-    $claim = $store->claim($scope, '550e8400-e29b-41d4-a716-446655440205', 'fp', $now);
+    $claim = $store->claim($scope, '550e8400-e29b-41d4-a716-446655440205', 'fp', $now, idempotencyContext());
     $store->complete($claim, new ReplayableResponse(201, [], 'ok'), $now);
 
     DB::table('idempotency_records')->update(['expires_at' => $now->modify('-1 minute')]);

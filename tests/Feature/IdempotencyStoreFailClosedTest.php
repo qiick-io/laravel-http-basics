@@ -120,7 +120,7 @@ it('complete() seals unreplayable on persistence failure so a retry never re-cla
     $scope = new IdempotencyScope('bucket', 'POST', '/api/items');
     $now = new DateTimeImmutable;
     $key = '550e8400-e29b-41d4-a716-446655440301';
-    $claim = $store->claim($scope, $key, 'fp', $now);
+    $claim = $store->claim($scope, $key, 'fp', $now, idempotencyContext());
 
     expect($claim->outcome)->toBe(ClaimOutcome::New);
 
@@ -130,6 +130,6 @@ it('complete() seals unreplayable on persistence failure so a retry never re-cla
         $now,
     ))->toThrow(IdempotencyStoreException::class);
 
-    $again = $store->claim($scope, $key, 'fp', $now);
+    $again = $store->claim($scope, $key, 'fp', $now, idempotencyContext());
     expect($again->outcome)->toBe(ClaimOutcome::NotReplayable);
 })->with('idempotency_fail_closed_stores');
