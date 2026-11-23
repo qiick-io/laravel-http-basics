@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Qiick\HttpBasics\Errors;
 
 use Qiick\HttpBasics\Idempotency\IdempotencyRejection;
+use Qiick\HttpBasics\Uploads\UploadRejectedException;
 use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 
 /**
@@ -24,7 +25,7 @@ final class FrameworkErrorCodeResolver implements ErrorCodeResolver
     public function resolve(\Throwable $exception): ErrorCode
     {
         // A package exception already carries its precise code (idempotency_in_progress, not conflict).
-        if ($exception instanceof IdempotencyRejection) {
+        if ($exception instanceof IdempotencyRejection || $exception instanceof UploadRejectedException) {
             return $exception->fleetErrorCode();
         }
 

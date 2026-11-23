@@ -33,6 +33,14 @@ enum ErrorCode: string
     case IdempotencyUnavailable = 'idempotency_unavailable';
     case IdempotencyUnsupportedMedia = 'idempotency_unsupported_media';
 
+    case UploadForbiddenType = 'upload_forbidden_type';
+    case UploadTypeNotAllowed = 'upload_type_not_allowed';
+    case UploadContentMismatch = 'upload_content_mismatch';
+    case UploadTooLarge = 'upload_too_large';
+    case UploadNameInvalid = 'upload_name_invalid';
+    case UploadInfected = 'upload_infected';
+    case UploadScanFailed = 'upload_scan_failed';
+
     /**
      * Short English description for the docs table (never sent as `message`).
      */
@@ -57,6 +65,13 @@ enum ErrorCode: string
             self::IdempotencyNotReplayable => 'The prior response cannot be replayed.',
             self::IdempotencyUnavailable => 'The idempotency store could not be reached.',
             self::IdempotencyUnsupportedMedia => 'Idempotent routes require application/json or application/*+json.',
+            self::UploadForbiddenType => 'The file type is blocked by the upload security floor.',
+            self::UploadTypeNotAllowed => 'The file type is not allowed in this upload context.',
+            self::UploadContentMismatch => 'The file content does not match its declared type, or the archive cannot be read safely.',
+            self::UploadTooLarge => 'The file, or an archive once inflated, exceeds the upload limits.',
+            self::UploadNameInvalid => 'The file name is invalid, or the uploaded file cannot be read.',
+            self::UploadInfected => 'The malware scanner flagged the file.',
+            self::UploadScanFailed => 'The malware scanner could not inspect the file.',
         };
     }
 

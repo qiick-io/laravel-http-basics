@@ -24,3 +24,10 @@ this table and the enum diverge.
 | `idempotency_not_replayable` | The prior response cannot be replayed. |
 | `idempotency_unavailable` | The idempotency store could not be reached. |
 | `idempotency_unsupported_media` | Idempotent routes require application/json or application/*+json. |
+| `upload_forbidden_type` | The file type is blocked by the upload security floor. |
+| `upload_type_not_allowed` | The file type is not allowed in this upload context. |
+| `upload_content_mismatch` | The file content does not match its declared type, or the archive cannot be read safely. |
+| `upload_too_large` | The file, or an archive once inflated, exceeds the upload limits. |
+| `upload_name_invalid` | The file name is invalid, or the uploaded file cannot be read. |
+| `upload_infected` | The malware scanner flagged the file. |
+| `upload_scan_failed` | The malware scanner could not inspect the file. |
