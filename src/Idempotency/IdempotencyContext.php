@@ -66,11 +66,7 @@ final readonly class IdempotencyContext
             }
         }
 
-        array_walk_recursive($metadata, static function (mixed $value): void {
-            if (is_object($value)) {
-                throw new \InvalidArgumentException('The metadata holds plain values only, never objects.');
-            }
-        });
+        self::assertPlainValues($metadata);
 
         try {
             $json = json_encode($metadata, JSON_THROW_ON_ERROR);
@@ -80,6 +76,35 @@ final readonly class IdempotencyContext
 
         if (strlen($json) > 4096) {
             throw new \InvalidArgumentException('The metadata encodes to at most 4096 bytes of JSON.');
+        }
+    }
+
+    /**
+     * Below the top level: lists, or maps keyed by plain names (`file_name`); never
+     * objects.
+     *
+     * @param  array<mixed>  $values
+     */
+    private static function assertPlainValues(array $values): void
+    {
+        foreach ($values as $value) {
+            if (is_object($value)) {
+                throw new \InvalidArgumentException('The metadata holds plain values only, never objects.');
+            }
+
+            if (! is_array($value)) {
+                continue;
+            }
+
+            if (! array_is_list($value)) {
+                foreach (array_keys($value) as $key) {
+                    if (! is_string($key) || preg_match('/\A[a-z][a-z0-9_]*\z/', $key) !== 1) {
+                        throw new \InvalidArgumentException('The nested metadata keys must be plain names such as file_name.');
+                    }
+                }
+            }
+
+            self::assertPlainValues($value);
         }
     }
 }

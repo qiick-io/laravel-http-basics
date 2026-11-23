@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\MySqlConnection;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
@@ -23,11 +24,13 @@ return new class extends Migration
             $table->uuid('public_id')->unique();
             $bucket = $table->string('bucket', 128);
 
-            // MySQL and MariaDB compare with a case- and accent-insensitive collation by
-            // default; buckets are opaque identifiers and must compare byte for byte, as
-            // on PostgreSQL and SQLite.
-            if (in_array(Schema::getConnection()->getDriverName(), ['mysql', 'mariadb'], true)) {
-                $bucket->collation('utf8mb4_bin');
+            // Buckets are opaque identifiers: on PostgreSQL and SQLite they compare byte for
+            // byte. MySQL and MariaDB default to a case- and accent-insensitive collation,
+            // and even utf8mb4_bin pads trailing spaces, so they need a binary NO PAD one.
+            $connection = Schema::getConnection();
+
+            if ($connection instanceof MySqlConnection) {
+                $bucket->collation($connection->isMaria() ? 'utf8mb4_nopad_bin' : 'utf8mb4_0900_bin');
             }
 
             // Versions the bucket scheme (the anonymous HMAC components).

@@ -14,7 +14,7 @@ the create migration is edited in place. Tests load the same migration.
 | --- | --- | --- |
 | `id` | bigint PK | Internal only |
 | `public_id` | `uuid`, unique | UUIDv7 stamped with the claim time; the id a product may expose. One id names one operation: a takeover of an expired or stale row gets a new one, with its own `method`, `path` and `created_at` |
-| `bucket` | `varchar(128)`, binary collation on MySQL/MariaDB | Server-side credential / anon bucket, compared byte for byte on every engine; a bucket over 128 characters is stored as `sha256:<hex>` |
+| `bucket` | `varchar(128)`, binary NO PAD collation on MySQL (`utf8mb4_0900_bin`, MySQL 8.0+) and MariaDB (`utf8mb4_nopad_bin`) | Server-side credential / anon bucket, compared byte for byte on every engine; a bucket over 128 characters is stored as `sha256:<hex>` |
 | `bucket_version` | `smallint`, default `1` | Versions the bucket scheme (anonymous HMAC components) |
 | `credential_public_id` | `uuid` null, indexed | From `IdempotencyContext::$credentialPublicId` |
 | `key_hash` | `varchar(64)` | SHA-256 of the client key |
