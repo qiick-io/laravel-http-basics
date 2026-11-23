@@ -202,11 +202,11 @@ it('distinguishes missing and invalid keys on non-replayable required routes', f
         ->and($invalidResponse->getData(true)['error'])->toBe('idempotency_key_invalid');
 });
 
-it('lets required override optional in middleware options', function (): void {
+it('requires a key when the route says required', function (): void {
     $middleware = makeIdempotencyMiddleware($this->store, new FakeCredentialBucketResolver('tenant:1'));
     $request = Request::create('/api/widgets', 'POST', server: ['CONTENT_TYPE' => 'application/json'], content: '{}');
 
-    $response = $middleware->handle($request, static fn () => response('x'), 'optional', 'required');
+    $response = $middleware->handle($request, static fn () => response('x'), 'required');
 
     expect($response->getStatusCode())->toBe(400)
         ->and($response->getData(true)['error'])->toBe('idempotency_key_required');
@@ -1154,7 +1154,7 @@ it('rejects a replayable option that is not true or false instead of replaying s
     }, $option))->toThrow(InvalidArgumentException::class, 'replayable must be true or false');
 
     expect($runs)->toBe(0);
-})->with(['replayable=0', 'replayable=no', 'replayable=off', 'replayable=false ', 'replayable=', 'replayable=1']);
+})->with(['replayable=0', 'replayable=no', 'replayable=off', 'replayable=', 'replayable=1']);
 
 it('accepts replayable=true in any letter case', function (): void {
     $middleware = makeIdempotencyMiddleware($this->store, new FakeCredentialBucketResolver('tenant:1'));
@@ -1181,4 +1181,39 @@ it('answers a cache outage with 503 and Retry-After, without running the handler
     expect($response->getStatusCode())->toBe(503)
         ->and($response->headers->get('Retry-After'))->toBe('7')
         ->and($runs)->toBe(0);
+});
+
+it('refuses unknown, misspelled or duplicated options instead of replaying secrets', function (array $options, string $message): void {
+    // Review of #21: an unrecognised option was ignored, so a typo left the route replayable.
+    $middleware = makeIdempotencyMiddleware($this->store, new FakeCredentialBucketResolver('tenant:1'));
+    $runs = 0;
+
+    expect(fn () => $middleware->handle(idempotencyRequest(), static function () use (&$runs) {
+        $runs++;
+
+        return response('SECRET', 201);
+    }, ...$options))->toThrow(InvalidArgumentException::class, $message);
+
+    expect($runs)->toBe(0);
+})->with([
+    'capitalised key' => [['Replayable=false'], 'Unknown idempotency middleware option'],
+    'space before =' => [['replayable =false'], 'Unknown idempotency middleware option'],
+    'misspelled key' => [['replayble=false'], 'Unknown idempotency middleware option'],
+    'empty option' => [['required', ''], 'Unknown idempotency middleware option'],
+    'value on a flag' => [['required=true'], 'Unknown idempotency middleware option'],
+    'flag without value' => [['replayable'], 'Unknown idempotency middleware option'],
+    'replayable twice' => [['replayable=false', 'replayable=true'], 'given twice'],
+    'required and optional' => [['required', 'optional'], 'given twice'],
+    'max_handler_seconds twice' => [['max_handler_seconds=5', 'max_handler_seconds=6'], 'given twice'],
+    'max_handler_seconds not a number' => [['max_handler_seconds=abc'], 'max_handler_seconds must be an integer'],
+]);
+
+it('trims each option, as Laravel keeps the space after a comma', function (): void {
+    $middleware = makeIdempotencyMiddleware($this->store, new FakeCredentialBucketResolver('tenant:1'));
+
+    $middleware->handle(idempotencyRequest(), static fn () => response('SECRET-FIRST', 201), 'required', ' replayable=false');
+    $second = $middleware->handle(idempotencyRequest(), static fn () => response('SECRET-SECOND', 201), 'required', ' replayable=false');
+
+    expect($second->getContent())->toBe('SECRET-SECOND')
+        ->and($second->headers->has('Idempotent-Replayed'))->toBeFalse();
 });

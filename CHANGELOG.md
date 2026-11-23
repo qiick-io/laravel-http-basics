@@ -27,9 +27,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in-progress marker the cache did not store refuses the claim instead of letting the
   handler run unprotected, and `abandon()` is best effort like the database store.
 
-- Idempotency: the `replayable=` middleware option accepts only `true` or `false` (any
-  letter case) and throws for anything else; `replayable=0`, `off` or a stray space used
-  to mean "replayable" and replayed the first response of a secret-issuing route.
+- Idempotency: middleware options follow a strict grammar. Each option is trimmed (Laravel
+  keeps the space in `:required, replayable=false`), keys are exact and case-sensitive,
+  `replayable=` takes only `true` or `false` (any letter case), and an unknown, misspelled
+  or repeated option throws. Before, `replayable=0`, `Replayable=false` or `replayble=false`
+  left the route replayable and replayed the first response of a secret-issuing route.
 
 - Idempotency: when the response and then its seal both fail to persist, the key is
   sealed through a separate `:sealed` cache entry, so a retry after

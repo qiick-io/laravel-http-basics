@@ -150,25 +150,42 @@ final class HandleIdempotencyMiddleware
         $isReplayable = true;
         $maxHandlerSeconds = $this->defaultMaxHandlerSeconds;
 
-        foreach ($options as $option) {
-            if ($option === 'optional') {
-                $isKeyRequired = false;
-            } elseif ($option === 'required') {
-                $isKeyRequired = true;
-            } elseif (str_starts_with($option, 'replayable=')) {
-                // Strict: a typo such as replayable=0 must not silently replay a secret-issuing route.
-                $isReplayable = match (strtolower(substr($option, strlen('replayable=')))) {
+        // Strict grammar: an ignored typo (Replayable=false, replayble=false) would leave a
+        // secret-issuing route replayable, so anything unrecognised or repeated throws.
+        $seenSettings = [];
+
+        foreach ($options as $rawOption) {
+            // Laravel keeps the space after a comma in `:required, replayable=false`.
+            [$name, $value] = array_pad(explode('=', trim($rawOption), 2), 2, null);
+            // required and optional set the same thing.
+            $setting = $name === 'optional' ? 'required' : $name;
+
+            if (in_array($setting, $seenSettings, true)) {
+                throw new \InvalidArgumentException("Idempotency middleware option {$setting} is given twice.");
+            }
+
+            $seenSettings[] = $setting;
+
+            if ($setting === 'required' && $value === null) {
+                $isKeyRequired = $name === 'required';
+            } elseif ($name === 'replayable' && $value !== null) {
+                $isReplayable = match (strtolower($value)) {
                     'true' => true,
                     'false' => false,
                     default => throw new \InvalidArgumentException('Idempotency middleware option replayable must be true or false.'),
                 };
-            } elseif (str_starts_with($option, 'lock_ttl_seconds=')) {
+            } elseif ($name === 'lock_ttl_seconds') {
                 throw new \InvalidArgumentException(
                     'lock_ttl_seconds middleware option is not supported; configure http-basics.idempotency.lock_ttl_seconds (store lock TTL also drives Conflict Retry-After).',
                 );
-            } elseif (str_starts_with($option, 'max_handler_seconds=')) {
-                // Floor at 1; substr/cast mutants are equivalent for the option grammar under test.
-                $maxHandlerSeconds = max(1, (int) substr($option, strlen('max_handler_seconds=')));
+            } elseif ($name === 'max_handler_seconds' && $value !== null) {
+                if (preg_match('/\A-?\d+\z/', $value) !== 1) {
+                    throw new \InvalidArgumentException('Idempotency middleware option max_handler_seconds must be an integer.');
+                }
+
+                $maxHandlerSeconds = max(1, (int) $value);
+            } else {
+                throw new \InvalidArgumentException("Unknown idempotency middleware option [{$rawOption}].");
             }
         }
 
