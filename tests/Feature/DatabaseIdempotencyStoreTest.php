@@ -195,6 +195,7 @@ it('replays completed rows with defensive header and status parsing', function (
             'X-List' => ['a', 2],
             9 => 'skip',
             'X-Object' => ['nested' => true],
+            'X-Mixed' => ['a', ['b'], 'c'],
         ], JSON_THROW_ON_ERROR),
         'body' => null,
         'created_at' => $now,
@@ -206,16 +207,16 @@ it('replays completed rows with defensive header and status parsing', function (
     expect($replay->outcome)->toBe(ClaimOutcome::Replay)
         ->and($replay->replay?->status)->toBe(202)
         ->and($replay->replay?->body)->toBe('')
-        ->and($replay->replay?->headers['X-Text'])->toBe('ok')
-        ->and($replay->replay?->headers['X-List'])->toBe('a, 2');
+        // The integer key is skipped without dropping the string keys after it.
+        ->and($replay->replay?->headers)->toBe([
+            'X-Text' => 'ok',
+            'X-List' => 'a, 2',
+            'X-Object' => '1',
+            'X-Mixed' => 'a, , c',
+        ]);
 });
 
-it('defaults replay status and headers when the completed row is sparse', function (): void {
-    // MySQL/pgsql reject non-numeric smallints; SQLite stores the defensive fixtures as text.
-    if (DB::connection()->getDriverName() !== 'sqlite') {
-        $this->markTestSkipped('Sparse status_code/headers fixtures require SQLite column affinity.');
-    }
-
+it('defaults replay headers and body when the completed row is sparse', function (): void {
     $store = databaseIdempotencyStore();
     $scope = new IdempotencyScope('bucket-a', 'POST', '/items');
     $now = new DateTimeImmutable('2026-01-01T00:00:00Z');
@@ -229,7 +230,7 @@ it('defaults replay status and headers when the completed row is sparse', functi
         'fingerprint' => 'fp',
         'lease' => str_repeat('b', 64),
         'status' => 'completed',
-        'status_code' => 'not-numeric',
+        'status_code' => 204,
         'headers_json' => '{not-json',
         'body' => null,
         'created_at' => $now,
@@ -239,9 +240,40 @@ it('defaults replay status and headers when the completed row is sparse', functi
 
     $replay = $store->claim($scope, $key, 'fp', $now);
     expect($replay->outcome)->toBe(ClaimOutcome::Replay)
-        ->and($replay->replay?->status)->toBe(200)
+        ->and($replay->replay?->status)->toBe(204)
         ->and($replay->replay?->headers)->toBe([])
         ->and($replay->replay?->body)->toBe('');
+});
+
+it('never replays a completed row whose status code is unreadable', function (): void {
+    // MySQL/pgsql reject non-numeric smallints; SQLite stores the corrupt fixture as text.
+    if (DB::connection()->getDriverName() !== 'sqlite') {
+        $this->markTestSkipped('A non-numeric status_code fixture requires SQLite column affinity.');
+    }
+
+    $store = databaseIdempotencyStore();
+    $scope = new IdempotencyScope('bucket-a', 'POST', '/items');
+    $now = new DateTimeImmutable('2026-01-01T00:00:00Z');
+    $key = '550e8400-e29b-41d4-a716-446655440021';
+
+    DB::table('idempotency_records')->insert([
+        'bucket' => $scope->bucket,
+        'key_hash' => hash('sha256', $key),
+        'method' => 'POST',
+        'path' => '/items',
+        'fingerprint' => 'fp',
+        'lease' => str_repeat('b', 64),
+        'status' => 'completed',
+        'status_code' => 'not-numeric',
+        'headers_json' => '{}',
+        'body' => 'stored',
+        'created_at' => $now,
+        'updated_at' => $now,
+        'expires_at' => $now,
+    ]);
+
+    // The handler already ran; replaying a guessed 200 or re-running it would both lie.
+    expect($store->claim($scope, $key, 'fp', $now)->outcome)->toBe(ClaimOutcome::NotReplayable);
 });
 
 it('rejects completion unless the claim is new with a matching in-progress lease', function (): void {
@@ -619,4 +651,237 @@ it('judges expiry in UTC when the application timezone is not UTC', function ():
     } finally {
         date_default_timezone_set($originalTimezone);
     }
+});
+
+/**
+ * Inserts a completed row for $key that replays 201 "created" until $expiresAt.
+ */
+function insertCompletedIdempotencyRow(IdempotencyScope $scope, string $key, string $expiresAt): void
+{
+    DB::table('idempotency_records')->insert([
+        'bucket' => $scope->bucket,
+        'key_hash' => hash('sha256', $key),
+        'method' => 'POST',
+        'path' => '/items',
+        'fingerprint' => 'fp-old',
+        'lease' => str_repeat('f', 64),
+        'status' => 'completed',
+        'status_code' => 201,
+        'headers_json' => '{"X-Old":"1"}',
+        'body' => 'old body',
+        'created_at' => '2025-12-01 00:00:00',
+        'updated_at' => '2025-12-01 00:00:00',
+        'expires_at' => $expiresAt,
+    ]);
+}
+
+it('stamps a new claim with UTC timestamps and the configured TTL', function (): void {
+    $store = databaseIdempotencyStore(ttlSeconds: 120);
+    $scope = new IdempotencyScope('bucket-a', 'POST', '/items');
+    // 01:00 in UTC+1 is midnight UTC: the row must be stamped in UTC.
+    $now = new DateTimeImmutable('2026-01-01T01:00:00+01:00');
+    $key = '550e8400-e29b-41d4-a716-446655440022';
+
+    $claim = $store->claim($scope, $key, 'fp', $now);
+    $row = DB::table('idempotency_records')->first();
+
+    expect($row->lease)->toBe($claim->lease)
+        ->and($row->fingerprint)->toBe('fp')
+        ->and($row->status)->toBe('in_progress')
+        ->and($row->created_at)->toBe('2026-01-01 00:00:00')
+        ->and($row->updated_at)->toBe('2026-01-01 00:00:00')
+        ->and($row->expires_at)->toBe('2026-01-01 00:02:00');
+});
+
+it('takes over an expired completed row with a fresh lease, TTL and no old payload', function (): void {
+    $store = databaseIdempotencyStore(ttlSeconds: 120);
+    $scope = new IdempotencyScope('bucket-a', 'POST', '/items');
+    $now = new DateTimeImmutable('2026-01-01T00:00:00Z');
+    $key = '550e8400-e29b-41d4-a716-446655440023';
+    insertCompletedIdempotencyRow($scope, $key, '2025-12-31 23:59:59');
+
+    $claim = $store->claim($scope, $key, 'fp-new', $now);
+    $row = DB::table('idempotency_records')->first();
+
+    expect($claim->outcome)->toBe(ClaimOutcome::New)
+        ->and($row->lease)->toBe($claim->lease)
+        ->and($row->fingerprint)->toBe('fp-new')
+        ->and($row->status)->toBe('in_progress')
+        ->and($row->status_code)->toBeNull()
+        ->and($row->headers_json)->toBeNull()
+        ->and($row->body)->toBeNull()
+        ->and($row->created_at)->toBe('2025-12-01 00:00:00')
+        ->and($row->updated_at)->toBe('2026-01-01 00:00:00')
+        ->and($row->expires_at)->toBe('2026-01-01 00:02:00');
+});
+
+it('restarts the TTL from the moment the response is stored', function (): void {
+    $store = databaseIdempotencyStore(ttlSeconds: 120);
+    $scope = new IdempotencyScope('bucket-a', 'POST', '/items');
+    $now = new DateTimeImmutable('2026-01-01T00:00:00Z');
+    $key = '550e8400-e29b-41d4-a716-446655440024';
+
+    $claim = $store->claim($scope, $key, 'fp', $now);
+    $store->complete($claim, new ReplayableResponse(201, [], 'created'), $now->modify('+30 seconds'));
+    $row = DB::table('idempotency_records')->first();
+
+    expect($row->updated_at)->toBe('2026-01-01 00:00:30')
+        ->and($row->expires_at)->toBe('2026-01-01 00:02:30');
+});
+
+it('seals an in-progress claim as completed without a payload and frees its lock', function (): void {
+    $cache = new Repository(new ArrayStore);
+    $store = databaseIdempotencyStore(ttlSeconds: 120, cache: $cache);
+    $scope = new IdempotencyScope('bucket-a', 'POST', '/items');
+    $now = new DateTimeImmutable('2026-01-01T00:00:00Z');
+    $key = '550e8400-e29b-41d4-a716-446655440025';
+
+    $claim = $store->claim($scope, $key, 'fp', $now);
+    // Payload columns are cleared by the seal itself, not only by the insert defaults.
+    DB::table('idempotency_records')->update(['status_code' => 200, 'headers_json' => '{}', 'body' => 'partial']);
+
+    $store->sealUnreplayable($claim, $now->modify('+30 seconds'));
+    $row = DB::table('idempotency_records')->first();
+
+    expect($row->status)->toBe('completed')
+        ->and($row->status_code)->toBeNull()
+        ->and($row->headers_json)->toBeNull()
+        ->and($row->body)->toBeNull()
+        ->and($row->updated_at)->toBe('2026-01-01 00:00:30')
+        ->and($row->expires_at)->toBe('2026-01-01 00:02:30')
+        ->and($store->claim($scope, $key, 'fp', $now)->outcome)->toBe(ClaimOutcome::NotReplayable)
+        ->and($cache->getStore()->lock($scope->cacheKey($key).':lock', 1, 'probe')->get())->toBeTrue();
+});
+
+it('refuses to seal claims it does not own', function (): void {
+    $store = databaseIdempotencyStore();
+    $scope = new IdempotencyScope('bucket-a', 'POST', '/items');
+    $now = new DateTimeImmutable('2026-01-01T00:00:00Z');
+    $key = '550e8400-e29b-41d4-a716-446655440026';
+    $claim = $store->claim($scope, $key, 'fp', $now);
+
+    expect(fn () => $store->sealUnreplayable(
+        new IdempotencyClaim(ClaimOutcome::Replay, null, $claim->lease, $scope, $key),
+        $now,
+    ))->toThrow(IdempotencyStoreException::class, 'Cannot seal a claim that is not new.')
+        ->and(fn () => $store->sealUnreplayable(
+            new IdempotencyClaim(ClaimOutcome::New, null, null, $scope, $key),
+            $now,
+        ))->toThrow(IdempotencyStoreException::class, 'Missing lease on idempotency claim.')
+        ->and(fn () => $store->sealUnreplayable(
+            new IdempotencyClaim(ClaimOutcome::New, null, '', $scope, $key),
+            $now,
+        ))->toThrow(IdempotencyStoreException::class, 'Missing lease on idempotency claim.')
+        ->and(fn () => $store->sealUnreplayable(
+            new IdempotencyClaim(ClaimOutcome::New, null, str_repeat('0', 64), $scope, $key),
+            $now,
+        ))->toThrow(IdempotencyStoreException::class, 'Idempotency lease mismatch on seal.')
+        ->and(DB::table('idempotency_records')->value('status'))->toBe('in_progress');
+});
+
+it('abandons without touching the database when the claim holds no lease', function (?string $lease): void {
+    $connection = Mockery::mock(ConnectionInterface::class);
+    $connection->shouldNotReceive('table');
+    $store = new DatabaseIdempotencyStore($connection, new Repository(new ArrayStore), 'idempotency_records', 60, 30, 5);
+    $scope = new IdempotencyScope('bucket-a', 'POST', '/items');
+
+    $store->abandon(
+        new IdempotencyClaim(ClaimOutcome::New, null, $lease, $scope, '550e8400-e29b-41d4-a716-446655440027'),
+        new DateTimeImmutable('2026-01-01T00:00:00Z'),
+    );
+})->with([
+    'null lease' => [null],
+    'empty lease' => [''],
+]);
+
+it('releases the lock when the read under the lock fails', function (): void {
+    $cache = new Repository(new ArrayStore);
+    $connection = Mockery::mock(ConnectionInterface::class);
+    $builder = Mockery::mock();
+    $builder->shouldReceive('where')->andReturnSelf();
+    $builder->shouldReceive('first')->andReturn(null)->once()->ordered();
+    $builder->shouldReceive('first')->andThrow(new QueryException('sqlite', 'select', [], new Exception('gone')))->once()->ordered();
+    $connection->shouldReceive('table')->andReturn($builder);
+    $store = new DatabaseIdempotencyStore($connection, $cache, 'idempotency_records', 60, 30, 5);
+    $scope = new IdempotencyScope('bucket-a', 'POST', '/items');
+    $key = '550e8400-e29b-41d4-a716-446655440028';
+
+    expect(fn () => $store->claim($scope, $key, 'fp', new DateTimeImmutable('2026-01-01T00:00:00Z')))
+        ->toThrow(IdempotencyStoreException::class, 'Failed to read idempotency marker.')
+        ->and($cache->getStore()->lock($scope->cacheKey($key).':lock', 1, 'probe')->get())->toBeTrue();
+});
+
+it('falls back to created_at when an in-progress row has no updated_at', function (): void {
+    $store = databaseIdempotencyStore(staleAfterSeconds: 5);
+    $scope = new IdempotencyScope('bucket-a', 'POST', '/items');
+    $now = new DateTimeImmutable('2026-01-01T00:00:00Z');
+    $key = '550e8400-e29b-41d4-a716-446655440029';
+
+    DB::table('idempotency_records')->insert([
+        'bucket' => $scope->bucket,
+        'key_hash' => hash('sha256', $key),
+        'method' => 'POST',
+        'path' => '/items',
+        'fingerprint' => 'fp',
+        'lease' => str_repeat('c', 64),
+        'status' => 'in_progress',
+        'created_at' => '2025-12-31 23:59:58',
+        'updated_at' => null,
+        'expires_at' => '2026-01-02 00:00:00',
+    ]);
+
+    // Started two seconds ago by created_at: still in flight, so no takeover.
+    expect($store->claim($scope, $key, 'fp', $now)->outcome)->toBe(ClaimOutcome::Conflict);
+});
+
+it('casts a numeric status code returned as a string by the driver', function (): void {
+    $row = (object) [
+        'status' => 'completed',
+        'fingerprint' => 'fp',
+        'status_code' => '202',
+        'headers_json' => '{}',
+        'body' => 'accepted',
+        'expires_at' => '2026-01-02 00:00:00',
+    ];
+    $connection = Mockery::mock(ConnectionInterface::class);
+    $builder = Mockery::mock();
+    $builder->shouldReceive('where')->andReturnSelf();
+    $builder->shouldReceive('first')->andReturn($row);
+    $connection->shouldReceive('table')->andReturn($builder);
+    $store = new DatabaseIdempotencyStore($connection, new Repository(new ArrayStore), 'idempotency_records', 60, 30, 5);
+    $scope = new IdempotencyScope('bucket-a', 'POST', '/items');
+
+    $replay = $store->claim($scope, '550e8400-e29b-41d4-a716-446655440030', 'fp', new DateTimeImmutable('2026-01-01T00:00:00Z'));
+
+    expect($replay->outcome)->toBe(ClaimOutcome::Replay)
+        ->and($replay->replay?->status)->toBe(202);
+});
+
+it('keeps replaying a completed row whose expiry cannot be read', function (): void {
+    // MySQL/pgsql reject invalid datetimes; SQLite stores the corrupt fixture as text.
+    if (DB::connection()->getDriverName() !== 'sqlite') {
+        $this->markTestSkipped('An invalid expires_at fixture requires SQLite.');
+    }
+
+    $store = databaseIdempotencyStore();
+    $scope = new IdempotencyScope('bucket-a', 'POST', '/items');
+    $key = '550e8400-e29b-41d4-a716-446655440031';
+    insertCompletedIdempotencyRow($scope, $key, 'not-a-date');
+
+    // Unreadable expiry fails closed: the handler already ran, so never run it again.
+    expect($store->claim($scope, $key, 'fp-old', new DateTimeImmutable('2026-01-01T00:00:00Z'))->outcome)
+        ->toBe(ClaimOutcome::Replay);
+});
+
+it('takes over a just-expired completed row even inside the stale window', function (): void {
+    // Staleness only guards in-progress rows; a finished row is free once it expires.
+    $store = databaseIdempotencyStore(ttlSeconds: 2, staleAfterSeconds: 60);
+    $scope = new IdempotencyScope('bucket-a', 'POST', '/items');
+    $now = new DateTimeImmutable('2026-01-01T00:00:00Z');
+    $key = '550e8400-e29b-41d4-a716-446655440032';
+
+    $claim = $store->claim($scope, $key, 'fp', $now);
+    $store->complete($claim, new ReplayableResponse(201, [], 'created'), $now);
+
+    expect($store->claim($scope, $key, 'fp', $now->modify('+3 seconds'))->outcome)->toBe(ClaimOutcome::New);
 });

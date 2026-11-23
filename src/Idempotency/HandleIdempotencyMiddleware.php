@@ -15,9 +15,7 @@ use Qiick\HttpBasics\Locale\LocaleSource;
 use Qiick\HttpBasics\Locale\MachineDoorClassifier;
 use Qiick\HttpBasics\RequestId\RequestId;
 use Qiick\HttpBasics\RequestId\RequestIdResolver;
-use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Symfony\Component\HttpFoundation\Response;
-use Symfony\Component\HttpFoundation\StreamedResponse;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 
 /**
@@ -57,20 +55,9 @@ final class HandleIdempotencyMiddleware
         private ?string $replayHeaderName = self::DEFAULT_REPLAY_HEADER,
     ) {}
 
-    /**
-     * @param  string  ...$options
-     */
-    public function handle(Request $request, Closure $next, ...$options): Response
+    public function handle(Request $request, Closure $next, string ...$options): Response
     {
-        /** @var list<string> $optionList */
-        // Non-string options become '' either with or without map/values wrapping.
-        $optionList = array_values(array_map(
-            // Non-strings collapse to empty the same as an empty string option.
-            static fn (mixed $option): string => is_string($option) ? $option : '',
-            $options,
-        ));
-
-        $parsed = $this->parseOptions($optionList);
+        $parsed = $this->parseOptions($options);
 
         if (! $this->isIdempotentMethod($request)) {
             return $this->ensureResponse($next($request));
@@ -111,12 +98,7 @@ final class HandleIdempotencyMiddleware
         $bucket = $this->resolveBucket($request);
 
         if ($bucket === null) {
-            return $this->reject(
-                $request,
-                IdempotencyErrorCode::Unavailable,
-                503,
-                ['Retry-After' => (string) $this->retryAfterSeconds],
-            );
+            return $this->unavailable($request);
         }
 
         $acceptLanguageSuffix = $this->acceptLanguageSuffix($request);
@@ -134,19 +116,13 @@ final class HandleIdempotencyMiddleware
             return $this->reject($request, IdempotencyErrorCode::InvalidJson, 422);
         }
 
-        // Methods config is uppercased; double-upper is a no-op for fixtures.
-        $scope = new IdempotencyScope($bucket, strtoupper($request->getMethod()), $request->getPathInfo());
+        $scope = new IdempotencyScope($bucket, $request->getMethod(), $request->getPathInfo());
         $now = new \DateTimeImmutable;
 
         try {
             $claim = $this->store->claim($scope, $key, $fingerprint, $now);
         } catch (IdempotencyStoreException) {
-            return $this->reject(
-                $request,
-                IdempotencyErrorCode::Unavailable,
-                503,
-                ['Retry-After' => (string) $this->retryAfterSeconds],
-            );
+            return $this->unavailable($request);
         }
 
         return match ($claim->outcome) {
@@ -165,7 +141,7 @@ final class HandleIdempotencyMiddleware
     }
 
     /**
-     * @param  list<string>  $options
+     * @param  array<array-key, string>  $options
      * @return array{isKeyRequired: bool, isReplayable: bool, maxHandlerSeconds: int}
      */
     private function parseOptions(array $options): array
@@ -208,26 +184,26 @@ final class HandleIdempotencyMiddleware
 
     private function isIdempotentMethod(Request $request): bool
     {
-        // Config methods are uppercased at boot; unwrap is a no-op for fixtures.
-        return in_array(strtoupper($request->getMethod()), $this->methods, true);
+        // Symfony uppercases getMethod(); the configured methods are uppercased at boot.
+        return in_array($request->getMethod(), $this->methods, true);
     }
 
     private function headerValue(Request $request): ?string
     {
-        $value = $request->headers->get(self::HEADER);
+        // Whitespace-only keys count as missing.
+        $value = trim($request->headers->get(self::HEADER) ?? '');
 
-        // Whitespace-only keys are rejected the same as empty.
-        if (! is_string($value) || trim($value) === '') {
-            return null;
-        }
-
-        return trim($value);
+        return $value === '' ? null : $value;
     }
 
     private function isJsonRequest(Request $request): bool
     {
-        // Missing Content-Type is already ''.
-        $contentType = (string) $request->headers->get('Content-Type', '');
+        $contentType = $request->headers->get('Content-Type');
+
+        if ($contentType === null) {
+            return false;
+        }
+
         $base = strtolower(trim(explode(';', $contentType)[0]));
 
         // RFC 6839 §3.1: application/json and any application/*+json (e.g. merge-patch+json on PATCH).
@@ -262,12 +238,9 @@ final class HandleIdempotencyMiddleware
 
         $resolution = $this->locale->current($request);
 
-        if ($resolution->source !== LocaleSource::Header) {
-            return '';
-        }
-
-        // Missing Accept-Language is already ''.
-        return (string) $request->headers->get('Accept-Language', '');
+        // The negotiated locale, not the raw header: "en-US,en;q=0.9" and "en" get the
+        // same response, so a retry with either must replay rather than mismatch.
+        return $resolution->source === LocaleSource::Header ? $resolution->locale : '';
     }
 
     private function executeOnce(
@@ -280,45 +253,27 @@ final class HandleIdempotencyMiddleware
 
         try {
             $response = $this->ensureResponse($next($request));
+        } catch (\Throwable $throwable) {
+            // The handler failed before answering: free the key so a retry can run it.
+            $this->store->abandon($claim, new \DateTimeImmutable);
 
-            $elapsedSeconds = (hrtime(true) - $startedAt) / 1_000_000_000;
+            throw $throwable;
+        }
 
-            // Boundary equality is not asserted; floor is covered by the slow-handler test.
+        $elapsedSeconds = (hrtime(true) - $startedAt) / 1_000_000_000;
+
+        try {
+            // Past the budget the lease may have expired mid-flight, so another request
+            // could have run too: seal so retries get 409 instead of running a third time.
             if ($elapsedSeconds > $maxHandlerSeconds) {
                 $this->store->sealUnreplayable($claim, new \DateTimeImmutable);
 
-                return $this->reject(
-                    $request,
-                    IdempotencyErrorCode::Unavailable,
-                    503,
-                    ['Retry-After' => (string) $this->retryAfterSeconds],
-                );
-            }
-
-            if ($this->mustAbandonResponse($response)) {
-                $this->store->abandon($claim, new \DateTimeImmutable);
-
-                return $response;
+                return $this->unavailable($request);
             }
 
             $body = $response->getContent();
 
-            // getContent() false is abandoned the same as non-UTF8.
-            if ($body === false || ! $this->isUtf8Text($body)) {
-                $this->store->abandon($claim, new \DateTimeImmutable);
-
-                return $response;
-            }
-
-            $status = $response->getStatusCode();
-
-            if ($status === 429 || $status >= 500) {
-                $this->store->abandon($claim, new \DateTimeImmutable);
-
-                return $response;
-            }
-
-            if ($status < 200 || ($status >= 300 && $status < 400)) {
+            if ($body === false || ! $this->isStorable($response, $body)) {
                 $this->store->abandon($claim, new \DateTimeImmutable);
 
                 return $response;
@@ -326,7 +281,6 @@ final class HandleIdempotencyMiddleware
 
             // Oversize: seal completed-without-body so retries get 409 and never
             // re-run the handler; the first client still receives its response (Q3).
-            // Exact equality with the cap is allowed through complete().
             if (strlen($body) > $this->maxResponseBytes) {
                 $this->store->sealUnreplayable($claim, new \DateTimeImmutable);
 
@@ -334,65 +288,37 @@ final class HandleIdempotencyMiddleware
             }
 
             $headers = $this->headerSanitizer->extract($response);
-            $replay = new ReplayableResponse($status, $headers, $body);
+            $replay = new ReplayableResponse($response->getStatusCode(), $headers, $body);
 
-            try {
-                $this->store->complete($claim, $replay, new \DateTimeImmutable);
-            } catch (IdempotencyStoreException) {
-                // complete() seals unreplayable on persistence failure before throwing.
-                return $this->reject(
-                    $request,
-                    IdempotencyErrorCode::Unavailable,
-                    503,
-                    ['Retry-After' => (string) $this->retryAfterSeconds],
-                );
-            }
+            // complete() seals unreplayable on persistence failure before throwing.
+            $this->store->complete($claim, $replay, new \DateTimeImmutable);
 
             return $response;
         } catch (IdempotencyStoreException) {
-            return $this->reject(
-                $request,
-                IdempotencyErrorCode::Unavailable,
-                503,
-                ['Retry-After' => (string) $this->retryAfterSeconds],
-            );
-        } catch (\Throwable $throwable) {
-            // Only abandon when the handler itself failed — never after a sealed complete.
-            $this->store->abandon($claim, new \DateTimeImmutable);
-
-            throw $throwable;
+            return $this->unavailable($request);
         }
     }
 
-    private function mustAbandonResponse(Response $response): bool
+    /**
+     * Whether a response may be stored and replayed. Streams and files never get
+     * here: their getContent() is false.
+     */
+    private function isStorable(Response $response, string $body): bool
     {
-        // Either streaming type must abandon; AND would require both.
-        if ($response instanceof StreamedResponse || $response instanceof BinaryFileResponse) {
-            return true;
+        if ($this->headerSanitizer->responseHasDeniedHeaders($response) || ! mb_check_encoding($body, 'UTF-8')) {
+            return false;
         }
 
-        return $this->headerSanitizer->responseHasDeniedHeaders($response);
-    }
+        $status = $response->getStatusCode();
 
-    private function isUtf8Text(string $body): bool
-    {
-        // Empty body is valid UTF-8 either way.
-        if ($body === '') {
-            return true;
-        }
-
-        return mb_check_encoding($body, 'UTF-8');
+        // Final answers only: 2xx and 4xx. 429 and 5xx are transient, 1xx and 3xx not final.
+        return ($status >= 200 && $status < 300) || ($status >= 400 && $status < 500 && $status !== 429);
     }
 
     private function replayResponse(Request $request, ?ReplayableResponse $replay): Response
     {
         if ($replay === null) {
-            return $this->reject(
-                $request,
-                IdempotencyErrorCode::Unavailable,
-                503,
-                ['Retry-After' => (string) $this->retryAfterSeconds],
-            );
+            return $this->unavailable($request);
         }
 
         $headers = $replay->headers;
@@ -418,6 +344,16 @@ final class HandleIdempotencyMiddleware
         $rejection = new IdempotencyRejection($code, $status, $headers);
 
         return $this->errorRenderer->render($rejection, $request);
+    }
+
+    private function unavailable(Request $request): Response
+    {
+        return $this->reject(
+            $request,
+            IdempotencyErrorCode::Unavailable,
+            503,
+            ['Retry-After' => (string) $this->retryAfterSeconds],
+        );
     }
 
     private function ensureResponse(mixed $response): Response
