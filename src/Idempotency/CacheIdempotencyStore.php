@@ -19,6 +19,8 @@ final class CacheIdempotencyStore implements IdempotencyStore
 
     private LockProvider $locks;
 
+    private SealedKeyMarker $sealedKeys;
+
     public function __construct(
         private Repository $cache,
         private int $ttlSeconds,
@@ -32,6 +34,7 @@ final class CacheIdempotencyStore implements IdempotencyStore
         }
 
         $this->locks = $store;
+        $this->sealedKeys = new SealedKeyMarker($cache, $ttlSeconds);
     }
 
     public function claim(
@@ -40,6 +43,10 @@ final class CacheIdempotencyStore implements IdempotencyStore
         string $fingerprint,
         DateTimeImmutable $now,
     ): IdempotencyClaim {
+        if ($this->sealedKeys->isMarked($scope, $key)) {
+            return new IdempotencyClaim(ClaimOutcome::NotReplayable, null, null, $scope, $key);
+        }
+
         $recordKey = $scope->cacheKey($key);
         $existing = $this->liveRecord($recordKey, $now);
 
@@ -118,20 +125,11 @@ final class CacheIdempotencyStore implements IdempotencyStore
         try {
             $written = $this->cache->put($recordKey, $payload, $this->ttlSeconds);
         } catch (\Throwable $exception) {
-            // Same fail-closed contract as DatabaseIdempotencyStore: after the handler ran,
-            // persistence failure must seal so a retry cannot claim New and re-execute.
-            $this->sealUnreplayable($claim, $now);
-
-            throw new IdempotencyStoreException(
-                'Failed to persist idempotent response; sealed unreplayable.',
-                previous: $exception,
-            );
+            $this->failComplete($claim, $now, $exception);
         }
 
         if ($written === false) {
-            $this->sealUnreplayable($claim, $now);
-
-            throw new IdempotencyStoreException('Failed to persist idempotent response; sealed unreplayable.');
+            $this->failComplete($claim, $now, null);
         }
 
         $this->lockFor($recordKey, $claim->lease)->release();
@@ -155,9 +153,35 @@ final class CacheIdempotencyStore implements IdempotencyStore
         }
 
         // A sealed record has no status code: claim() answers NotReplayable for it.
-        $this->cache->put($recordKey, $this->completedRecord($existing, $claim, $now, null, null, null), $this->ttlSeconds);
+        try {
+            $isSealed = $this->cache->put($recordKey, $this->completedRecord($existing, $claim, $now, null, null, null), $this->ttlSeconds);
+        } catch (\Throwable) {
+            $isSealed = false;
+        }
+
+        if (! $isSealed && ! $this->sealedKeys->mark($claim->scope, $claim->key)) {
+            // Nothing durable says the handler ran; the lock is kept until lock_ttl.
+            throw new IdempotencyStoreException('Failed to seal unreplayable marker.');
+        }
 
         $this->lockFor($recordKey, $claim->lease)->release();
+    }
+
+    /**
+     * After the handler ran and its response could not be stored, seal the key so a
+     * retry cannot run the handler again, and say whether even that failed.
+     *
+     * @throws IdempotencyStoreException always
+     */
+    private function failComplete(IdempotencyClaim $claim, DateTimeImmutable $now, ?\Throwable $cause): never
+    {
+        try {
+            $this->sealUnreplayable($claim, $now);
+        } catch (IdempotencyStoreException $sealFailure) {
+            throw new IdempotencyStoreException('Failed to persist idempotent response and to seal it unreplayable.', previous: $sealFailure);
+        }
+
+        throw new IdempotencyStoreException('Failed to persist idempotent response; sealed unreplayable.', previous: $cause);
     }
 
     public function abandon(IdempotencyClaim $claim, DateTimeImmutable $now): void

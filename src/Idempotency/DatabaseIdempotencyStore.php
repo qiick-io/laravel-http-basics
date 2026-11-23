@@ -23,6 +23,8 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
 
     private LockProvider $locks;
 
+    private SealedKeyMarker $sealedKeys;
+
     public function __construct(
         private ConnectionInterface $connection,
         private CacheRepository $cache,
@@ -38,6 +40,7 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
         }
 
         $this->locks = $store;
+        $this->sealedKeys = new SealedKeyMarker($cache, $ttlSeconds);
     }
 
     public function claim(
@@ -46,6 +49,10 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
         string $fingerprint,
         DateTimeImmutable $now,
     ): IdempotencyClaim {
+        if ($this->sealedKeys->isMarked($scope, $key)) {
+            return new IdempotencyClaim(ClaimOutcome::NotReplayable, null, null, $scope, $key);
+        }
+
         $keyHash = hash('sha256', $key);
 
         // A live completed row answers before contending for the lock.
@@ -139,7 +146,11 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
                 'body' => $response->body,
             ]);
         } catch (QueryException $exception) {
-            $this->sealUnreplayable($claim, $now);
+            try {
+                $this->sealUnreplayable($claim, $now);
+            } catch (IdempotencyStoreException $sealFailure) {
+                throw new IdempotencyStoreException('Failed to persist idempotent response and to seal it unreplayable.', previous: $sealFailure);
+            }
 
             throw new IdempotencyStoreException(
                 'Failed to persist idempotent response; sealed unreplayable.',
@@ -169,7 +180,14 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
                 'body' => null,
             ]);
         } catch (QueryException $exception) {
-            throw new IdempotencyStoreException('Failed to seal unreplayable marker.', previous: $exception);
+            // The row stays in progress; the cache marker keeps a stale takeover from re-running.
+            if (! $this->sealedKeys->mark($claim->scope, $claim->key)) {
+                throw new IdempotencyStoreException('Failed to seal unreplayable marker.', previous: $exception);
+            }
+
+            $this->locks->restoreLock($this->lockKey($claim->scope, $claim->key), $lease)->release();
+
+            return;
         }
 
         // Exactly one row must match the lease; 0 and >1 both fail closed.

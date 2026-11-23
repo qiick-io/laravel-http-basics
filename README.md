@@ -197,6 +197,12 @@ Refusals use fleet JSON (`message` + `error`): `idempotency_key_required`,
 `idempotency_unavailable` (503). Replays force the **current** `X-Request-Id` and strip
 stale `X-RateLimit-*` headers.
 
+When the response cannot be stored, the store seals the key so a retry gets
+`idempotency_not_replayable` instead of running the handler again. If the record
+itself cannot be written either (a database outage, a cache item too large), a
+separate `:sealed` cache entry carries the seal; only when that write fails too does
+the request end with a 503 whose key can run again once it goes stale.
+
 **Handlers must be atomic.** A 5xx, a 429 or an exception frees the key, so a retry
 runs the handler again. That is only safe when a failing handler leaves nothing
 behind: wrap its writes in one database transaction, make no external call (payment,

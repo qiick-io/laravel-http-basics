@@ -22,6 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Idempotency: when the response and then its seal both fail to persist, the key is
+  sealed through a separate `:sealed` cache entry, so a retry after
+  `stale_after_seconds` answers `idempotency_not_replayable` instead of running the
+  handler again; the cache store no longer reports a seal it could not write.
+
 - CORS: with `supports_credentials`, boot now rejects `allowed_headers: ['*']`, which
   Fruitcake answers by echoing every requested header (`Authorization` included).
 
