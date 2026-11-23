@@ -190,7 +190,7 @@ it('replays completed records that store numeric strings and array headers', fun
         ]);
 });
 
-it('defaults status code and headers when completed payloads omit them', function (): void {
+it('defaults headers and body when completed payloads omit them', function (): void {
     [$store, $repository] = cacheIdempotencyStore();
     $scope = new IdempotencyScope('bucket-a', 'POST', '/items');
     $now = new DateTimeImmutable('2026-01-01T00:00:00Z');
@@ -199,7 +199,7 @@ it('defaults status code and headers when completed payloads omit them', functio
     $repository->put($scope->cacheKey($key), [
         'fingerprint' => 'fp',
         'status' => 'completed',
-        'status_code' => new stdClass,
+        'status_code' => 204,
         'headers' => 'not-array',
         'body' => null,
     ], 60);
@@ -207,7 +207,7 @@ it('defaults status code and headers when completed payloads omit them', functio
     $replay = $store->claim($scope, $key, 'fp', $now);
 
     expect($replay->outcome)->toBe(ClaimOutcome::Replay)
-        ->and($replay->replay?->status)->toBe(200)
+        ->and($replay->replay?->status)->toBe(204)
         ->and($replay->replay?->headers)->toBe([])
         ->and($replay->replay?->body)->toBe('');
 });
@@ -809,7 +809,7 @@ it('never replays a completed record whose status code is unreadable', function 
     // The handler already ran; replaying a guessed 200 or re-running it would both lie.
     expect($store->claim($scope, 'corrupt', 'fp', new DateTimeImmutable('2026-01-01T00:00:00Z'))->outcome)
         ->toBe(ClaimOutcome::NotReplayable);
-})->with(['not numeric' => ['abc'], 'missing' => [null]]);
+})->with(['not numeric' => ['abc'], 'missing' => [null], 'not a scalar' => [new stdClass]]);
 
 it('marks a fresh claim as in progress in the cache', function (): void {
     [$store, $repository] = cacheIdempotencyStore();

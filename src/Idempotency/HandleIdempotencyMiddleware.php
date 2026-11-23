@@ -11,7 +11,6 @@ use Qiick\HttpBasics\Contracts\CredentialBucketResolver;
 use Qiick\HttpBasics\Contracts\ErrorRenderer;
 use Qiick\HttpBasics\Contracts\IdempotencyStore;
 use Qiick\HttpBasics\Locale\LocaleNegotiator;
-use Qiick\HttpBasics\Locale\LocaleSource;
 use Qiick\HttpBasics\Locale\MachineDoorClassifier;
 use Qiick\HttpBasics\RequestId\RequestId;
 use Qiick\HttpBasics\RequestId\RequestIdResolver;
@@ -236,11 +235,10 @@ final class HandleIdempotencyMiddleware
             return '';
         }
 
-        $resolution = $this->locale->current($request);
-
-        // The negotiated locale, not the raw header: "en-US,en;q=0.9" and "en" get the
-        // same response, so a retry with either must replay rather than mismatch.
-        return $resolution->source === LocaleSource::Header ? $resolution->locale : '';
+        // The locale actually served, whatever chose it: "en-US,en;q=0.9", "en", an
+        // unsupported "fr" and no header at all all serve "en", so a retry with any of
+        // them must replay rather than mismatch.
+        return $this->locale->current($request)->locale;
     }
 
     private function executeOnce(
@@ -255,9 +253,12 @@ final class HandleIdempotencyMiddleware
             $response = $this->ensureResponse($next($request));
         } catch (\Throwable $throwable) {
             // The handler failed before answering: free the key so a retry can run it.
-            $this->store->abandon($claim, new \DateTimeImmutable);
-
-            throw $throwable;
+            // A store failure here must not hide the handler's own exception.
+            try {
+                $this->store->abandon($claim, new \DateTimeImmutable);
+            } finally {
+                throw $throwable;
+            }
         }
 
         $elapsedSeconds = (hrtime(true) - $startedAt) / 1_000_000_000;

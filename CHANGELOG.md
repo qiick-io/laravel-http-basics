@@ -15,9 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Idempotency: on machine doors the fingerprint includes the locale negotiated from
-  `Accept-Language`, not the raw header, so `it-CH,it;q=0.9` and `it` replay the same
-  response instead of failing with `idempotency_payload_mismatch`.
+- Idempotency: on machine doors the fingerprint includes the locale the response is
+  served in, not the raw `Accept-Language` header, so `it-CH,it;q=0.9` and `it` replay the
+  same response, and so do an unsupported `fr`, no header and `en` when `en` is the
+  default, instead of failing with `idempotency_payload_mismatch`.
 
 ### Fixed
 
@@ -40,8 +41,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   included, now always abandons the claim, so a retry can run it; before, a
   handler-thrown `IdempotencyStoreException` left the key locked until `lock_ttl_seconds`.
 
-- Idempotency: a database row marked completed whose `status_code` cannot be read is
-  answered `idempotency_not_replayable` instead of being replayed as a guessed `200`.
+- Idempotency: a completed record whose `status_code` cannot be read is answered
+  `idempotency_not_replayable` instead of being replayed as a guessed `200`, in the
+  database, cache and in-memory stores alike.
+
+- Idempotency: when the handler throws and abandoning the claim fails too (cache down),
+  the handler's exception is the one rethrown.
+
+- Idempotency: `IdempotencyRecord::on()` / `setConnection()` win over the configured
+  idempotency connection.
 
 ### Added
 
