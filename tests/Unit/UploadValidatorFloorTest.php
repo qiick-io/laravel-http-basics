@@ -377,3 +377,125 @@ it('puts the previous error handler back after measuring an archive', function (
 
     expect(fn () => trigger_error('unrelated warning', E_USER_WARNING))->toThrow(ErrorException::class, 'unrelated warning');
 });
+
+/**
+ * Hand-built ZIP for structures ZipArchive will not write: local headers the central
+ * directory omits or contradicts, Unix modes, data descriptors, trailing records.
+ *
+ * @param  list<array{name: string, data: string, localName?: string, isListed?: bool, unixMode?: int, hasDataDescriptor?: bool}>  $entries
+ */
+function craftedZip(array $entries, string $comment = '', string $afterEnd = ''): string
+{
+    $localSection = '';
+    $centralSection = '';
+    $listedCount = 0;
+
+    foreach ($entries as $entry) {
+        $compressed = (string) gzdeflate($entry['data']);
+        $crc = crc32($entry['data']);
+        $hasDataDescriptor = $entry['hasDataDescriptor'] ?? false;
+        $flags = $hasDataDescriptor ? 0x08 : 0;
+        $localName = $entry['localName'] ?? $entry['name'];
+        $localOffset = strlen($localSection);
+        // With a data descriptor the local header carries zeros and the sizes follow the data.
+        $localSizes = $hasDataDescriptor ? pack('VVV', 0, 0, 0) : pack('VVV', $crc, strlen($compressed), strlen($entry['data']));
+
+        $localSection .= "PK\x03\x04".pack('vvvvv', 20, $flags, 8, 0, 0).$localSizes
+            .pack('vv', strlen($localName), 0).$localName.$compressed;
+
+        if ($hasDataDescriptor) {
+            $localSection .= "PK\x07\x08".pack('VVV', $crc, strlen($compressed), strlen($entry['data']));
+        }
+
+        if (! ($entry['isListed'] ?? true)) {
+            continue;
+        }
+
+        $unixMode = $entry['unixMode'] ?? null;
+        $listedCount++;
+        $centralSection .= "PK\x01\x02".pack('vvvvvv', $unixMode === null ? 20 : (3 << 8) | 20, 20, $flags, 8, 0, 0)
+            .pack('VVV', $crc, strlen($compressed), strlen($entry['data']))
+            .pack('vvvvv', strlen($entry['name']), 0, 0, 0, 0)
+            .pack('VV', $unixMode === null ? 0 : $unixMode << 16, $localOffset).$entry['name'];
+    }
+
+    $endRecord = "PK\x05\x06".pack('vvvvVVv', 0, 0, $listedCount, $listedCount, strlen($centralSection), strlen($localSection), strlen($comment)).$comment;
+
+    return floorFile($localSection.$centralSection.$endRecord.$afterEnd);
+}
+
+it('accepts a hand-built archive whose local headers match its central directory', function (bool $hasDataDescriptor): void {
+    $zipPath = craftedZip([
+        ['name' => 'a.txt', 'data' => 'hello', 'hasDataDescriptor' => $hasDataDescriptor],
+        ['name' => 'b.txt', 'data' => 'world', 'hasDataDescriptor' => $hasDataDescriptor],
+    ]);
+
+    expect(floorOutcome(new ArrayUploadPolicy(maxUncompressedRatio: 10, allowsArchives: true), $zipPath, 'a.zip'))->toBe('accepted');
+})->with([
+    'sizes in the local header' => [false],
+    'sizes in a data descriptor' => [true],
+]);
+
+it('refuses a bomb hidden in a local header the central directory never lists (re-review B1)', function (): void {
+    // Streaming readers (bsdtar from a pipe, ZipInputStream) walk local headers and inflate b.txt.
+    $zipPath = craftedZip([
+        ['name' => 'b.txt', 'data' => str_repeat("\0", 5 * 1024 * 1024), 'isListed' => false],
+        ['name' => 'a.txt', 'data' => 'hello'],
+    ]);
+    $policy = new ArrayUploadPolicy(maxUncompressedRatio: 100, maxUncompressedBytes: 1024 * 1024, allowsArchives: true);
+
+    expect(floorOutcome($policy, $zipPath, 'a.zip'))->toBe('upload_content_mismatch');
+});
+
+it('refuses a local header name that contradicts the central directory (re-review B1)', function (): void {
+    $zipPath = craftedZip([['name' => 'xx/evil.txt', 'localName' => '../evil.txt', 'data' => 'x']]);
+
+    expect(floorOutcome(new ArrayUploadPolicy(maxUncompressedRatio: 10, allowsArchives: true), $zipPath, 'a.zip'))->toBe('upload_content_mismatch');
+});
+
+it('refuses symbolic link entries (re-review N1)', function (): void {
+    $zipPath = craftedZip([
+        ['name' => 'd', 'data' => '/etc', 'unixMode' => 0o120777],
+        ['name' => 'd/pwned.txt', 'data' => 'x'],
+    ]);
+
+    expect(floorOutcome(new ArrayUploadPolicy(maxUncompressedRatio: 10, allowsArchives: true), $zipPath, 'a.zip'))->toBe('upload_forbidden_type');
+});
+
+it('keeps regular Unix files and directories', function (): void {
+    $zipPath = craftedZip([
+        ['name' => 'docs/', 'data' => '', 'unixMode' => 0o040755],
+        ['name' => 'docs/a.txt', 'data' => 'x', 'unixMode' => 0o100644],
+    ]);
+
+    expect(floorOutcome(new ArrayUploadPolicy(maxUncompressedRatio: 10, allowsArchives: true), $zipPath, 'a.zip'))->toBe('accepted');
+});
+
+it('refuses a second end-of-central-directory record (re-review N4)', function (string $layout): void {
+    $honest = (string) file_get_contents(craftedZip([['name' => 'a.txt', 'data' => 'hello']]));
+    $endRecord = substr($honest, -22);
+    $bytes = $layout === 'appended'
+        ? $honest.$endRecord
+        // The comment hides a second record; its length field now covers 22 more bytes.
+        : substr($honest, 0, -2).pack('v', 22).$endRecord;
+
+    expect(floorOutcome(new ArrayUploadPolicy(maxUncompressedRatio: 10, allowsArchives: true), floorFile($bytes), 'a.zip'))->toBe('upload_content_mismatch');
+})->with(['appended', 'inside the comment']);
+
+it('does not mistake a stray end-of-directory signature for a hidden archive (re-review N3)', function (): void {
+    // No central directory sits where the record says, so no ZIP reader can open this.
+    $blob = floorFile(str_repeat("\xAB", 4096)."PK\x05\x06".str_repeat("\xCD", 4096));
+
+    expect(floorOutcome(new ArrayUploadPolicy(maxUncompressedRatio: 10), $blob, 'blob.bin'))->toBe('accepted');
+});
+
+it('refuses archives unless the context explicitly allows them', function (string $clientName): void {
+    $policy = new ArrayUploadPolicy(maxUncompressedRatio: 10);
+
+    expect(floorOutcome($policy, floorZip(['a.txt' => 'hello']), $clientName))->toBe('upload_forbidden_type');
+})->with(['bundle.zip', 'report.docx', 'sheet.xlsx', 'misnamed.txt']);
+
+it('refuses compressed and archive suffixes by name unless archives are allowed', function (string $clientName): void {
+    expect(floorOutcome(new ArrayUploadPolicy, floorFile('plain text'), $clientName))->toBe('upload_forbidden_type')
+        ->and(floorOutcome(new ArrayUploadPolicy(allowsArchives: true), floorFile('plain text'), $clientName))->toBe('accepted');
+})->with(['a.zip', 'a.7z', 'a.rar', 'a.tar.gz', 'a.tgz', 'a.docx', 'a.odt', 'a.epub', 'a.apk']);
