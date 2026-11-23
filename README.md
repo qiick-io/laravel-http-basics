@@ -29,7 +29,7 @@ Packagist (Packagist publish only after Luca’s go).
 
 ## Requirements
 
-- PHP `^8.3`
+- PHP `^8.3` with `ext-fileinfo` (upload MIME sniffing)
 - Illuminate cache / contracts / http / support `^12.0 \|\| ^13.0` (never
   `laravel/framework`)
 
@@ -219,6 +219,77 @@ Merge `CorsHeaderCatalog::exposedHeaders()` / `allowedRequestHeaders()` into
 `Retry-After`, `Deprecation`, `Sunset`, `Content-Language`, `Vary`, `Link`,
 `Location`, and `Idempotent-Replayed`. Origin enforcement with API keys stays
 in the product.
+
+## Uploads (floor)
+
+`Qiick\HttpBasics\Uploads\UploadValidator` (or the `SafeUpload` rule) checks an
+upload against `http-basics.uploads.contexts.<context>`: the hard floor on every
+filename suffix and on the sniffed MIME, the extension and MIME allowlists,
+`max_bytes`, magic bytes, the archive budget, and the bound `MalwareScanner`.
+The storage name is a random id plus an extension chosen from the sniffed MIME,
+never the client suffix.
+
+Archives are refused by default. A context accepts them only with
+`allows_archives: true`; otherwise a name with an archive suffix (`zip`, `7z`,
+`tar.gz`, `docx`, `xlsx`, `odt`, `epub`, `apk`, `deb`, `rpm`, …, see
+`HardFloor::archiveExtensions()`), a sniffed archive MIME
+(`HardFloor::archiveMimeTypes()`, plus every OOXML and OpenDocument type), or a
+file libzip opens as a ZIP (a PDF+ZIP polyglot included) is refused with
+`upload_forbidden_type`. This holds even when both archive budgets are `null`.
+Brotli, shar and uuencoded tar have no magic bytes, so only their suffix can
+catch them.
+
+**With `allows_archives`, the package checks an archive's structure; it does not
+make extracting it safe.** A product must never extract uploaded archives with a
+streaming reader (libarchive or `bsdtar` from a pipe, Java's `ZipInputStream`,
+Node's `unzipper`): read them through the central directory, as libzip does, and
+validate every extracted file as its own upload. Safe extraction is out of scope
+for 1.0.
+
+Archive budget: any file libzip opens as a ZIP (docx, jar and polyglots
+included) is inflated in streaming and its real bytes are counted, because the
+sizes in its headers are attacker-controlled. Reading stops at `size ×
+max_uncompressed_ratio`, capped by `max_uncompressed_bytes`; either limit works
+alone, a zero or negative limit allows nothing, and leaving both `null` turns
+the budget off where archives are allowed. An archive over 10 000 entries is
+refused before any entry is read. Only ZIP is measured: with archives allowed, a
+`.gz`, `.7z` or `.tar.xz` bomb is not.
+
+Streaming readers walk the local headers instead of the central directory libzip
+reads, so the two must describe the same bytes. Every local header must sit
+exactly at the offset its directory entry gives, the headers must follow each
+other with no byte left over from byte 0 to the central directory, every local
+header must agree with its entry, every data descriptor must repeat the entry's
+CRC and sizes, the directory must end where the only end record starts, and that
+record's comment must run to the end of the file. A stored entry with a data
+descriptor is refused outright, because only the descriptor marks where its data
+ends. A local header hidden in another one's extra field or data, a contradicting
+local name, data before the first entry or after the end record, and a second end
+record are refused with `upload_content_mismatch`, as are a corrupt archive, a CRC
+mismatch, and an encrypted entry. Two kinds of honest archive are refused too,
+because their layout cannot be told apart from a crafted one: Info-ZIP output
+written to or from a pipe (`… | zip - -`, which adds a ZIP64 end record next to a
+classic one) and `bsdtar --format=zip` written to stdout (zero padding after the
+end record). Re-create such archives with a seekable writer.
+
+A file libzip cannot open is refused with `upload_content_mismatch` when its
+last 64 KiB hold an end record that a tolerant reader (unzip, Python's
+`zipfile`) would follow: one with a central directory right before it, or a
+ZIP64 one. A stray `PK\x05\x06` in an ordinary file is not refused. Residual
+risk: a polyglot followed by more than 64 KiB of trailing data is not measured;
+unzip, bsdtar and Python's `zipfile` all refuse to open such a file.
+
+Entry names with a `..` segment, an absolute or drive path, or a control
+character, and symbolic link entries, are refused with `upload_forbidden_type`.
+Nested archives are counted by their compressed bytes and are not opened. The
+floor does not check entry names against the extension floor (`shell.php`
+inside a zip passes): a product that unpacks an archive must validate every
+extracted file as its own upload.
+
+A floor cannot catch polyglots (`GIF89a<?php …`, a PNG header followed by
+HTML). Serve uploads with `X-Content-Type-Options: nosniff` and
+`Content-Disposition: attachment`, or from a cookieless domain, and re-encode
+images a browser will render inline.
 
 ## Development
 

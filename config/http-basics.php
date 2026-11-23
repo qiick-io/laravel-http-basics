@@ -11,6 +11,46 @@ declare(strict_types=1);
 
 return [
 
+    'uploads' => [
+        'magic_signatures' => [
+            'pdf' => ['255044462D'],
+            'jpg' => ['FFD8FF'],
+            'jpeg' => ['FFD8FF'],
+            'png' => ['89504E470D0A1A0A'],
+            'gif' => ['474946383761', '474946383961'],
+        ],
+        /*
+         * @var array<string, array<string, mixed>>
+         */
+        'contexts' => [
+            'files' => [
+                'allowed_extensions' => ['pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'txt'],
+                'allowed_mime_types' => [
+                    'application/pdf',
+                    'image/png',
+                    'image/jpeg',
+                    'image/gif',
+                    'image/webp',
+                    'text/plain',
+                ],
+                'max_bytes' => 10 * 1024 * 1024,
+                'allows_svg' => false,
+                /*
+                 * Archives (zip, docx, 7z, tar.gz, …) are refused unless true. A
+                 * context that accepts them must validate every extracted file.
+                 */
+                'allows_archives' => false,
+                'content_type_mismatch' => 'reject',
+                'max_uncompressed_ratio' => 100,
+                /*
+                 * Absolute ceiling on the real inflated bytes of an archive, measured
+                 * in streaming whatever its headers declare.
+                 */
+                'max_uncompressed_bytes' => 256 * 1024 * 1024,
+            ],
+        ],
+    ],
+
     'request_id' => [
         /*
          * Optional dual-write aliases into hidden Context (e.g. externa).

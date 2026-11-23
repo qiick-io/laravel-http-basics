@@ -53,6 +53,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Uploads: `UploadValidator`, the `SafeUpload` rule, `HardFloor`, `FileNameSanitizer`,
+  per-context `UploadPolicy` from `http-basics.uploads.contexts`, and the `MalwareScanner`
+  seam. Archives are refused unless a context sets `allows_archives`; an allowed ZIP is
+  inflated in streaming against its budget, and `ZipLayoutVerifier` requires every local
+  header at its central-directory offset with no byte unaccounted for, data descriptors
+  that match the directory, and a single end record; stored entries with a data
+  descriptor and symbolic link entries are refused. The package checks structure only:
+  products must never extract uploads with streaming readers (see the README).
 - Idempotency: `HandleIdempotencyMiddleware`, `Fingerprinter`, `CacheIdempotencyStore`,
   `DatabaseIdempotencyStore`, `AnonymousBucketResolver`, `FleetErrorRenderer`,
   `IdempotencyRejection`, contract seams (`CredentialBucketResolver`, `IdempotencyStore`,

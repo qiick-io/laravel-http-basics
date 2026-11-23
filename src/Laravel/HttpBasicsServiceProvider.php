@@ -45,6 +45,13 @@ use Qiick\HttpBasics\Security\CspPolicyBuilder;
 use Qiick\HttpBasics\Security\SecurityHeaderBuilder;
 use Qiick\HttpBasics\Security\SecurityHeadersPolicy;
 use Qiick\HttpBasics\Security\ViteFriendlyCspPolicyBuilder;
+use Qiick\HttpBasics\Uploads\ConfigUploadPolicyResolver;
+use Qiick\HttpBasics\Uploads\FileNameSanitizer;
+use Qiick\HttpBasics\Uploads\HardFloor;
+use Qiick\HttpBasics\Uploads\MalwareScanner;
+use Qiick\HttpBasics\Uploads\NullMalwareScanner;
+use Qiick\HttpBasics\Uploads\UploadPolicyResolver;
+use Qiick\HttpBasics\Uploads\UploadValidator;
 
 /**
  * Registers the package in a Laravel app. Auto-discovered through
@@ -309,6 +316,28 @@ final class HttpBasicsServiceProvider extends ServiceProvider
             return new ReplayHeaderSanitizer($replayHeaders, $deniedHeaders);
         });
 
+        $this->app->singleton(MalwareScanner::class, NullMalwareScanner::class);
+        $this->app->singleton(HardFloor::class);
+        $this->app->singleton(FileNameSanitizer::class);
+        $this->app->singleton(UploadPolicyResolver::class, function (Application $app): UploadPolicyResolver {
+            $config = $this->config($app);
+            $contexts = $config->get('http-basics.uploads.contexts', []);
+            $magic = $config->get('http-basics.uploads.magic_signatures', []);
+
+            return new ConfigUploadPolicyResolver(
+                is_array($contexts) ? $contexts : [],
+                is_array($magic) ? $magic : [],
+            );
+        });
+        $this->app->singleton(UploadValidator::class, function (Application $app): UploadValidator {
+            return new UploadValidator(
+                $app->make(UploadPolicyResolver::class),
+                $app->make(FileNameSanitizer::class),
+                $app->make(HardFloor::class),
+                $app->make(MalwareScanner::class),
+                $app->make(IdGenerator::class),
+            );
+        });
         $this->app->singleton(AllowedOriginsResolver::class, NullAllowedOriginsResolver::class);
 
         $this->app->singleton(ErrorRenderer::class, function (Application $app): ErrorRenderer {

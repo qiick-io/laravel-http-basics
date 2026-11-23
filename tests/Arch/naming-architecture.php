@@ -25,6 +25,10 @@ return [
             'Qiick\HttpBasics\Contracts\CredentialBucketResolver',
             'Qiick\HttpBasics\Contracts\IdempotencyStore',
             'Qiick\HttpBasics\Contracts\ErrorRenderer',
+            // Design M10/S7: upload seams without Contract/Enum suffix.
+            'Qiick\HttpBasics\Uploads\UploadPolicy',
+            'Qiick\HttpBasics\Uploads\UploadPolicyResolver',
+            'Qiick\HttpBasics\Uploads\MalwareScanner',
             // Design M9: CORS seams without Contract suffix.
             'Qiick\HttpBasics\Cors\AllowedOriginsResolver',
         ],
@@ -37,6 +41,8 @@ return [
             'Qiick\HttpBasics\Idempotency\ClaimOutcome',
             'Qiick\HttpBasics\Idempotency\IdempotencyErrorCode',
             'Qiick\HttpBasics\Idempotency\IdempotencyKeyFormat',
+            'Qiick\HttpBasics\Uploads\ScanResult',
+            'Qiick\HttpBasics\Uploads\MismatchMode',
         ],
     ],
 
