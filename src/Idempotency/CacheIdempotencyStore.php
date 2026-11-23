@@ -6,7 +6,6 @@ namespace Qiick\HttpBasics\Idempotency;
 
 use DateTimeImmutable;
 use Illuminate\Cache\Repository;
-use Illuminate\Contracts\Cache\Lock;
 use Illuminate\Contracts\Cache\LockProvider;
 use Qiick\HttpBasics\Contracts\IdempotencyStore;
 
@@ -59,33 +58,23 @@ final class CacheIdempotencyStore implements IdempotencyStore
         }
 
         $lease = bin2hex(random_bytes(32));
-        $lock = $this->lockFor($recordKey, $lease);
 
-        if (! $lock->get()) {
+        if (! $this->acquireLock($recordKey, $lease)) {
             return new IdempotencyClaim(ClaimOutcome::Conflict, null, null, $scope, $key);
         }
 
-        // Re-read under the lock: another worker may have claimed or completed meanwhile.
-        $existing = $this->liveRecord($recordKey, $now);
+        try {
+            $settled = $this->settledUnderLock($scope, $key, $fingerprint, $now);
+        } catch (IdempotencyStoreException $exception) {
+            $this->releaseLock($recordKey, $lease);
 
-        if ($existing !== null) {
-            $completed = $this->claimFromCompleted($existing, $fingerprint, $scope, $key);
+            throw $exception;
+        }
 
-            if ($completed !== null) {
-                $lock->release();
+        if ($settled !== null) {
+            $this->releaseLock($recordKey, $lease);
 
-                return $completed;
-            }
-
-            // An in-progress claim younger than stale_after belongs to a live worker; one
-            // without a readable start time is stale and may be taken over.
-            $startedAt = $this->intValue($existing['started_at'] ?? null);
-
-            if ($startedAt !== null && $now->getTimestamp() - $startedAt < $this->staleAfterSeconds) {
-                $lock->release();
-
-                return new IdempotencyClaim(ClaimOutcome::Conflict, null, null, $scope, $key);
-            }
+            return $settled;
         }
 
         $marker = [
@@ -104,7 +93,7 @@ final class CacheIdempotencyStore implements IdempotencyStore
 
         // Without a stored marker nothing proves the claim: never let the handler run.
         if (! $isStored) {
-            $lock->release();
+            $this->releaseLock($recordKey, $lease);
 
             throw new IdempotencyStoreException('Failed to write idempotency marker.', previous: $cause ?? null);
         }
@@ -144,7 +133,7 @@ final class CacheIdempotencyStore implements IdempotencyStore
             $this->failComplete($claim, $now, null);
         }
 
-        $this->lockFor($recordKey, $claim->lease)->release();
+        $this->releaseLock($recordKey, $claim->lease);
     }
 
     public function sealUnreplayable(IdempotencyClaim $claim, DateTimeImmutable $now): void
@@ -176,7 +165,7 @@ final class CacheIdempotencyStore implements IdempotencyStore
             throw new IdempotencyStoreException('Failed to seal unreplayable marker.');
         }
 
-        $this->lockFor($recordKey, $claim->lease)->release();
+        $this->releaseLock($recordKey, $claim->lease);
     }
 
     /**
@@ -217,7 +206,7 @@ final class CacheIdempotencyStore implements IdempotencyStore
             // Best effort, like the database store: the caller is already failing.
         }
 
-        $this->lockFor($recordKey, $claim->lease)->release();
+        $this->releaseLock($recordKey, $claim->lease);
     }
 
     /**
@@ -256,9 +245,66 @@ final class CacheIdempotencyStore implements IdempotencyStore
         }
     }
 
-    private function lockFor(string $recordKey, string $owner): Lock
+    /**
+     * Re-reads under the lock: another worker may have sealed, claimed or completed
+     * the key since the first look. Null means the key may be claimed.
+     */
+    private function settledUnderLock(
+        IdempotencyScope $scope,
+        string $key,
+        string $fingerprint,
+        DateTimeImmutable $now,
+    ): ?IdempotencyClaim {
+        if ($this->sealedKeys->isMarked($scope, $key)) {
+            return new IdempotencyClaim(ClaimOutcome::NotReplayable, null, null, $scope, $key);
+        }
+
+        $existing = $this->liveRecord($scope->cacheKey($key), $now);
+
+        if ($existing === null) {
+            return null;
+        }
+
+        $completed = $this->claimFromCompleted($existing, $fingerprint, $scope, $key);
+
+        if ($completed !== null) {
+            return $completed;
+        }
+
+        // An in-progress claim younger than stale_after belongs to a live worker; one
+        // without a readable start time is stale and may be taken over.
+        $startedAt = $this->intValue($existing['started_at'] ?? null);
+
+        return $startedAt !== null && $now->getTimestamp() - $startedAt < $this->staleAfterSeconds
+            ? new IdempotencyClaim(ClaimOutcome::Conflict, null, null, $scope, $key)
+            : null;
+    }
+
+    /**
+     * @return bool false when another worker holds the lock
+     *
+     * @throws IdempotencyStoreException when the lock backend fails
+     */
+    private function acquireLock(string $recordKey, string $owner): bool
     {
-        return $this->locks->lock($recordKey.self::LOCK_SUFFIX, $this->lockTtlSeconds, $owner);
+        try {
+            return $this->locks->lock($recordKey.self::LOCK_SUFFIX, $this->lockTtlSeconds, $owner)->get() === true;
+        } catch (\Throwable $exception) {
+            throw new IdempotencyStoreException('Failed to acquire idempotency lock.', previous: $exception);
+        }
+    }
+
+    /**
+     * Best effort: an unreleased lock runs out after lock_ttl_seconds, and failing to
+     * release it must not turn finished work into an error.
+     */
+    private function releaseLock(string $recordKey, string $owner): void
+    {
+        try {
+            $this->locks->lock($recordKey.self::LOCK_SUFFIX, $this->lockTtlSeconds, $owner)->release();
+        } catch (\Throwable) {
+            // The lock expires on its own.
+        }
     }
 
     /**

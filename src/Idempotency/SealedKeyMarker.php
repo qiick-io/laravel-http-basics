@@ -37,6 +37,8 @@ final class SealedKeyMarker
     }
 
     /**
+     * @phpstan-impure another request may mark the key between two reads
+     *
      * @throws IdempotencyStoreException when the cache cannot be read
      */
     public function isMarked(IdempotencyScope $scope, string $key): bool

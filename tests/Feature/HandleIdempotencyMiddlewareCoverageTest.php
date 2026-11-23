@@ -1206,6 +1206,7 @@ it('refuses unknown, misspelled or duplicated options instead of replaying secre
     'required and optional' => [['required', 'optional'], 'given twice'],
     'max_handler_seconds twice' => [['max_handler_seconds=5', 'max_handler_seconds=6'], 'given twice'],
     'max_handler_seconds not a number' => [['max_handler_seconds=abc'], 'max_handler_seconds must be an integer'],
+    'a second = in the value' => [['replayable=false=true'], 'replayable must be true or false'],
 ]);
 
 it('trims each option, as Laravel keeps the space after a comma', function (): void {
@@ -1216,4 +1217,38 @@ it('trims each option, as Laravel keeps the space after a comma', function (): v
 
     expect($second->getContent())->toBe('SECRET-SECOND')
         ->and($second->headers->has('Idempotent-Replayed'))->toBeFalse();
+});
+
+it('keeps the handler response when abandoning the claim fails', function (): void {
+    $store = new class(new InMemoryIdempotencyStore) implements IdempotencyStore
+    {
+        public function __construct(private InMemoryIdempotencyStore $inner) {}
+
+        public function claim(IdempotencyScope $scope, string $key, string $fingerprint, DateTimeImmutable $now): IdempotencyClaim
+        {
+            return $this->inner->claim($scope, $key, $fingerprint, $now);
+        }
+
+        public function complete(IdempotencyClaim $claim, ReplayableResponse $response, DateTimeImmutable $now): void
+        {
+            $this->inner->complete($claim, $response, $now);
+        }
+
+        public function sealUnreplayable(IdempotencyClaim $claim, DateTimeImmutable $now): void
+        {
+            $this->inner->sealUnreplayable($claim, $now);
+        }
+
+        public function abandon(IdempotencyClaim $claim, DateTimeImmutable $now): void
+        {
+            throw new IdempotencyStoreException('lock release failed');
+        }
+    };
+    $middleware = makeIdempotencyMiddleware($store, new FakeCredentialBucketResolver('tenant:1'));
+
+    // A 500 from the handler is not stored: the claim is abandoned, and that fails too.
+    $response = $middleware->handle(idempotencyRequest(), static fn () => response('handler broke', 500));
+
+    expect($response->getStatusCode())->toBe(500)
+        ->and($response->getContent())->toBe('handler broke');
 });

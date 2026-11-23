@@ -64,32 +64,34 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
         }
 
         $lease = bin2hex(random_bytes(32));
-        $lock = $this->locks->lock($this->lockKey($scope, $key), $this->lockTtlSeconds, $lease);
 
-        if (! $lock->get()) {
+        if (! $this->acquireLock($scope, $key, $lease)) {
             return new IdempotencyClaim(ClaimOutcome::Conflict, null, null, $scope, $key);
         }
 
         try {
+            // Re-read under the lock: another request may have sealed or finished meanwhile.
+            $sealed = $this->sealedKeys->isMarked($scope, $key);
             $existing = $this->findRow($scope->bucket, $keyHash);
         } catch (IdempotencyStoreException $exception) {
             // Request fails closed either way; releasing spares retries the lock_ttl wait.
-            $lock->release();
+            $this->releaseLock($scope, $key, $lease);
 
             throw $exception;
         }
 
-        // Re-read under the lock: another request may have finished in between.
-        $settled = $this->settledClaim($existing, $fingerprint, $scope, $key, $now);
+        $settled = $sealed
+            ? new IdempotencyClaim(ClaimOutcome::NotReplayable, null, null, $scope, $key)
+            : $this->settledClaim($existing, $fingerprint, $scope, $key, $now);
 
         if ($settled !== null) {
-            $lock->release();
+            $this->releaseLock($scope, $key, $lease);
 
             return $settled;
         }
 
         if ($existing !== null && $this->isInFlight($existing, $now)) {
-            $lock->release();
+            $this->releaseLock($scope, $key, $lease);
 
             return new IdempotencyClaim(ClaimOutcome::Conflict, null, null, $scope, $key);
         }
@@ -124,7 +126,7 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
                     ]);
             }
         } catch (QueryException $exception) {
-            $lock->release();
+            $this->releaseLock($scope, $key, $lease);
 
             throw new IdempotencyStoreException('Failed to write idempotency marker.', previous: $exception);
         }
@@ -162,7 +164,7 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
             throw new IdempotencyStoreException('Idempotency lease mismatch on complete.');
         }
 
-        $this->locks->restoreLock($this->lockKey($claim->scope, $claim->key), $lease)->release();
+        $this->releaseLock($claim->scope, $claim->key, $lease);
     }
 
     /**
@@ -185,7 +187,7 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
                 throw new IdempotencyStoreException('Failed to seal unreplayable marker.', previous: $exception);
             }
 
-            $this->locks->restoreLock($this->lockKey($claim->scope, $claim->key), $lease)->release();
+            $this->releaseLock($claim->scope, $claim->key, $lease);
 
             return;
         }
@@ -195,7 +197,7 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
             throw new IdempotencyStoreException('Idempotency lease mismatch on seal.');
         }
 
-        $this->locks->restoreLock($this->lockKey($claim->scope, $claim->key), $lease)->release();
+        $this->releaseLock($claim->scope, $claim->key, $lease);
     }
 
     public function abandon(IdempotencyClaim $claim, DateTimeImmutable $now): void
@@ -216,7 +218,7 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
             // Best-effort clear; caller is already failing.
         }
 
-        $this->locks->restoreLock($this->lockKey($claim->scope, $claim->key), $claim->lease)->release();
+        $this->releaseLock($claim->scope, $claim->key, $claim->lease);
     }
 
     /**
@@ -246,6 +248,33 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
     private function lockKey(IdempotencyScope $scope, string $key): string
     {
         return $scope->cacheKey($key).self::LOCK_SUFFIX;
+    }
+
+    /**
+     * @return bool false when another request holds the lock
+     *
+     * @throws IdempotencyStoreException when the lock backend fails
+     */
+    private function acquireLock(IdempotencyScope $scope, string $key, string $owner): bool
+    {
+        try {
+            return $this->locks->lock($this->lockKey($scope, $key), $this->lockTtlSeconds, $owner)->get() === true;
+        } catch (\Throwable $exception) {
+            throw new IdempotencyStoreException('Failed to acquire idempotency lock.', previous: $exception);
+        }
+    }
+
+    /**
+     * Best effort: an unreleased lock runs out after lock_ttl_seconds, and failing to
+     * release it must not turn finished work into an error.
+     */
+    private function releaseLock(IdempotencyScope $scope, string $key, string $owner): void
+    {
+        try {
+            $this->locks->restoreLock($this->lockKey($scope, $key), $owner)->release();
+        } catch (\Throwable) {
+            // The lock expires on its own.
+        }
     }
 
     /**

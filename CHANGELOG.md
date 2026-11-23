@@ -22,6 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Idempotency: a lock backend failure (Redis down mid-request) is a 503 store failure in
+  both stores, a lock that cannot be released no longer turns a finished claim into an
+  error, a failing `abandon()` never replaces the handler's response, and the `:sealed`
+  marker is checked again once the lock is held.
+
 - Idempotency: every cache failure in `CacheIdempotencyStore` now surfaces as
   `idempotency_unavailable` (503 with `Retry-After`) instead of a raw exception, an
   in-progress marker the cache did not store refuses the claim instead of letting the

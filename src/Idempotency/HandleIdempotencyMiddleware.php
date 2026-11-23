@@ -156,7 +156,7 @@ final class HandleIdempotencyMiddleware
 
         foreach ($options as $rawOption) {
             // Laravel keeps the space after a comma in `:required, replayable=false`.
-            [$name, $value] = array_pad(explode('=', trim($rawOption), 2), 2, null);
+            [$name, $value] = explode('=', trim($rawOption), 2) + [1 => null];
             // required and optional set the same thing.
             $setting = $name === 'optional' ? 'required' : $name;
 
@@ -276,12 +276,9 @@ final class HandleIdempotencyMiddleware
             $response = $this->ensureResponse($next($request));
         } catch (\Throwable $throwable) {
             // The handler failed before answering: free the key so a retry can run it.
-            // A store failure here must not hide the handler's own exception.
-            try {
-                $this->store->abandon($claim, new \DateTimeImmutable);
-            } finally {
-                throw $throwable;
-            }
+            $this->abandon($claim);
+
+            throw $throwable;
         }
 
         $elapsedSeconds = (hrtime(true) - $startedAt) / 1_000_000_000;
@@ -298,7 +295,7 @@ final class HandleIdempotencyMiddleware
             $body = $response->getContent();
 
             if ($body === false || ! $this->isStorable($response, $body)) {
-                $this->store->abandon($claim, new \DateTimeImmutable);
+                $this->abandon($claim);
 
                 return $response;
             }
@@ -368,6 +365,19 @@ final class HandleIdempotencyMiddleware
         $rejection = new IdempotencyRejection($code, $status, $headers);
 
         return $this->errorRenderer->render($rejection, $request);
+    }
+
+    /**
+     * Best effort: the key goes stale on its own, and a store failure here must never
+     * replace the handler's response or hide its exception.
+     */
+    private function abandon(IdempotencyClaim $claim): void
+    {
+        try {
+            $this->store->abandon($claim, new \DateTimeImmutable);
+        } catch (\Throwable) {
+            // The handler's answer is what the client must see.
+        }
     }
 
     private function unavailable(Request $request): Response
