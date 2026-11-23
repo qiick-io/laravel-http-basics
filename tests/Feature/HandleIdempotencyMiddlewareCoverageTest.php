@@ -1252,3 +1252,28 @@ it('keeps the handler response when abandoning the claim fails', function (): vo
     expect($response->getStatusCode())->toBe(500)
         ->and($response->getContent())->toBe('handler broke');
 });
+
+it('refuses a structured-syntax suffix with no subtype before it', function (string $contentType): void {
+    // RFC 6839 §3.1 needs a non-empty subtype name before "+json".
+    $middleware = makeIdempotencyMiddleware($this->store, new FakeCredentialBucketResolver('tenant:1'));
+    $request = idempotencyRequest();
+    $request->headers->set('Content-Type', $contentType);
+
+    expect($middleware->handle($request, static fn () => response('x', 201))->getStatusCode())->toBe(415);
+})->with(['application/+json', 'application/ +json', 'application/a b+json']);
+
+it('names both accepted JSON media types in the 415 message', function (string $locale, string $expected): void {
+    $middleware = makeIdempotencyMiddleware(
+        $this->store,
+        new FakeCredentialBucketResolver('tenant:1'),
+        errorRenderer: new FleetErrorRenderer(null, app('translator')),
+    );
+    $request = idempotencyRequest();
+    $request->headers->set('Content-Type', 'text/plain');
+    $request->setLocale($locale);
+
+    expect($middleware->handle($request, static fn () => response('x', 201))->getData(true)['message'])->toBe($expected);
+})->with([
+    'en' => ['en', 'Idempotent routes require Content-Type: application/json or application/*+json.'],
+    'it' => ['it', 'Le route idempotenti richiedono Content-Type: application/json oppure application/*+json.'],
+]);
