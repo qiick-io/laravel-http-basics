@@ -37,6 +37,7 @@ class IdempotencyRecord extends Model
      */
     public function prunable(): Builder
     {
-        return static::query()->where('expires_at', '<=', now());
+        // expires_at is UTC wall-clock, so the cutoff must be too, whatever app.timezone is.
+        return static::query()->where('expires_at', '<=', now('UTC'));
     }
 }

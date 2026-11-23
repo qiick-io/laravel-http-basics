@@ -410,8 +410,12 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
         }
 
         if (is_string($timestamp)) {
-            // Invalid strings already become 0 via ?: .
-            return strtotime($timestamp) ?: 0;
+            // Columns hold UTC wall-clock; strtotime() would read them in app.timezone.
+            try {
+                return (new DateTimeImmutable($timestamp, new \DateTimeZone('UTC')))->getTimestamp();
+            } catch (\Exception) {
+                return 0;
+            }
         }
 
         // Non-string/non-datetime inputs are treated as epoch 0.

@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CORS: with `supports_credentials`, boot now rejects `allowed_headers: ['*']`, which
   Fruitcake answers by echoing every requested header (`Authorization` included).
 
+- Idempotency: the database store, `IdempotencyRecord::prunable()` and
+  `http-basics:prune-idempotency` now read the UTC `expires_at` / `updated_at` columns
+  as UTC. Under a non-UTC `app.timezone` (Europe/Rome) completed keys expired, and were
+  pruned, up to the UTC offset early, so a retry inside the TTL re-ran the handler.
+
 - Idempotency: rebase onto security-headers re-review tip; strip blanket
   `@pest-mutate-ignore` and keep only proven equivalents with one-line reasons;
   raise per-class mutation score to 100% for the six design §8 targets.
