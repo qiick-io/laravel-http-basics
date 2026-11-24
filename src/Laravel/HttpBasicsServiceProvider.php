@@ -341,11 +341,26 @@ final class HttpBasicsServiceProvider extends ServiceProvider
         $this->requestIdAcceptFrom($settings);
         $this->cspMode($settings);
 
-        foreach ($settings->stringList('security.csp.script_hashes') as $hash) {
+        $configuredHashes = $settings->value('security.csp.script_hashes');
+
+        // A bare string would otherwise read as no hashes at all, dropping the one it holds.
+        if ($configuredHashes !== null && ! is_array($configuredHashes)) {
+            throw new \InvalidArgumentException('http-basics.security.csp.script_hashes must be a list of hashes.');
+        }
+
+        $scriptHashes = $settings->stringList('security.csp.script_hashes');
+
+        foreach ($scriptHashes as $hash) {
             // The value lands inside the CSP header: base64 only, so it cannot add a source.
             if (preg_match('/\Asha(256|384|512)-[A-Za-z0-9+\/]+={0,2}\z/', $hash) !== 1) {
                 throw new \InvalidArgumentException('http-basics.security.csp.script_hashes must hold sha256-, sha384- or sha512- base64 hashes.');
             }
+        }
+
+        // CSP2+ browsers ignore 'unsafe-inline' once a hash is present: without the nonce,
+        // every other inline script (the appearance script, Vite's tags) would stop running.
+        if ($scriptHashes !== [] && ! $settings->bool('security.csp.nonce')) {
+            throw new \InvalidArgumentException('http-basics.security.csp.script_hashes needs http-basics.security.csp.nonce: without it a hash turns off \'unsafe-inline\' for every other inline script.');
         }
     }
 

@@ -144,7 +144,8 @@ return [
              */
             'nonce' => (bool) env('HTTP_BASICS_CSP_NONCE', false),
             /*
-             * Hashes of allowed inline scripts, e.g. 'sha256-…' (base64).
+             * Hashes of allowed inline scripts, e.g. 'sha256-…' (base64). Needs `nonce`:
+             * a hash makes browsers ignore 'unsafe-inline', so boot refuses one without it.
              *
              * @var list<string>
              */

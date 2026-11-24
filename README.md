@@ -160,7 +160,7 @@ $middleware->prepend(SetSecurityHeadersMiddleware::class);
 | `HTTP_BASICS_CSP` | empty → Vite-friendly default | Full CSP override (verbatim). |
 | `HTTP_BASICS_CSP_REPORT_URI` | empty | Appended to the built/override CSP string before set. |
 | `HTTP_BASICS_CSP_NONCE` | `false` | Strict CSP: a per-request nonce plus `'strict-dynamic'` in the built `script-src`, no `'unsafe-eval'`. |
-| `security.csp.script_hashes` | `[]` | `sha256-…` / `sha384-…` / `sha512-…` hashes of allowed inline scripts. |
+| `security.csp.script_hashes` | `[]` | `sha256-…` / `sha384-…` / `sha512-…` hashes of allowed inline scripts; needs `HTTP_BASICS_CSP_NONCE=true`, checked at boot. |
 | `HTTP_BASICS_HSTS_MAX_AGE` | `0` | HSTS only when greater than 0 and the request is HTTPS; proxy usually owns this. |
 | `HTTP_BASICS_BASELINE_ON_API` | `true` | Machine doors still get nosniff / Referrer / Permissions. |
 
@@ -172,6 +172,23 @@ every tag `@vite` renders carries it. Other inline scripts need the same nonce
 which ignore nonces. `style-src` keeps `'unsafe-inline'`: a style nonce would block the
 inline `style` attributes most front ends render. A full override (`HTTP_BASICS_CSP`) is
 sent as written, without a nonce.
+
+Before turning the nonce on, give every inline script in your layout the nonce. The
+starter kits' appearance script in `resources/views/app.blade.php`, which applies the
+dark theme before the page paints, is one: without the nonce it is blocked and the theme
+flashes or does not apply.
+
+```blade
+<script nonce="{{ Vite::cspNonce() }}">
+    (function () { /* appearance script */ })();
+</script>
+```
+
+Script hashes are refused at boot without the nonce: a hash makes CSP2+ browsers ignore
+`'unsafe-inline'`, so every other inline script would stop running. Do not keep pages
+with a nonce in a shared cache (a full-page response cache, a CDN with
+`Cache-Control: public`): every visitor would get the same nonce, and an injection that
+knows it would run.
 
 Existing HSTS / XFO / Referrer / Permissions / nosniff on the response are never
 replaced. If the response already has **either** `Content-Security-Policy` or

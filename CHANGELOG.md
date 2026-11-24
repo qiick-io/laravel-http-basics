@@ -115,7 +115,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   built `script-src` becomes `'self' 'nonce-…' 'strict-dynamic'` (no `'unsafe-eval'`),
   `SetSecurityHeadersMiddleware` hands the nonce to `Vite::useCspNonce()` before the
   handler runs, and `security.csp.script_hashes` adds hashes of allowed inline scripts,
-  validated at boot. New `CspNonceProvider` contract and `RequestCspNonceProvider`
+  validated at boot (a list of hashes, only with the nonce on). New `CspNonceProvider` contract and `RequestCspNonceProvider`
   (128 random bits per request). Standards review S2.
 
 - Uploads: `UploadValidator`, the `SafeUpload` rule, `HardFloor`, `FileNameSanitizer`,
