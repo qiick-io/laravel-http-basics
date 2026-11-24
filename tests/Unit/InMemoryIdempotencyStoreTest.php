@@ -88,21 +88,79 @@ it('fails closed on lease mismatch complete', function (): void {
     $store->complete($tampered, new ReplayableResponse(200, [], 'x'), $now);
 })->throws(IdempotencyStoreException::class);
 
-it('answers a completed record with an unreadable status code like the real stores', function (mixed $statusCode): void {
+it('answers a sealed record like the real stores: never replay, never re-run', function (): void {
+    // The double stores typed responses, so a sealed record is its only no-status case.
     $store = new InMemoryIdempotencyStore(lockTtlSeconds: 30, staleAfterSeconds: 5);
     $scope = new IdempotencyScope('bucket-a', 'POST', '/items');
     $now = new DateTimeImmutable('2026-01-01T00:00:00Z');
     $key = '550e8400-e29b-41d4-a716-446655440099';
 
-    $claim = $store->claim($scope, $key, 'fp', $now, idempotencyContext());
-    $store->complete($claim, new ReplayableResponse(201, [], 'stored'), $now);
+    $store->sealUnreplayable($store->claim($scope, $key, 'fp', $now, idempotencyContext()), $now);
 
-    // The double has no public way to corrupt a record; the real stores can read one back.
-    $records = new ReflectionProperty($store, 'records');
-    $stored = $records->getValue($store);
-    $recordKey = array_key_first($stored);
-    $stored[$recordKey]['status_code'] = $statusCode;
-    $records->setValue($store, $stored);
+    expect($store->claim($scope, $key, 'fp', $now, idempotencyContext())->outcome)->toBe(ClaimOutcome::NotReplayable)
+        ->and($store->claim($scope, $key, 'other', $now, idempotencyContext())->outcome)->toBe(ClaimOutcome::NotReplayable);
+});
 
-    expect($store->claim($scope, $key, 'fp', $now, idempotencyContext())->outcome)->toBe(ClaimOutcome::NotReplayable);
-})->with(['not numeric' => ['abc'], 'missing' => [null]]);
+it('keeps a completed record for exactly the default TTL', function (): void {
+    $store = new InMemoryIdempotencyStore;
+    $scope = new IdempotencyScope('bucket-a', 'POST', '/items');
+    $now = new DateTimeImmutable('2026-01-01T00:00:00Z');
+    $store->complete($store->claim($scope, 'ttl', 'fp', $now, idempotencyContext()), new ReplayableResponse(201, ['X' => '1'], 'done'), $now);
+
+    $atExpiry = $store->claim($scope, 'ttl', 'fp', $now->modify('+86400 seconds'), idempotencyContext());
+
+    expect($atExpiry->outcome)->toBe(ClaimOutcome::Replay)
+        ->and($atExpiry->replay?->status)->toBe(201)
+        ->and($atExpiry->replay?->headers)->toBe(['X' => '1'])
+        ->and($atExpiry->replay?->body)->toBe('done')
+        ->and($store->claim($scope, 'ttl', 'fp', $now->modify('+86401 seconds'), idempotencyContext())->outcome)->toBe(ClaimOutcome::New);
+});
+
+it('holds the lock for exactly the default lock TTL', function (): void {
+    // stale_after 0: only the lock can refuse the claim.
+    $store = new InMemoryIdempotencyStore(staleAfterSeconds: 0);
+    $scope = new IdempotencyScope('bucket-a', 'POST', '/items');
+    $now = new DateTimeImmutable('2026-01-01T00:00:00Z');
+    $store->claim($scope, 'lock', 'fp', $now, idempotencyContext());
+
+    expect($store->claim($scope, 'lock', 'fp', $now->modify('+59 seconds'), idempotencyContext())->outcome)->toBe(ClaimOutcome::Conflict)
+        ->and($store->claim($scope, 'lock', 'fp', $now->modify('+60 seconds'), idempotencyContext())->outcome)->toBe(ClaimOutcome::New);
+});
+
+it('treats an in-progress record as live for exactly the default stale_after', function (): void {
+    // lock TTL 0: only staleness can refuse the claim.
+    $store = new InMemoryIdempotencyStore(lockTtlSeconds: 0);
+    $scope = new IdempotencyScope('bucket-a', 'POST', '/items');
+    $now = new DateTimeImmutable('2026-01-01T00:00:00Z');
+    $store->claim($scope, 'stale', 'fp', $now, idempotencyContext());
+
+    expect($store->claim($scope, 'stale', 'fp', $now->modify('+59 seconds'), idempotencyContext())->outcome)->toBe(ClaimOutcome::Conflict)
+        ->and($store->claim($scope, 'stale', 'fp', $now->modify('+60 seconds'), idempotencyContext())->outcome)->toBe(ClaimOutcome::New);
+});
+
+it('hands out a 64-character lease', function (): void {
+    $claim = (new InMemoryIdempotencyStore)->claim(new IdempotencyScope('bucket-a', 'POST', '/items'), 'lease', 'fp', new DateTimeImmutable, idempotencyContext());
+
+    expect($claim->lease)->toMatch('/\A[0-9a-f]{64}\z/');
+});
+
+it('ignores abandon from a claim that is not new, even with the right lease', function (): void {
+    $store = new InMemoryIdempotencyStore;
+    $scope = new IdempotencyScope('bucket-a', 'POST', '/items');
+    $now = new DateTimeImmutable('2026-01-01T00:00:00Z');
+    $claim = $store->claim($scope, 'held', 'fp', $now, idempotencyContext());
+
+    $store->abandon(new IdempotencyClaim(ClaimOutcome::Replay, null, $claim->lease, $scope, 'held'), $now);
+
+    expect($store->claim($scope, 'held', 'fp', $now, idempotencyContext())->outcome)->toBe(ClaimOutcome::Conflict);
+});
+
+it('refuses to finish a claim whose lease is missing or empty', function (?string $lease): void {
+    $store = new InMemoryIdempotencyStore;
+    $scope = new IdempotencyScope('bucket-a', 'POST', '/items');
+    $now = new DateTimeImmutable('2026-01-01T00:00:00Z');
+    $store->claim($scope, 'k', 'fp', $now, idempotencyContext());
+
+    expect(fn () => $store->complete(new IdempotencyClaim(ClaimOutcome::New, null, $lease, $scope, 'k'), new ReplayableResponse(201, [], 'x'), $now))
+        ->toThrow(IdempotencyStoreException::class, 'Idempotency lease mismatch on complete.');
+})->with([null, '']);
