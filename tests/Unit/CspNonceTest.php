@@ -194,3 +194,24 @@ it('keeps the Vite dev server origin in a strict script-src', function (): void 
 
     expect(scriptSourceOf($policy))->toBe("'self' 'nonce-n0nce' 'strict-dynamic' http://vite.test:5173 'unsafe-inline'");
 });
+
+it('refuses script hashes that are not a list, at boot', function (): void {
+    config([
+        'http-basics.security.csp.nonce' => true,
+        'http-basics.security.csp.script_hashes' => 'sha256-AbC+/9=',
+    ]);
+
+    expect(fn () => bootProvider())
+        ->toThrow(InvalidArgumentException::class, 'http-basics.security.csp.script_hashes must be a list of hashes.');
+});
+
+it('refuses script hashes without the nonce, at boot', function (): void {
+    // A hash makes CSP2+ browsers ignore 'unsafe-inline', so every other inline script would stop running.
+    config([
+        'http-basics.security.csp.nonce' => false,
+        'http-basics.security.csp.script_hashes' => ['sha256-AbC+/9='],
+    ]);
+
+    expect(fn () => bootProvider())
+        ->toThrow(InvalidArgumentException::class, 'http-basics.security.csp.script_hashes needs http-basics.security.csp.nonce: without it a hash turns off \'unsafe-inline\' for every other inline script.');
+});
