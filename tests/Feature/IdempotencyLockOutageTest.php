@@ -48,7 +48,7 @@ it('turns a lock that cannot be taken into a store failure', function (string $k
     [$store, $locks] = lockOutageStore($kind);
     $locks->isAcquireThrowing = true;
 
-    expect(fn () => $store->claim(new IdempotencyScope('b', 'POST', '/x'), 'k', 'fp', new DateTimeImmutable))
+    expect(fn () => $store->claim(new IdempotencyScope('b', 'POST', '/x'), 'k', 'fp', new DateTimeImmutable, idempotencyContext()))
         ->toThrow(IdempotencyStoreException::class, 'Failed to acquire idempotency lock.');
 })->with(['cache', 'database']);
 
@@ -56,7 +56,7 @@ it('finishes a claim even when its lock cannot be released', function (string $k
     [$store, $locks] = lockOutageStore($kind);
     $scope = new IdempotencyScope('b', 'POST', '/x');
     $now = new DateTimeImmutable;
-    $claim = $store->claim($scope, 'k', 'fp', $now);
+    $claim = $store->claim($scope, 'k', 'fp', $now, idempotencyContext());
     $locks->isReleaseThrowing = true;
 
     match ($finish) {
@@ -68,7 +68,7 @@ it('finishes a claim even when its lock cannot be released', function (string $k
     // The unreleased lock runs out after lock_ttl_seconds.
     $locks->isReleaseThrowing = false;
     $this->travel(31)->seconds();
-    $outcome = $store->claim($scope, 'k', 'fp', $now->modify('+1 minute'))->outcome;
+    $outcome = $store->claim($scope, 'k', 'fp', $now->modify('+1 minute'), idempotencyContext())->outcome;
 
     expect($outcome)->toBe(match ($finish) {
         'complete' => ClaimOutcome::Replay,
@@ -97,7 +97,7 @@ it('re-checks the sealed marker once it holds the lock', function (string $kind)
         : new DatabaseIdempotencyStore(DB::connection(), $cache, 'idempotency_records', 3600, 30, 5);
     $scope = new IdempotencyScope('b', 'POST', '/x');
 
-    expect($store->claim($scope, 'k', 'fp', new DateTimeImmutable)->outcome)->toBe(ClaimOutcome::NotReplayable)
+    expect($store->claim($scope, 'k', 'fp', new DateTimeImmutable, idempotencyContext())->outcome)->toBe(ClaimOutcome::NotReplayable)
         // The lock is released for whoever comes next.
         ->and($cache->getStore()->lock($scope->cacheKey('k').':lock', 1, 'probe')->get())->toBeTrue();
 })->with(['cache', 'database']);
@@ -121,7 +121,7 @@ it('releases the lock when the sealed marker cannot be read under it', function 
         : new DatabaseIdempotencyStore(DB::connection(), $cache, 'idempotency_records', 3600, 30, 5);
     $scope = new IdempotencyScope('b', 'POST', '/x');
 
-    expect(fn () => $store->claim($scope, 'k', 'fp', new DateTimeImmutable))->toThrow(IdempotencyStoreException::class)
+    expect(fn () => $store->claim($scope, 'k', 'fp', new DateTimeImmutable, idempotencyContext()))->toThrow(IdempotencyStoreException::class)
         ->and($cache->getStore()->lock($scope->cacheKey('k').':lock', 1, 'probe')->get())->toBeTrue();
 })->with(['cache', 'database']);
 
@@ -134,5 +134,5 @@ it('answers a sealed key at once, even while another request holds its lock', fu
     (new SealedKeyMarker($cache, 3600))->mark($scope, 'k');
     $cache->getStore()->lock($scope->cacheKey('k').':lock', 30, 'other-request')->get();
 
-    expect($store->claim($scope, 'k', 'fp', new DateTimeImmutable)->outcome)->toBe(ClaimOutcome::NotReplayable);
+    expect($store->claim($scope, 'k', 'fp', new DateTimeImmutable, idempotencyContext())->outcome)->toBe(ClaimOutcome::NotReplayable);
 })->with(['cache', 'database']);

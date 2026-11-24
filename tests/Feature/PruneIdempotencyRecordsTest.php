@@ -6,6 +6,7 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
 use Qiick\HttpBasics\Idempotency\IdempotencyRecord;
 
 /*
@@ -36,6 +37,8 @@ afterEach(function (): void {
 function insertIdempotencyRecordExpiringAt(string $utcExpiresAt, string $keySuffix): void
 {
     DB::table('idempotency_records')->insert([
+        'public_id' => (string) Str::uuid7(),
+        'key_format' => 'uuid',
         'bucket' => 'bucket-a',
         'key_hash' => hash('sha256', 'key-'.$keySuffix),
         'method' => 'POST',

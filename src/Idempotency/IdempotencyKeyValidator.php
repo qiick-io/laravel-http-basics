@@ -22,6 +22,11 @@ final class IdempotencyKeyValidator
         private int $maxLength = 128,
     ) {}
 
+    public function format(): IdempotencyKeyFormat
+    {
+        return $this->format;
+    }
+
     public function isValid(?string $key): bool
     {
         if ($key === null || $key === '') {

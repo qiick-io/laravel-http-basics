@@ -41,6 +41,7 @@ final class CacheIdempotencyStore implements IdempotencyStore
         string $key,
         string $fingerprint,
         DateTimeImmutable $now,
+        IdempotencyContext $context,
     ): IdempotencyClaim {
         if ($this->sealedKeys->isMarked($scope, $key)) {
             return new IdempotencyClaim(ClaimOutcome::NotReplayable, null, null, $scope, $key);
@@ -301,7 +302,7 @@ final class CacheIdempotencyStore implements IdempotencyStore
     private function releaseLock(string $recordKey, string $owner): void
     {
         try {
-            $this->locks->lock($recordKey.self::LOCK_SUFFIX, $this->lockTtlSeconds, $owner)->release();
+            $this->locks->restoreLock($recordKey.self::LOCK_SUFFIX, $owner)->release();
         } catch (\Throwable) {
             // The lock expires on its own.
         }

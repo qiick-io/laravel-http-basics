@@ -17,6 +17,7 @@ use Qiick\HttpBasics\Idempotency\Fingerprinter;
 use Qiick\HttpBasics\Idempotency\FleetErrorRenderer;
 use Qiick\HttpBasics\Idempotency\HandleIdempotencyMiddleware;
 use Qiick\HttpBasics\Idempotency\IdempotencyClaim;
+use Qiick\HttpBasics\Idempotency\IdempotencyContext;
 use Qiick\HttpBasics\Idempotency\IdempotencyKeyFormat;
 use Qiick\HttpBasics\Idempotency\IdempotencyKeyValidator;
 use Qiick\HttpBasics\Idempotency\IdempotencyRejection;
@@ -154,6 +155,7 @@ it('abandons streamed responses without completing the claim', function (): void
         '550e8400-e29b-41d4-a716-446655440010',
         app(Fingerprinter::class)->fingerprint($request, 1048576),
         new DateTimeImmutable,
+        idempotencyContext(),
     );
 
     expect($again->outcome)->toBe(ClaimOutcome::New);
@@ -173,6 +175,7 @@ it('rethrows exceptions after abandoning the in-flight claim', function (): void
         '550e8400-e29b-41d4-a716-446655440099',
         'fp',
         new DateTimeImmutable,
+        idempotencyContext(),
     );
     expect($again->outcome)->toBe(ClaimOutcome::New);
 });
@@ -226,7 +229,7 @@ it('treats replayable=FALSE as disabled case-insensitively', function (): void {
 it('clamps max handler seconds to at least one and uses the store lock for Conflict Retry-After', function (): void {
     $store = new class implements IdempotencyStore
     {
-        public function claim(IdempotencyScope $scope, string $key, string $fingerprint, DateTimeImmutable $now): IdempotencyClaim
+        public function claim(IdempotencyScope $scope, string $key, string $fingerprint, DateTimeImmutable $now, IdempotencyContext $context): IdempotencyClaim
         {
             return new IdempotencyClaim(ClaimOutcome::Conflict, null, null, $scope, $key);
         }
@@ -304,6 +307,7 @@ it('abandons status boundaries around the completable window', function (): void
             $keyBase.$suffix,
             'fp',
             new DateTimeImmutable,
+            idempotencyContext(),
         );
         expect($again->outcome)->toBe(ClaimOutcome::New);
     }
@@ -314,6 +318,7 @@ it('abandons status boundaries around the completable window', function (): void
             $keyBase.$suffix,
             'fp',
             new DateTimeImmutable,
+            idempotencyContext(),
         );
         expect($again->outcome)->toBe(ClaimOutcome::Mismatch);
     }
@@ -348,7 +353,7 @@ it('rejects missing keys on required non-replayable routes and passes valid keys
 it('uses the store lock TTL for Conflict Retry-After regardless of max_handler_seconds', function (): void {
     $store = new class implements IdempotencyStore
     {
-        public function claim(IdempotencyScope $scope, string $key, string $fingerprint, DateTimeImmutable $now): IdempotencyClaim
+        public function claim(IdempotencyScope $scope, string $key, string $fingerprint, DateTimeImmutable $now, IdempotencyContext $context): IdempotencyClaim
         {
             return new IdempotencyClaim(ClaimOutcome::Conflict, null, null, $scope, $key);
         }
@@ -404,7 +409,7 @@ it('falls back to the anonymous bucket when credentials are empty', function ():
 it('maps store claim failures to unavailable', function (): void {
     $store = new class implements IdempotencyStore
     {
-        public function claim(IdempotencyScope $scope, string $key, string $fingerprint, DateTimeImmutable $now): IdempotencyClaim
+        public function claim(IdempotencyScope $scope, string $key, string $fingerprint, DateTimeImmutable $now, IdempotencyContext $context): IdempotencyClaim
         {
             throw new IdempotencyStoreException('down');
         }
@@ -426,7 +431,7 @@ it('maps store claim failures to unavailable', function (): void {
 it('replays completed claims and overlays the current request id', function (): void {
     $store = new class implements IdempotencyStore
     {
-        public function claim(IdempotencyScope $scope, string $key, string $fingerprint, DateTimeImmutable $now): IdempotencyClaim
+        public function claim(IdempotencyScope $scope, string $key, string $fingerprint, DateTimeImmutable $now, IdempotencyContext $context): IdempotencyClaim
         {
             return new IdempotencyClaim(
                 ClaimOutcome::Replay,
@@ -457,7 +462,7 @@ it('replays completed claims and overlays the current request id', function (): 
 it('treats a null replay payload as unavailable', function (): void {
     $store = new class implements IdempotencyStore
     {
-        public function claim(IdempotencyScope $scope, string $key, string $fingerprint, DateTimeImmutable $now): IdempotencyClaim
+        public function claim(IdempotencyScope $scope, string $key, string $fingerprint, DateTimeImmutable $now, IdempotencyContext $context): IdempotencyClaim
         {
             return new IdempotencyClaim(ClaimOutcome::Replay, null, null, $scope, $key);
         }
@@ -479,7 +484,7 @@ it('treats a null replay payload as unavailable', function (): void {
 it('maps mismatch claims to payload mismatch', function (): void {
     $store = new class implements IdempotencyStore
     {
-        public function claim(IdempotencyScope $scope, string $key, string $fingerprint, DateTimeImmutable $now): IdempotencyClaim
+        public function claim(IdempotencyScope $scope, string $key, string $fingerprint, DateTimeImmutable $now, IdempotencyContext $context): IdempotencyClaim
         {
             return new IdempotencyClaim(ClaimOutcome::Mismatch, null, null, $scope, $key);
         }
@@ -557,6 +562,7 @@ it('abandons binary file responses, non-utf8 bodies, 429, redirects and denied h
             $keyBase.$suffix,
             'fp',
             new DateTimeImmutable,
+            idempotencyContext(),
         );
         expect($again->outcome)->toBe(ClaimOutcome::New);
     }
@@ -567,7 +573,7 @@ it('abandons binary file responses, non-utf8 bodies, 429, redirects and denied h
 it('maps complete failures to unavailable after the handler succeeds', function (): void {
     $store = new class implements IdempotencyStore
     {
-        public function claim(IdempotencyScope $scope, string $key, string $fingerprint, DateTimeImmutable $now): IdempotencyClaim
+        public function claim(IdempotencyScope $scope, string $key, string $fingerprint, DateTimeImmutable $now, IdempotencyContext $context): IdempotencyClaim
         {
             return new IdempotencyClaim(ClaimOutcome::New, null, str_repeat('a', 64), $scope, $key);
         }
@@ -656,7 +662,7 @@ it('returns 409 not_replayable for sealed completed-without-body claims', functi
     $scope = new IdempotencyScope('tenant:1', 'POST', '/api/widgets');
     $now = new DateTimeImmutable;
     $key = '550e8400-e29b-41d4-a716-446655440090';
-    $claim = $store->claim($scope, $key, app(Fingerprinter::class)->fingerprint(idempotencyRequest(), 1048576), $now);
+    $claim = $store->claim($scope, $key, app(Fingerprinter::class)->fingerprint(idempotencyRequest(), 1048576), $now, idempotencyContext());
     $store->sealUnreplayable($claim, $now);
 
     $this->app->instance(IdempotencyStore::class, $store);
@@ -880,7 +886,7 @@ it('falls through empty credential buckets to anonymous when enabled', function 
 it('maps claim QueryException-equivalent store failures to 503 with Retry-After', function (): void {
     $store = new class implements IdempotencyStore
     {
-        public function claim(IdempotencyScope $scope, string $key, string $fingerprint, DateTimeImmutable $now): IdempotencyClaim
+        public function claim(IdempotencyScope $scope, string $key, string $fingerprint, DateTimeImmutable $now, IdempotencyContext $context): IdempotencyClaim
         {
             throw new IdempotencyStoreException('Failed to read idempotency marker.');
         }
@@ -938,6 +944,7 @@ it('hands the renderer Retry-After values as strings', function (): void {
         '550e8400-e29b-41d4-a716-446655440010',
         'held',
         new DateTimeImmutable,
+        idempotencyContext(),
     );
     $middleware->handle(idempotencyRequest(), static fn () => response('x'));
     $unbucketed->handle(idempotencyRequest(), static fn () => response('x'));
@@ -1024,6 +1031,7 @@ it('folds the served locale into machine-door fingerprints and nothing into web 
         '550e8400-e29b-41d4-a716-446655440094',
         $expectedFingerprint,
         new DateTimeImmutable,
+        idempotencyContext(),
     );
 
     expect($retry->outcome)->toBe(ClaimOutcome::Replay);
@@ -1115,9 +1123,9 @@ it('rethrows the handler failure even when abandoning the claim fails too', func
     {
         public function __construct(private InMemoryIdempotencyStore $inner) {}
 
-        public function claim(IdempotencyScope $scope, string $key, string $fingerprint, DateTimeImmutable $now): IdempotencyClaim
+        public function claim(IdempotencyScope $scope, string $key, string $fingerprint, DateTimeImmutable $now, IdempotencyContext $context): IdempotencyClaim
         {
-            return $this->inner->claim($scope, $key, $fingerprint, $now);
+            return $this->inner->claim($scope, $key, $fingerprint, $now, $context);
         }
 
         public function complete(IdempotencyClaim $claim, ReplayableResponse $response, DateTimeImmutable $now): void
@@ -1224,9 +1232,9 @@ it('keeps the handler response when abandoning the claim fails', function (): vo
     {
         public function __construct(private InMemoryIdempotencyStore $inner) {}
 
-        public function claim(IdempotencyScope $scope, string $key, string $fingerprint, DateTimeImmutable $now): IdempotencyClaim
+        public function claim(IdempotencyScope $scope, string $key, string $fingerprint, DateTimeImmutable $now, IdempotencyContext $context): IdempotencyClaim
         {
-            return $this->inner->claim($scope, $key, $fingerprint, $now);
+            return $this->inner->claim($scope, $key, $fingerprint, $now, $context);
         }
 
         public function complete(IdempotencyClaim $claim, ReplayableResponse $response, DateTimeImmutable $now): void
@@ -1251,6 +1259,129 @@ it('keeps the handler response when abandoning the claim fails', function (): vo
 
     expect($response->getStatusCode())->toBe(500)
         ->and($response->getContent())->toBe('handler broke');
+});
+
+it('hands the store the key format, fingerprint version and request id of the claim', function (): void {
+    $store = new class(new InMemoryIdempotencyStore) implements IdempotencyStore
+    {
+        public ?IdempotencyContext $context = null;
+
+        public function __construct(private InMemoryIdempotencyStore $inner) {}
+
+        public function claim(IdempotencyScope $scope, string $key, string $fingerprint, DateTimeImmutable $now, IdempotencyContext $context): IdempotencyClaim
+        {
+            $this->context = $context;
+
+            return $this->inner->claim($scope, $key, $fingerprint, $now, $context);
+        }
+
+        public function complete(IdempotencyClaim $claim, ReplayableResponse $response, DateTimeImmutable $now): void
+        {
+            $this->inner->complete($claim, $response, $now);
+        }
+
+        public function sealUnreplayable(IdempotencyClaim $claim, DateTimeImmutable $now): void
+        {
+            $this->inner->sealUnreplayable($claim, $now);
+        }
+
+        public function abandon(IdempotencyClaim $claim, DateTimeImmutable $now): void
+        {
+            $this->inner->abandon($claim, $now);
+        }
+    };
+    app(RequestIdResolver::class)->bind(Request::create('/api/widgets', 'POST', server: ['HTTP_X_REQUEST_ID' => 'ignored-untrusted']));
+    $currentRequestId = app(RequestIdResolver::class)->current()?->value;
+
+    makeIdempotencyMiddleware($store, new FakeCredentialBucketResolver('tenant:1'))
+        ->handle(idempotencyRequest(), static fn () => response('ok', 201));
+
+    expect($store->context?->keyFormat)->toBe(IdempotencyKeyFormat::Uuid)
+        ->and($store->context?->fingerprintVersion)->toBe(1)
+        ->and($currentRequestId)->not->toBeNull()
+        ->and($store->context?->requestId)->toBe($currentRequestId);
+});
+
+/**
+ * An in-memory store that remembers the context of the last claim.
+ */
+function contextCapturingStore(): IdempotencyStore
+{
+    return new class(new InMemoryIdempotencyStore) implements IdempotencyStore
+    {
+        public ?IdempotencyContext $context = null;
+
+        public function __construct(private InMemoryIdempotencyStore $inner) {}
+
+        public function claim(IdempotencyScope $scope, string $key, string $fingerprint, DateTimeImmutable $now, IdempotencyContext $context): IdempotencyClaim
+        {
+            $this->context = $context;
+
+            return $this->inner->claim($scope, $key, $fingerprint, $now, $context);
+        }
+
+        public function complete(IdempotencyClaim $claim, ReplayableResponse $response, DateTimeImmutable $now): void
+        {
+            $this->inner->complete($claim, $response, $now);
+        }
+
+        public function sealUnreplayable(IdempotencyClaim $claim, DateTimeImmutable $now): void
+        {
+            $this->inner->sealUnreplayable($claim, $now);
+        }
+
+        public function abandon(IdempotencyClaim $claim, DateTimeImmutable $now): void
+        {
+            $this->inner->abandon($claim, $now);
+        }
+    };
+}
+
+it('leaves an unstorable request id out of the claim context instead of failing the request', function (string $requestId): void {
+    // Review of #22 (B1): a custom IdGenerator or accept_pattern can produce ids the record cannot hold.
+    $store = contextCapturingStore();
+    Context::add(RequestIdResolver::VISIBLE_CONTEXT_KEY, $requestId);
+
+    $response = makeIdempotencyMiddleware($store, new FakeCredentialBucketResolver('tenant:1'))
+        ->handle(idempotencyRequest(), static fn () => response('ok', 201));
+
+    expect($response->getStatusCode())->toBe(201)
+        ->and($store->context?->requestId)->toBeNull();
+})->with([
+    '129 characters' => [str_repeat('r', 129)],
+    'outside the request-id alphabet' => ["req\xC3\x28-invalid-utf8"],
+]);
+
+it('keeps a storable request id in the claim context', function (): void {
+    Context::add(RequestIdResolver::VISIBLE_CONTEXT_KEY, str_repeat('r', 128));
+    $store = contextCapturingStore();
+
+    makeIdempotencyMiddleware($store, new FakeCredentialBucketResolver('tenant:1'))
+        ->handle(idempotencyRequest(), static fn () => response('ok', 201));
+
+    expect($store->context?->requestId)->toBe(str_repeat('r', 128));
+});
+
+it('stores a bucket too long for its column under a hash of it', function (): void {
+    // Review of #22: buckets over 128 characters used to fail every write on strict engines.
+    $longBucket = str_repeat('b', 200);
+    $middleware = makeIdempotencyMiddleware($this->store, new FakeCredentialBucketResolver($longBucket));
+
+    $middleware->handle(idempotencyRequest(), static fn () => response('first', 201));
+    $hashedScope = new IdempotencyScope('sha256:'.hash('sha256', $longBucket), 'POST', '/api/widgets');
+
+    expect($this->store->claim($hashedScope, '550e8400-e29b-41d4-a716-446655440010', 'other', new DateTimeImmutable, idempotencyContext())->outcome)
+        ->toBe(ClaimOutcome::Mismatch)
+        ->and($middleware->handle(idempotencyRequest(), static fn () => response('second', 201))->getContent())->toBe('first');
+});
+
+it('keeps a bucket of exactly 128 characters as it is', function (): void {
+    $bucket = str_repeat('b', 128);
+    makeIdempotencyMiddleware($this->store, new FakeCredentialBucketResolver($bucket))
+        ->handle(idempotencyRequest(), static fn () => response('first', 201));
+
+    expect($this->store->claim(new IdempotencyScope($bucket, 'POST', '/api/widgets'), '550e8400-e29b-41d4-a716-446655440010', 'other', new DateTimeImmutable, idempotencyContext())->outcome)
+        ->toBe(ClaimOutcome::Mismatch);
 });
 
 it('refuses a structured-syntax suffix with no subtype before it', function (string $contentType): void {

@@ -5,6 +5,7 @@ declare(strict_types=1);
 use Qiick\HttpBasics\Tests\Support\PackageTestCase;
 
 require_once __DIR__.'/Support/idempotency-hrtime-shim.php';
+require_once __DIR__.'/Support/idempotency-helpers.php';
 
 /*
  * Fleet conformance under tests/Conformance is app-scoped (needs a product

@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\MySqlConnection;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
@@ -19,18 +20,54 @@ return new class extends Migration
     {
         Schema::create('idempotency_records', function (Blueprint $table): void {
             $table->id();
-            $table->string('bucket', 128);
-            // string(64) not char(64): PostgreSQL CHAR right-pads short values and breaks equality.
+            // UUIDv7 written by the store: the id a product may expose, never `id`.
+            $table->uuid('public_id')->unique();
+            $bucket = $table->string('bucket', 128);
+
+            // Buckets are opaque identifiers: on PostgreSQL and SQLite they compare byte for
+            // byte. MySQL and MariaDB default to a case- and accent-insensitive collation,
+            // and even utf8mb4_bin pads trailing spaces, so they need a binary NO PAD one.
+            $connection = Schema::getConnection();
+
+            if ($connection instanceof MySqlConnection) {
+                $bucket->collation($connection->isMaria() ? 'utf8mb4_nopad_bin' : 'utf8mb4_0900_bin');
+            }
+
+            // Versions the bucket scheme (the anonymous HMAC components).
+            $table->unsignedSmallInteger('bucket_version')->default(1);
+            $table->uuid('credential_public_id')->nullable()->index();
+            // string(64), not the char(64) of the standards review: PostgreSQL CHAR
+            // right-pads shorter values, so equality on them breaks. Same for the
+            // fingerprint and the lease below.
             $table->string('key_hash', 64);
+            $table->string('key_hash_algorithm', 32)->default('sha256');
+            // uuid or sf-string, written by the store from the claim context.
+            $table->string('key_format', 16);
             $table->string('method', 16);
             $table->string('path', 2048);
             $table->string('fingerprint', 64);
+            $table->string('fingerprint_algorithm', 32)->default('sha256');
+            $table->unsignedSmallInteger('fingerprint_version')->default(1);
             $table->string('lease', 64);
-            $table->string('status', 32);
+            $table->string('status', 32)->default('in_progress');
             $table->unsignedSmallInteger('status_code')->nullable();
             $table->text('headers_json')->nullable();
             // longText: MySQL/MariaDB `text` is only 64 KiB; responses are capped by max_response_bytes.
             $table->longText('body')->nullable();
+            // Leaves room for base64 bodies.
+            $table->string('body_encoding', 16)->default('utf-8');
+            $table->string('request_id', 128)->nullable();
+            // W3C trace-id, lowercase hex.
+            // Indexed now, empty until the trace-context module fills it: adding an index
+            // to a hot table after 1.0 would cost more than carrying it.
+            $table->char('trace_id', 32)->nullable()->index();
+            // Namespaced keys; never secrets, never tracestate.
+            // jsonb on PostgreSQL, so products can index or filter it later without a rewrite.
+            $table->jsonb('metadata')->nullable();
+            // Row format, including how headers_json is serialised.
+            $table->unsignedSmallInteger('schema_version')->default(1);
+            // A past event: Laravel's default type (C11).
+            $table->timestamp('completed_at')->nullable();
             $table->timestamps();
             // Future-dated: dateTime (C11), never MySQL TIMESTAMP.
             $table->dateTime('expires_at');

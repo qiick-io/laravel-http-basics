@@ -82,7 +82,7 @@ it('complete() seals unreplayable on QueryException so a retry never re-claims N
     $scope = new IdempotencyScope('bucket', 'POST', '/api/items');
     $now = new DateTimeImmutable;
     $key = '550e8400-e29b-41d4-a716-446655440202';
-    $claim = $store->claim($scope, $key, 'fp', $now);
+    $claim = $store->claim($scope, $key, 'fp', $now, idempotencyContext());
 
     expect(fn () => $store->complete(
         $claim,
@@ -95,7 +95,7 @@ it('complete() seals unreplayable on QueryException so a retry never re-claims N
         ->and($row->body)->toBeNull()
         ->and($row->status_code)->toBeNull();
 
-    $again = $store->claim($scope, $key, 'fp', $now);
+    $again = $store->claim($scope, $key, 'fp', $now, idempotencyContext());
     expect($again->outcome)->toBe(ClaimOutcome::NotReplayable)
         ->and(DB::table('idempotency_records')->count())->toBe(1);
 });
@@ -106,12 +106,12 @@ it('treats expired completed rows as absent so keys do not replay forever', func
     $now = new DateTimeImmutable('2026-01-01 12:00:00');
     $key = '550e8400-e29b-41d4-a716-446655440203';
 
-    $claim = $store->claim($scope, $key, 'fp', $now);
+    $claim = $store->claim($scope, $key, 'fp', $now, idempotencyContext());
     $store->complete($claim, new ReplayableResponse(201, [], '{"ok":true}'), $now);
 
     DB::table('idempotency_records')->update(['expires_at' => $now->modify('-1 second')]);
 
-    $again = $store->claim($scope, $key, 'fp', $now->modify('+2 days'));
+    $again = $store->claim($scope, $key, 'fp', $now->modify('+2 days'), idempotencyContext());
     expect($again->outcome)->toBe(ClaimOutcome::New);
 });
 
@@ -119,7 +119,7 @@ it('pruneExpired deletes rows past expires_at', function (): void {
     $store = failClosedStore();
     $scope = new IdempotencyScope('bucket', 'POST', '/api/items');
     $now = new DateTimeImmutable('2026-01-01 12:00:00');
-    $claim = $store->claim($scope, '550e8400-e29b-41d4-a716-446655440205', 'fp', $now);
+    $claim = $store->claim($scope, '550e8400-e29b-41d4-a716-446655440205', 'fp', $now, idempotencyContext());
     $store->complete($claim, new ReplayableResponse(201, [], 'ok'), $now);
 
     DB::table('idempotency_records')->update(['expires_at' => $now->modify('-1 minute')]);
@@ -139,7 +139,7 @@ it('keeps a key unreplayable when the database rejects both the response and the
     $scope = new IdempotencyScope('bucket', 'POST', '/api/items');
     $now = new DateTimeImmutable('2026-01-01T00:00:00Z');
     $key = '550e8400-e29b-41d4-a716-446655440204';
-    $claim = $store->claim($scope, $key, 'fp', $now);
+    $claim = $store->claim($scope, $key, 'fp', $now, idempotencyContext());
     DB::statement("CREATE TRIGGER idempotency_reject_every_update BEFORE UPDATE ON idempotency_records BEGIN SELECT RAISE(ABORT, 'read-only'); END");
 
     expect(fn () => $store->complete($claim, new ReplayableResponse(201, [], 'created'), $now))
@@ -152,7 +152,7 @@ it('keeps a key unreplayable when the database rejects both the response and the
     DB::statement('DROP TRIGGER idempotency_reject_every_update');
     $cache->getStore()->lock($scope->cacheKey($key).':lock', 0)->forceRelease();
 
-    expect($store->claim($scope, $key, 'fp', $now->modify('+1 hour'))->outcome)->toBe(ClaimOutcome::NotReplayable);
+    expect($store->claim($scope, $key, 'fp', $now->modify('+1 hour'), idempotencyContext())->outcome)->toBe(ClaimOutcome::NotReplayable);
 });
 
 it('says so when neither the database nor the cache can seal the key', function (): void {
@@ -164,7 +164,7 @@ it('says so when neither the database nor the cache can seal the key', function 
     $store = new DatabaseIdempotencyStore(DB::connection(), $cache, 'idempotency_records', 86400, 30, 5);
     $scope = new IdempotencyScope('bucket', 'POST', '/api/items');
     $now = new DateTimeImmutable('2026-01-01T00:00:00Z');
-    $claim = $store->claim($scope, '550e8400-e29b-41d4-a716-446655440205', 'fp', $now);
+    $claim = $store->claim($scope, '550e8400-e29b-41d4-a716-446655440205', 'fp', $now, idempotencyContext());
     DB::statement("CREATE TRIGGER idempotency_reject_every_update BEFORE UPDATE ON idempotency_records BEGIN SELECT RAISE(ABORT, 'read-only'); END");
     $cache->isPutRefused = static fn (string $key): bool => true;
 

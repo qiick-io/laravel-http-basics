@@ -9,6 +9,7 @@ use Illuminate\Cache\Repository as CacheRepository;
 use Illuminate\Contracts\Cache\LockProvider;
 use Illuminate\Database\ConnectionInterface;
 use Illuminate\Database\QueryException;
+use Illuminate\Support\Str;
 use Qiick\HttpBasics\Contracts\IdempotencyStore;
 
 /**
@@ -48,6 +49,7 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
         string $key,
         string $fingerprint,
         DateTimeImmutable $now,
+        IdempotencyContext $context,
     ): IdempotencyClaim {
         if ($this->sealedKeys->isMarked($scope, $key)) {
             return new IdempotencyClaim(ClaimOutcome::NotReplayable, null, null, $scope, $key);
@@ -101,6 +103,18 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
             'fingerprint' => $fingerprint,
             'lease' => $lease,
             'status' => 'in_progress',
+            'key_format' => $context->keyFormat->value,
+            'fingerprint_version' => $context->fingerprintVersion,
+            'request_id' => $context->requestId,
+            'trace_id' => $context->traceId,
+            'credential_public_id' => $context->credentialPublicId,
+            'metadata' => $context->metadata === [] ? null : json_encode($context->metadata, JSON_THROW_ON_ERROR),
+            // A row describes one operation: a takeover (expired or stale row, possibly
+            // from another route) gets its own public id, method, path and start time.
+            'public_id' => Str::uuid7($utcNow)->toString(),
+            'method' => $scope->method,
+            'path' => $scope->path,
+            'created_at' => $utcNow,
             'updated_at' => $utcNow,
             'expires_at' => $this->expiresAt($utcNow),
         ];
@@ -110,12 +124,9 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
                 $this->connection->table($this->table)->insert([
                     'bucket' => $scope->bucket,
                     'key_hash' => $keyHash,
-                    'method' => $scope->method,
-                    'path' => $scope->path,
-                    'created_at' => $utcNow,
                 ] + $claimedColumns);
             } else {
-                // Taking over an expired or stale row must drop its old payload.
+                // Taking over must also drop the old operation's payload.
                 $this->connection->table($this->table)
                     ->where('bucket', $scope->bucket)
                     ->where('key_hash', $keyHash)
@@ -123,6 +134,7 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
                         'status_code' => null,
                         'headers_json' => null,
                         'body' => null,
+                        'completed_at' => null,
                     ]);
             }
         } catch (QueryException $exception) {
@@ -145,6 +157,8 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
             $updated = $this->finishInProgressRow($claim, $lease, $now, [
                 'status_code' => $response->status,
                 'headers_json' => json_encode($response->headers, JSON_THROW_ON_ERROR),
+                // body_encoding keeps its utf-8 default: the middleware stores UTF-8 text
+                // only; the column leaves room for base64 without a migration.
                 'body' => $response->body,
             ]);
         } catch (QueryException $exception) {
@@ -334,6 +348,7 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
             ->where('status', 'in_progress')
             ->update([
                 'status' => 'completed',
+                'completed_at' => $utcNow,
                 'updated_at' => $utcNow,
                 'expires_at' => $this->expiresAt($utcNow),
             ] + $payloadColumns);

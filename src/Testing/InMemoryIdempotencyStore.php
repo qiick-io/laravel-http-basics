@@ -8,6 +8,7 @@ use DateTimeImmutable;
 use Qiick\HttpBasics\Contracts\IdempotencyStore;
 use Qiick\HttpBasics\Idempotency\ClaimOutcome;
 use Qiick\HttpBasics\Idempotency\IdempotencyClaim;
+use Qiick\HttpBasics\Idempotency\IdempotencyContext;
 use Qiick\HttpBasics\Idempotency\IdempotencyScope;
 use Qiick\HttpBasics\Idempotency\IdempotencyStoreException;
 use Qiick\HttpBasics\Idempotency\ReplayableResponse;
@@ -34,6 +35,7 @@ final class InMemoryIdempotencyStore implements IdempotencyStore
         string $key,
         string $fingerprint,
         DateTimeImmutable $now,
+        IdempotencyContext $context,
     ): IdempotencyClaim {
         $recordKey = $scope->cacheKey($key);
         $lockKey = $recordKey.':lock';
