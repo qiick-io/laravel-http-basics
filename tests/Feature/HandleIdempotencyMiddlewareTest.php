@@ -8,6 +8,7 @@ use Qiick\HttpBasics\Contracts\ErrorRenderer;
 use Qiick\HttpBasics\Contracts\IdempotencyStore;
 use Qiick\HttpBasics\Errors\ErrorCode;
 use Qiick\HttpBasics\Idempotency\HandleIdempotencyMiddleware;
+use Qiick\HttpBasics\Idempotency\IdempotencyKeyValidator;
 use Qiick\HttpBasics\Idempotency\IdempotencyRejection;
 use Qiick\HttpBasics\RequestId\AssignRequestIdMiddleware;
 use Qiick\HttpBasics\Testing\FakeCredentialBucketResolver;
@@ -137,4 +138,17 @@ it('renders in progress refusals with retry-after on the json payload', function
     expect($response->getStatusCode())->toBe(409)
         ->and($response->headers->get('Retry-After'))->toBe('30')
         ->and($response->getData(true)['error'])->toBe('idempotency_in_progress');
+});
+
+it('treats a quoted sf-string key and its bare form as the same key', function (): void {
+    config(['http-basics.idempotency.key_format' => 'sf-string']);
+    $this->app->forgetInstance(IdempotencyKeyValidator::class);
+
+    $this->postJson('/api/items', [], ['Idempotency-Key' => '"8e03978e-40d5-43e8-bc93-6894a57f9324"'])
+        ->assertStatus(201)
+        ->assertHeaderMissing('Idempotent-Replayed');
+
+    $this->postJson('/api/items', [], ['Idempotency-Key' => '8e03978e-40d5-43e8-bc93-6894a57f9324'])
+        ->assertStatus(201)
+        ->assertHeader('Idempotent-Replayed', 'true');
 });
