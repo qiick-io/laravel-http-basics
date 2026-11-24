@@ -262,3 +262,17 @@ it('keeps walking the query bag after an empty array, a nested list item and a n
     expect($fingerprinter->fingerprint($request, 1048576))
         ->toBe(hash('sha256', "POST\n/items?0=zero&empty=&list=x&list%5By%5D=z&tail=t\n\n{}\n"));
 });
+
+it('reads the raw query the way the app does: + is a space, %2B a plus', function (): void {
+    // PHP and Symfony decode `+` as a space, so `a+b` and `a%2Bb` are different input.
+    $fingerprinter = new Fingerprinter;
+    $fingerprintOf = static fn (string $query): string => $fingerprinter->fingerprint(
+        Request::create('/items?'.$query, 'POST', [], [], [], ['CONTENT_TYPE' => 'application/json'], '{}'),
+        1048576,
+    );
+
+    expect($fingerprintOf('q=a+b'))->not->toBe($fingerprintOf('q=a%2Bb'))
+        ->and($fingerprintOf('q=a+b'))->toBe($fingerprintOf('q=a%20b'))
+        ->and($fingerprintOf('a+b=1'))->toBe($fingerprintOf('a%20b=1'))
+        ->and($fingerprintOf('a+b'))->toBe($fingerprintOf('a%20b='));
+});
