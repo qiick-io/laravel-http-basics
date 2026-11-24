@@ -19,11 +19,20 @@ final class ViteFriendlyCspPolicyBuilder implements CspPolicyBuilder
     /**
      * @param  CspNonceProvider|null  $nonces  set: a strict script-src around the request nonce
      * @param  list<string>  $scriptHashes  `sha256-…` / `sha384-…` / `sha512-…` sources for inline scripts
+     *
+     * @throws \InvalidArgumentException when a hash is not a base64 CSP hash source
      */
     public function __construct(
         private ?CspNonceProvider $nonces = null,
         private array $scriptHashes = [],
-    ) {}
+    ) {
+        foreach ($scriptHashes as $hash) {
+            // The value lands inside the CSP header: base64 only, so it cannot add a source.
+            if (preg_match('/\Asha(256|384|512)-[A-Za-z0-9+\/]+={0,2}\z/', $hash) !== 1) {
+                throw new \InvalidArgumentException('http-basics.security.csp.script_hashes must hold sha256-, sha384- or sha512- base64 hashes.');
+            }
+        }
+    }
 
     public function build(Request $request): string
     {
