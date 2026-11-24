@@ -72,6 +72,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   claimed before the deploy and retried after it with `+` or `%2B` in its query gets
   `idempotency_payload_mismatch` (422) until its record expires (`ttl_seconds`).
 
+- Uploads: the shipped magic floor checks a `webp` upload for its `RIFF` signature, so a
+  file named `.webp` with other bytes is refused (`upload_content_mismatch`).
+
+- Locale: `SetLocaleMiddleware` keeps every `Vary` line when it adds `Accept-Language`
+  (it read only the first one, so `Vary: Cookie` on a second line was lost), through the
+  same merge CORS uses.
+
 - Idempotency: `require_json` accepts `application/<name>+json` only with a non-empty RFC
   6838 name before `+json` (`application/+json` is now 415), and the English and Italian
   415 messages name both accepted media types.
