@@ -13,6 +13,7 @@ use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Qiick\HttpBasics\Idempotency\ClaimOutcome;
 use Qiick\HttpBasics\Idempotency\DatabaseIdempotencyStore;
+use Qiick\HttpBasics\Idempotency\Fingerprinter;
 use Qiick\HttpBasics\Idempotency\IdempotencyClaim;
 use Qiick\HttpBasics\Idempotency\IdempotencyContext;
 use Qiick\HttpBasics\Idempotency\IdempotencyKeyFormat;
@@ -946,7 +947,7 @@ it('stores empty metadata as null and plain context facts as null', function ():
     $row = DB::table('idempotency_records')->first();
 
     expect($row->key_format)->toBe('uuid')
-        ->and((int) $row->fingerprint_version)->toBe(1)
+        ->and((int) $row->fingerprint_version)->toBe(Fingerprinter::VERSION)
         ->and($row->metadata)->toBeNull()
         ->and($row->request_id)->toBeNull()
         ->and($row->trace_id)->toBeNull()
@@ -981,7 +982,7 @@ it('gives a takeover a new row id and the new claim context', function (): void 
 
     expect($row->public_id)->not->toBe($publicId)
         ->and($row->key_format)->toBe('uuid')
-        ->and((int) $row->fingerprint_version)->toBe(1)
+        ->and((int) $row->fingerprint_version)->toBe(Fingerprinter::VERSION)
         ->and($row->request_id)->toBeNull()
         ->and($row->trace_id)->toBeNull()
         ->and($row->credential_public_id)->toBeNull()

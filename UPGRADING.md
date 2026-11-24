@@ -73,6 +73,16 @@ Notable configuration changes and requirements:
   - A missing `locale.machine_doors` gives the security headers the same doors as the
     locale classifier: `api`, `api/*`, `mcp`, `mcp/*`, so `/api` itself is a machine door.
 
+- **Idempotency fingerprint version 2:** the raw query is read as a form (`+` is a
+  space, `%2B` a plus) and `Fingerprinter::VERSION` is 2. Within `ttl_seconds` of the
+  deploy, a client retrying a key claimed before it, with `+` or `%2B` in the query, gets
+  `idempotency_payload_mismatch` (422) instead of the replay; other keys are unaffected.
+  Deploy outside peak traffic, or let clients retry with a new key.
+
+- **Quoted idempotency keys:** the draft's quoted form (`Idempotency-Key: "…"`) is
+  accepted in both key formats and stored without its quotes, so `"abc"` and `abc` are
+  the same key.
+
 - **Replayed idempotent responses:** their headers keep their values but are now named
   in lower case (`content-type`, `location`). HTTP header names are case-insensitive;
   check any client or test that compares them as exact strings.

@@ -23,9 +23,10 @@ final class Fingerprinter
     /**
      * Bump with every change to the material below; records keep the version they
      * were fingerprinted with. 1 = method, path, query, canonical JSON body, bucket
-     * and the served locale.
+     * and the served locale; 2 = the same, with the raw query read as a form (`+` is a
+     * space, `%2B` a plus).
      */
-    public const int VERSION = 1;
+    public const int VERSION = 2;
 
     /**
      * @throws JsonException When the body is not valid JSON.

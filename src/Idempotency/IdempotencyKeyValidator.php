@@ -40,8 +40,9 @@ final class IdempotencyKeyValidator
 
     /**
      * The key as stored and compared, or null when the header value is not a valid key.
-     * In sf-string mode the draft's quoted form (`"8e03…"`, draft-ietf-httpapi-idempotency-key-header-09)
-     * is unquoted and unescaped, so `"abc"` and `abc` are the same key.
+     * The draft's quoted form (`"8e03…"`, draft-ietf-httpapi-idempotency-key-header-09)
+     * is unquoted and unescaped in both modes, so `"abc"` and `abc` are the same key;
+     * a uuid key must still be a UUID once unquoted.
      */
     public function canonicalKey(?string $headerValue): ?string
     {
@@ -50,20 +51,28 @@ final class IdempotencyKeyValidator
             return null;
         }
 
+        // The draft sends the key as an RFC 9651 String; the bare form stays accepted.
+        $unquoted = $this->unquoted($headerValue);
+        $bareSfString = preg_match(self::SF_STRING_PATTERN, $headerValue) === 1 ? $headerValue : null;
+
         $key = match ($this->format) {
-            IdempotencyKeyFormat::Uuid => preg_match(self::UUID_PATTERN, $headerValue) === 1 ? $headerValue : null,
-            IdempotencyKeyFormat::SfString => $this->sfStringKey($headerValue),
+            IdempotencyKeyFormat::Uuid => preg_match(self::UUID_PATTERN, $unquoted ?? $headerValue) === 1 ? $unquoted ?? $headerValue : null,
+            IdempotencyKeyFormat::SfString => $unquoted ?? $bareSfString,
         };
 
         return $key !== null && $key !== '' && strlen($key) <= $this->maxLength ? $key : null;
     }
 
-    private function sfStringKey(string $headerValue): ?string
+    /**
+     * The content of a quoted sf-string with `\"` and `\\` unescaped, or null when the
+     * value is not one.
+     */
+    private function unquoted(string $headerValue): ?string
     {
-        if (preg_match(self::QUOTED_SF_STRING_PATTERN, $headerValue, $matches) === 1) {
-            return preg_replace('/\\\\(.)/', '$1', $matches[1]);
+        if (preg_match(self::QUOTED_SF_STRING_PATTERN, $headerValue, $matches) !== 1) {
+            return null;
         }
 
-        return preg_match(self::SF_STRING_PATTERN, $headerValue) === 1 ? $headerValue : null;
+        return preg_replace('/\\\\(.)/', '$1', $matches[1]);
     }
 }

@@ -47,7 +47,7 @@ return new class extends Migration
             $table->string('path', 2048);
             $table->string('fingerprint', 64);
             $table->string('fingerprint_algorithm', 32)->default('sha256');
-            $table->unsignedSmallInteger('fingerprint_version')->default(1);
+            $table->unsignedSmallInteger('fingerprint_version')->default(2);
             $table->string('lease', 64);
             $table->string('status', 32)->default('in_progress');
             $table->unsignedSmallInteger('status_code')->nullable();
