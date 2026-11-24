@@ -52,6 +52,7 @@ CLASSES=(
   'Qiick\HttpBasics\Config\PackageConfig'
   'Qiick\HttpBasics\Security\SetSecurityHeadersMiddleware'
   'Qiick\HttpBasics\Security\RequestCspNonceProvider'
+  'Qiick\HttpBasics\Http\VaryHeaderMerger'
 )
 
 CLASS_FILES=(
@@ -95,6 +96,7 @@ CLASS_FILES=(
   'src/Config/PackageConfig.php'
   'src/Security/SetSecurityHeadersMiddleware.php'
   'src/Security/RequestCspNonceProvider.php'
+  'src/Http/VaryHeaderMerger.php'
 )
 
 # Extra files under RequestId\ / Locale\ / Security\ / Idempotency\ / Cors\ / Uploads\ prefixes that are not mutation targets.

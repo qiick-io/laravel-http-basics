@@ -7,6 +7,7 @@ namespace Qiick\HttpBasics\Locale;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\App;
+use Qiick\HttpBasics\Http\VaryHeaderMerger;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
@@ -40,28 +41,9 @@ final class SetLocaleMiddleware
 
         // Vary whenever Accept-Language was read, not only when it won.
         if ($final->didReadAcceptLanguage) {
-            $this->appendVary($response, 'Accept-Language');
+            VaryHeaderMerger::add($response->headers, 'Accept-Language');
         }
 
         return $response;
-    }
-
-    private function appendVary(Response $response, string $token): void
-    {
-        $existing = $response->headers->get('Vary');
-        if (! is_string($existing) || $existing === '') {
-            $response->headers->set('Vary', $token);
-
-            return;
-        }
-
-        $parts = array_map('trim', explode(',', $existing));
-        foreach ($parts as $part) {
-            if (strcasecmp($part, $token) === 0) {
-                return;
-            }
-        }
-
-        $response->headers->set('Vary', $existing.', '.$token);
     }
 }

@@ -97,7 +97,7 @@ it('appends Accept-Language to Vary once, whatever is already there', function (
     'an empty Vary' => ['', 'Accept-Language'],
     'a token sorting after it' => ['Origin', 'Origin, Accept-Language'],
     'a token sorting before it' => ['Accept', 'Accept, Accept-Language'],
-    'already there, padded and lower-case' => ['Origin , accept-language', 'Origin , accept-language'],
+    'already there, padded and lower-case' => ['Origin , accept-language', 'Origin, accept-language'],
 ]);
 
 it('keeps every Vary line when it appends Accept-Language', function (): void {
