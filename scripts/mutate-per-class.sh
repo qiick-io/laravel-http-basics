@@ -25,6 +25,7 @@ CLASSES=(
   'Qiick\HttpBasics\Idempotency\DatabaseIdempotencyStore'
   'Qiick\HttpBasics\Idempotency\HandleIdempotencyMiddleware'
   'Qiick\HttpBasics\Idempotency\IdempotencyRejection'
+  'Qiick\HttpBasics\Idempotency\ReplayHeaderSanitizer'
   'Qiick\HttpBasics\Idempotency\IdempotencyContext'
   'Qiick\HttpBasics\Idempotency\SealedKeyMarker'
   'Qiick\HttpBasics\Uploads\HardFloor'
@@ -40,6 +41,15 @@ CLASSES=(
   'Qiick\HttpBasics\Cors\OriginNormalizer'
   'Qiick\HttpBasics\Errors\ErrorCodeAugmentor'
   'Qiick\HttpBasics\Errors\FrameworkErrorCodeResolver'
+  'Qiick\HttpBasics\Idempotency\FleetErrorRenderer'
+  'Qiick\HttpBasics\Locale\SetLocaleMiddleware'
+  'Qiick\HttpBasics\Idempotency\IdempotencyKeyValidator'
+  'Qiick\HttpBasics\Idempotency\IdempotencyRecord'
+  'Qiick\HttpBasics\Console\PruneIdempotencyRecordsCommand'
+  'Qiick\HttpBasics\Security\ViteFriendlyCspPolicyBuilder'
+  'Qiick\HttpBasics\Testing\InMemoryIdempotencyStore'
+  'Qiick\HttpBasics\Laravel\HttpBasicsServiceProvider'
+  'Qiick\HttpBasics\Config\PackageConfig'
 )
 
 CLASS_FILES=(
@@ -56,6 +66,7 @@ CLASS_FILES=(
   'src/Idempotency/DatabaseIdempotencyStore.php'
   'src/Idempotency/HandleIdempotencyMiddleware.php'
   'src/Idempotency/IdempotencyRejection.php'
+  'src/Idempotency/ReplayHeaderSanitizer.php'
   'src/Idempotency/IdempotencyContext.php'
   'src/Idempotency/SealedKeyMarker.php'
   'src/Uploads/HardFloor.php'
@@ -71,6 +82,15 @@ CLASS_FILES=(
   'src/Cors/OriginNormalizer.php'
   'src/Errors/ErrorCodeAugmentor.php'
   'src/Errors/FrameworkErrorCodeResolver.php'
+  'src/Idempotency/FleetErrorRenderer.php'
+  'src/Locale/SetLocaleMiddleware.php'
+  'src/Idempotency/IdempotencyKeyValidator.php'
+  'src/Idempotency/IdempotencyRecord.php'
+  'src/Console/PruneIdempotencyRecordsCommand.php'
+  'src/Security/ViteFriendlyCspPolicyBuilder.php'
+  'src/Testing/InMemoryIdempotencyStore.php'
+  'src/Laravel/HttpBasicsServiceProvider.php'
+  'src/Config/PackageConfig.php'
 )
 
 # Extra files under RequestId\ / Locale\ / Security\ / Idempotency\ / Cors\ / Uploads\ prefixes that are not mutation targets.
@@ -81,25 +101,19 @@ SIBLING_FILES=(
   'src/Locale/ConfigDefaultLocaleResolver.php'
   'src/Locale/ConfigSupportedLocales.php'
   'src/Locale/MachineDoorClassifier.php'
-  'src/Locale/SetLocaleMiddleware.php'
   'src/Security/CspMode.php'
   'src/Security/SecurityHeadersPolicy.php'
   'src/Security/CspPolicyBuilder.php'
-  'src/Security/ViteFriendlyCspPolicyBuilder.php'
   'src/Security/SetSecurityHeadersMiddleware.php'
   'src/Idempotency/ClaimOutcome.php'
   'src/Idempotency/IdempotencyClaim.php'
   'src/Idempotency/IdempotencyScope.php'
   'src/Idempotency/ReplayableResponse.php'
   'src/Errors/ErrorCode.php'
-  'src/Idempotency/FleetErrorRenderer.php'
-  'src/Idempotency/IdempotencyKeyValidator.php'
   'src/Idempotency/IdempotencyKeyFormat.php'
   'src/Idempotency/IdempotencyStoreException.php'
   'src/Idempotency/PayloadTooLargeException.php'
-  'src/Idempotency/ReplayHeaderSanitizer.php'
   'src/Idempotency/NullCredentialBucketResolver.php'
-  'src/Idempotency/IdempotencyRecord.php'
   'src/Uploads/ArrayUploadPolicy.php'
   'src/Uploads/MismatchMode.php'
   'src/Uploads/MalwareScanner.php'
@@ -119,12 +133,17 @@ SIBLING_FILES=(
   'src/Errors/ErrorCodeResolver.php'
   'src/Errors/ExceptionRespondBinder.php'
   'src/Errors/MachineDoorJson.php'
-  'src/Testing/InMemoryIdempotencyStore.php'
   'src/Testing/FixedClock.php'
   'src/Testing/FakeCredentialBucketResolver.php'
 )
 
 MIN="${MUTATE_MIN:-95}"
+
+# Sharding: MUTATE_SHARD of MUTATE_SHARDS (1-based) takes every class whose index
+# modulo the shard count matches, so CI can split the run across jobs. Default: all.
+SHARD="${MUTATE_SHARD:-1}"
+SHARDS="${MUTATE_SHARDS:-1}"
+MEASURED=0
 
 if [[ "${#CLASSES[@]}" -eq 0 ]]; then
   echo "No mutation target classes yet (scaffold). Skipping."
@@ -135,6 +154,11 @@ FAILED=0
 declare -a TABLE_ROWS=()
 
 for index in "${!CLASSES[@]}"; do
+  if (( index % SHARDS != SHARD - 1 )); then
+    continue
+  fi
+
+  MEASURED=$((MEASURED + 1))
   class="${CLASSES[$index]}"
   target_file="${CLASS_FILES[$index]}"
 
@@ -191,4 +215,4 @@ if [[ "${FAILED}" -ne 0 ]]; then
   exit 1
 fi
 
-echo "All ${#CLASSES[@]} classes scored >= ${MIN}%."
+echo "All ${MEASURED} classes of shard ${SHARD}/${SHARDS} scored >= ${MIN}%."

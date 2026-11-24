@@ -14,15 +14,22 @@ use Qiick\HttpBasics\Idempotency\IdempotencyStoreException;
 use Qiick\HttpBasics\Idempotency\ReplayableResponse;
 
 /**
- * In-memory idempotency store for unit/kernel tests (single process, real locks).
+ * In-memory idempotency store for unit and kernel tests: one process, so no
+ * re-read under the lock is needed, but the same outcomes, leases, lock TTL,
+ * stale takeover and expiry as the real stores.
  */
 final class InMemoryIdempotencyStore implements IdempotencyStore
 {
-    /** @var array<string, array<string, mixed>> */
+    /**
+     * `completed` is null while the claim is in progress; a completed record without
+     * a replay is sealed (the handler ran, there is nothing to replay).
+     *
+     * @var array<string, array{fingerprint: string, lease: string, startedAt: int, completed: array{replay: ?ReplayableResponse, expiresAt: int}|null}>
+     */
     private array $records = [];
 
-    /** @var array<string, array{lease: string, expires_at: int}> */
-    private array $locks = [];
+    /** @var array<string, int> lock expiry per record key */
+    private array $lockExpiries = [];
 
     public function __construct(
         private int $ttlSeconds = 86400,
@@ -38,56 +45,29 @@ final class InMemoryIdempotencyStore implements IdempotencyStore
         IdempotencyContext $context,
     ): IdempotencyClaim {
         $recordKey = $scope->cacheKey($key);
-        $lockKey = $recordKey.':lock';
+        $record = $this->records[$recordKey] ?? null;
+        $completed = $record === null ? null : $record['completed'];
 
-        $existing = $this->records[$recordKey] ?? null;
-        if (is_array($existing)) {
-            if (($existing['status'] ?? '') === 'completed' && $this->isExpired($existing, $now)) {
-                // Expired completed keys may be claimed again.
-            } else {
-                $completed = $this->claimFromCompleted($existing, $fingerprint, $scope, $key);
-                if ($completed !== null) {
-                    return $completed;
-                }
-            }
+        if ($record !== null && $completed !== null && $completed['expiresAt'] >= $now->getTimestamp()) {
+            return $this->settledClaim($record['fingerprint'], $completed['replay'], $fingerprint, $scope, $key);
         }
 
-        if ($this->isLockHeld($lockKey, $now)) {
+        $isLocked = isset($this->lockExpiries[$recordKey]) && $this->lockExpiries[$recordKey] > $now->getTimestamp();
+        // An in-progress record younger than stale_after belongs to a live request.
+        $isInFlight = $record !== null && $completed === null
+            && $now->getTimestamp() - $record['startedAt'] < $this->staleAfterSeconds;
+
+        if ($isLocked || $isInFlight) {
             return new IdempotencyClaim(ClaimOutcome::Conflict, null, null, $scope, $key);
         }
 
         $lease = bin2hex(random_bytes(32));
-        $this->acquireLock($lockKey, $lease, $now);
-
-        $existing = $this->records[$recordKey] ?? null;
-        if (is_array($existing)) {
-            if (($existing['status'] ?? '') === 'completed' && $this->isExpired($existing, $now)) {
-                // Fall through to overwrite.
-            } else {
-                $completed = $this->claimFromCompleted($existing, $fingerprint, $scope, $key);
-                if ($completed !== null) {
-                    $this->releaseLock($lockKey, $lease);
-
-                    return $completed;
-                }
-
-                if (($existing['status'] ?? '') === 'in_progress') {
-                    $startedAt = $this->intValue($existing['started_at'] ?? 0, 0);
-                    if ($now->getTimestamp() - $startedAt < $this->staleAfterSeconds) {
-                        $this->releaseLock($lockKey, $lease);
-
-                        return new IdempotencyClaim(ClaimOutcome::Conflict, null, null, $scope, $key);
-                    }
-                }
-            }
-        }
-
+        $this->lockExpiries[$recordKey] = $now->getTimestamp() + $this->lockTtlSeconds;
         $this->records[$recordKey] = [
             'fingerprint' => $fingerprint,
             'lease' => $lease,
-            'status' => 'in_progress',
-            'started_at' => $now->getTimestamp(),
-            'expires_at' => $now->getTimestamp() + $this->ttlSeconds,
+            'startedAt' => $now->getTimestamp(),
+            'completed' => null,
         ];
 
         return new IdempotencyClaim(ClaimOutcome::New, null, $lease, $scope, $key);
@@ -98,207 +78,71 @@ final class InMemoryIdempotencyStore implements IdempotencyStore
         ReplayableResponse $response,
         DateTimeImmutable $now,
     ): void {
-        if ($claim->outcome !== ClaimOutcome::New) {
-            throw new IdempotencyStoreException('Cannot complete a claim that is not new.');
-        }
-
-        if (! is_string($claim->lease) || $claim->lease === '') {
-            throw new IdempotencyStoreException('Missing lease on idempotency claim.');
-        }
-
-        $recordKey = $claim->scope->cacheKey($claim->key);
-        $lockKey = $recordKey.':lock';
-        $existing = $this->records[$recordKey] ?? null;
-
-        if (! is_array($existing) || ($existing['lease'] ?? '') !== $claim->lease) {
-            throw new IdempotencyStoreException('Idempotency lease mismatch on complete.');
-        }
-
-        $this->records[$recordKey] = [
-            'fingerprint' => $existing['fingerprint'] ?? '',
-            'lease' => $claim->lease,
-            'status' => 'completed',
-            'status_code' => $response->status,
-            'headers' => $response->headers,
-            'body' => $response->body,
-            'started_at' => $this->intValue($existing['started_at'] ?? $now->getTimestamp(), $now->getTimestamp()),
-            'expires_at' => $now->getTimestamp() + $this->ttlSeconds,
-        ];
-
-        $this->releaseLock($lockKey, $claim->lease);
+        $this->finish($claim, $now, 'Cannot complete a claim that is not new.', 'Idempotency lease mismatch on complete.', $response);
     }
 
     public function sealUnreplayable(IdempotencyClaim $claim, DateTimeImmutable $now): void
     {
-        if ($claim->outcome !== ClaimOutcome::New) {
-            throw new IdempotencyStoreException('Cannot seal a claim that is not new.');
-        }
-
-        if (! is_string($claim->lease) || $claim->lease === '') {
-            throw new IdempotencyStoreException('Missing lease on idempotency claim.');
-        }
-
-        $recordKey = $claim->scope->cacheKey($claim->key);
-        $lockKey = $recordKey.':lock';
-        $existing = $this->records[$recordKey] ?? null;
-
-        if (! is_array($existing) || ($existing['lease'] ?? '') !== $claim->lease) {
-            throw new IdempotencyStoreException('Idempotency lease mismatch on seal.');
-        }
-
-        $this->records[$recordKey] = [
-            'fingerprint' => $existing['fingerprint'] ?? '',
-            'lease' => $claim->lease,
-            'status' => 'completed',
-            'status_code' => null,
-            'headers' => null,
-            'body' => null,
-            'started_at' => $this->intValue($existing['started_at'] ?? $now->getTimestamp(), $now->getTimestamp()),
-            'expires_at' => $now->getTimestamp() + $this->ttlSeconds,
-        ];
-
-        $this->releaseLock($lockKey, $claim->lease);
+        $this->finish($claim, $now, 'Cannot seal a claim that is not new.', 'Idempotency lease mismatch on seal.', null);
     }
 
     public function abandon(IdempotencyClaim $claim, DateTimeImmutable $now): void
     {
-        if ($claim->outcome !== ClaimOutcome::New) {
-            return;
-        }
+        $recordKey = $claim->scope->cacheKey($claim->key);
 
-        if (! is_string($claim->lease) || $claim->lease === '') {
-            return;
+        // Only a new claim's own marker and lock are removed: anything else is a no-op.
+        if ($claim->outcome === ClaimOutcome::New && ($this->records[$recordKey]['lease'] ?? null) === $claim->lease) {
+            unset($this->records[$recordKey], $this->lockExpiries[$recordKey]);
+        }
+    }
+
+    /**
+     * Completes the record (sealed when `$replay` is null) under the claim's own
+     * lease, then frees its lock.
+     *
+     * @throws IdempotencyStoreException when the claim is not new or does not own the record
+     */
+    private function finish(
+        IdempotencyClaim $claim,
+        DateTimeImmutable $now,
+        string $notNewMessage,
+        string $mismatchMessage,
+        ?ReplayableResponse $replay,
+    ): void {
+        if ($claim->outcome !== ClaimOutcome::New) {
+            throw new IdempotencyStoreException($notNewMessage);
         }
 
         $recordKey = $claim->scope->cacheKey($claim->key);
-        $lockKey = $recordKey.':lock';
-        $existing = $this->records[$recordKey] ?? null;
+        $record = $this->records[$recordKey] ?? null;
 
-        if (! is_array($existing) || ($existing['lease'] ?? '') !== $claim->lease) {
-            return;
+        // A missing or empty lease never matches the 64-character lease of a record.
+        if ($record === null || $record['lease'] !== $claim->lease) {
+            throw new IdempotencyStoreException($mismatchMessage);
         }
 
-        unset($this->records[$recordKey]);
-        $this->releaseLock($lockKey, $claim->lease);
+        $record['completed'] = ['replay' => $replay, 'expiresAt' => $now->getTimestamp() + $this->ttlSeconds];
+        $this->records[$recordKey] = $record;
+        unset($this->lockExpiries[$recordKey]);
     }
 
     /**
-     * @param  array<string, mixed>  $existing
+     * The answer a live completed record gives: NotReplayable when sealed, otherwise
+     * a replay for the same fingerprint and a mismatch for any other.
      */
-    private function claimFromCompleted(
-        array $existing,
+    private function settledClaim(
+        string $storedFingerprint,
+        ?ReplayableResponse $replay,
         string $fingerprint,
         IdempotencyScope $scope,
         string $key,
-    ): ?IdempotencyClaim {
-        if (($existing['status'] ?? '') !== 'completed') {
-            return null;
-        }
-
-        $statusCode = $existing['status_code'] ?? null;
-
-        // Same contract as the real stores: no readable status code means the handler
-        // ran but its response was not stored, so never re-execute or guess.
-        if (! is_numeric($statusCode)) {
+    ): IdempotencyClaim {
+        if ($replay === null) {
             return new IdempotencyClaim(ClaimOutcome::NotReplayable, null, null, $scope, $key);
         }
 
-        if (($existing['fingerprint'] ?? '') === $fingerprint) {
-            $replay = new ReplayableResponse(
-                (int) $statusCode,
-                $this->headersValue($existing['headers'] ?? []),
-                $this->stringValue($existing['body'] ?? ''),
-            );
-
-            return new IdempotencyClaim(ClaimOutcome::Replay, $replay, null, $scope, $key);
-        }
-
-        return new IdempotencyClaim(ClaimOutcome::Mismatch, null, null, $scope, $key);
-    }
-
-    /**
-     * @param  array<string, mixed>  $existing
-     */
-    private function isExpired(array $existing, DateTimeImmutable $now): bool
-    {
-        $expiresAt = $this->intValue($existing['expires_at'] ?? 0, 0);
-
-        return $expiresAt > 0 && $expiresAt < $now->getTimestamp();
-    }
-
-    private function isLockHeld(string $lockKey, DateTimeImmutable $now): bool
-    {
-        $lock = $this->locks[$lockKey] ?? null;
-        if (! is_array($lock)) {
-            return false;
-        }
-
-        return $lock['expires_at'] > $now->getTimestamp();
-    }
-
-    private function acquireLock(string $lockKey, string $lease, DateTimeImmutable $now): void
-    {
-        $this->locks[$lockKey] = [
-            'lease' => $lease,
-            'expires_at' => $now->getTimestamp() + $this->lockTtlSeconds,
-        ];
-    }
-
-    private function releaseLock(string $lockKey, string $lease): void
-    {
-        $lock = $this->locks[$lockKey] ?? null;
-        if (is_array($lock) && ($lock['lease'] ?? '') === $lease) {
-            unset($this->locks[$lockKey]);
-        }
-    }
-
-    private function intValue(mixed $value, int $default): int
-    {
-        if (is_int($value)) {
-            return $value;
-        }
-
-        if (is_string($value) && is_numeric($value)) {
-            return (int) $value;
-        }
-
-        return $default;
-    }
-
-    private function stringValue(mixed $value): string
-    {
-        return is_string($value) ? $value : '';
-    }
-
-    /**
-     * @return array<string, string>
-     */
-    private function headersValue(mixed $headers): array
-    {
-        if (! is_array($headers)) {
-            return [];
-        }
-
-        $normalized = [];
-        foreach ($headers as $name => $value) {
-            if (! is_string($name)) {
-                continue;
-            }
-
-            if (is_string($value)) {
-                $normalized[$name] = $value;
-
-                continue;
-            }
-
-            if (is_array($value)) {
-                $normalized[$name] = implode(', ', array_map(
-                    static fn (mixed $part): string => is_scalar($part) ? (string) $part : '',
-                    $value,
-                ));
-            }
-        }
-
-        return $normalized;
+        return $storedFingerprint === $fingerprint
+            ? new IdempotencyClaim(ClaimOutcome::Replay, $replay, null, $scope, $key)
+            : new IdempotencyClaim(ClaimOutcome::Mismatch, null, null, $scope, $key);
     }
 }

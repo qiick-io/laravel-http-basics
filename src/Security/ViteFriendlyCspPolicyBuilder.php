@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Qiick\HttpBasics\Security;
 
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Vite;
 
 /**
  * @api Default CSP for Vite + Echo/Reverb style apps: `'self'` with pragmatic
@@ -14,8 +15,6 @@ use Illuminate\Http\Request;
  */
 final class ViteFriendlyCspPolicyBuilder implements CspPolicyBuilder
 {
-    private const string VITE_FACADE = 'Illuminate\Support\Facades\Vite';
-
     public function build(Request $request): string
     {
         $developmentServerOrigins = $this->viteDevOrigins();
@@ -29,7 +28,7 @@ final class ViteFriendlyCspPolicyBuilder implements CspPolicyBuilder
             "default-src 'self'",
             'script-src '.implode(' ', $scriptSources),
             'style-src '.implode(' ', $styleSources),
-            'img-src '.implode(' ', array_values(array_unique($imageSources))),
+            'img-src '.implode(' ', $imageSources),
             'font-src '.implode(' ', $fontSources),
             "connect-src 'self' ws: wss: http: https:",
             "media-src 'self' blob:",
@@ -42,63 +41,41 @@ final class ViteFriendlyCspPolicyBuilder implements CspPolicyBuilder
     }
 
     /**
-     * Resolves the Vite hot origin without importing Foundation types. Uses the
-     * Support facade class name + `method_exists` so Laravel 12 (no
-     * `devServerUrl`) and Laravel 13+ both analyse and run cleanly.
+     * Resolves the Vite hot origin without importing Foundation types: Laravel 12's
+     * Vite has no `devServerUrl()`, Laravel 13's has, and an app without Vite bound
+     * throws on resolution. Any of those yields no extra origin.
      *
      * @return list<string>
      */
     private function viteDevOrigins(): array
     {
-        if (! class_exists(self::VITE_FACADE)) {
-            return [];
-        }
-
-        $facadeClass = self::VITE_FACADE;
-
         try {
-            $vite = $facadeClass::getFacadeRoot();
+            $vite = Vite::getFacadeRoot();
+            $url = is_callable([$vite, 'devServerUrl']) ? \call_user_func([$vite, 'devServerUrl']) : null;
         } catch (\Throwable) {
             return [];
         }
 
-        if (! is_object($vite) || ! method_exists($vite, 'devServerUrl')) {
-            return [];
-        }
-
-        try {
-            $url = \call_user_func([$vite, 'devServerUrl']);
-        } catch (\Throwable) {
-            return [];
-        }
-
-        return $this->originsOf([$url]);
+        return $this->originOf($url);
     }
 
     /**
-     * @param  list<mixed>  $urls
+     * The http(s) origin of the Vite dev server URL, or none for anything else.
+     *
      * @return list<string>
      */
-    private function originsOf(array $urls): array
+    private function originOf(mixed $url): array
     {
-        $origins = [];
-
-        foreach ($urls as $url) {
-            if (! is_string($url) || $url === '') {
-                continue;
-            }
-
-            $scheme = parse_url($url, PHP_URL_SCHEME);
-            $host = parse_url($url, PHP_URL_HOST);
-            $port = parse_url($url, PHP_URL_PORT);
-
-            if (! in_array($scheme, ['http', 'https'], true) || ! is_string($host) || $host === '') {
-                continue;
-            }
-
-            $origins[] = $scheme.'://'.$host.(is_int($port) ? ':'.$port : '');
+        if (! is_string($url)) {
+            return [];
         }
 
-        return $origins;
+        $parts = parse_url($url);
+
+        if (! is_array($parts) || ! isset($parts['host']) || ! in_array($parts['scheme'] ?? null, ['http', 'https'], true)) {
+            return [];
+        }
+
+        return [$parts['scheme'].'://'.$parts['host'].(isset($parts['port']) ? ':'.$parts['port'] : '')];
     }
 }

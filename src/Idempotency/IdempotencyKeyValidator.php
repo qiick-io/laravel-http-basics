@@ -29,7 +29,8 @@ final class IdempotencyKeyValidator
 
     public function isValid(?string $key): bool
     {
-        if ($key === null || $key === '') {
+        // An empty key fails both patterns below.
+        if ($key === null) {
             return false;
         }
 
@@ -38,8 +39,8 @@ final class IdempotencyKeyValidator
         }
 
         return match ($this->format) {
-            IdempotencyKeyFormat::Uuid => (bool) preg_match(self::UUID_PATTERN, $key),
-            IdempotencyKeyFormat::SfString => (bool) preg_match(self::SF_STRING_PATTERN, $key),
+            IdempotencyKeyFormat::Uuid => preg_match(self::UUID_PATTERN, $key) === 1,
+            IdempotencyKeyFormat::SfString => preg_match(self::SF_STRING_PATTERN, $key) === 1,
         };
     }
 }
