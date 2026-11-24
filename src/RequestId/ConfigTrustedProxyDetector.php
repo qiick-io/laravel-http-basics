@@ -11,7 +11,7 @@ use Qiick\HttpBasics\Contracts\TrustedProxyDetector;
 use Symfony\Component\HttpFoundation\IpUtils;
 
 /**
- * Computes proxy trust from the same sources TrustProxies uses
+ * @internal Computes proxy trust from the same sources TrustProxies uses
  * ({@see TrustProxies::at()}, a subclass `$proxies`, and `trustedproxy.proxies`),
  * without reading Request static state set by middleware order.
  *

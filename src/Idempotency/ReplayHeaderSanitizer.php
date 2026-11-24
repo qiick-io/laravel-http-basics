@@ -7,7 +7,7 @@ namespace Qiick\HttpBasics\Idempotency;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
- * Filters response headers safe to persist and replay.
+ * @api Filters response headers safe to persist and replay.
  */
 final class ReplayHeaderSanitizer
 {

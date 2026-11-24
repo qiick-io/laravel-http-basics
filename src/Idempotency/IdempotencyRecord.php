@@ -11,7 +11,7 @@ use Illuminate\Database\Eloquent\Model;
 use Qiick\HttpBasics\Config\PackageConfig;
 
 /**
- * Optional Eloquent model for the published idempotency migration.
+ * @api Optional Eloquent model for the published idempotency migration.
  *
  * Publish with `--tag=http-basics-migrations`. Configure the table name via
  * `http-basics.idempotency.database.table` (default `idempotency_records`).

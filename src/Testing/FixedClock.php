@@ -7,7 +7,7 @@ namespace Qiick\HttpBasics\Testing;
 use DateTimeImmutable;
 
 /**
- * Fixed wall clock for idempotency stale/takeover tests.
+ * @api Fixed wall clock for idempotency stale/takeover tests.
  */
 final class FixedClock
 {

@@ -6,7 +6,7 @@ namespace Qiick\HttpBasics\Locale;
 
 use Qiick\HttpBasics\Contracts\DefaultLocaleResolver;
 
-/** Default locale from a fixed config/app value. */
+/** @internal Default locale from a fixed config/app value. */
 final class ConfigDefaultLocaleResolver implements DefaultLocaleResolver
 {
     public function __construct(

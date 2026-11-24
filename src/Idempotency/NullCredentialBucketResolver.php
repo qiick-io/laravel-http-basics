@@ -8,7 +8,7 @@ use Illuminate\Http\Request;
 use Qiick\HttpBasics\Contracts\CredentialBucketResolver;
 
 /**
- * Default credential bucket resolver until the product binds a real implementation.
+ * @api Default credential bucket resolver until the product binds a real implementation.
  */
 final class NullCredentialBucketResolver implements CredentialBucketResolver
 {

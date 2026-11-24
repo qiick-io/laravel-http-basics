@@ -61,7 +61,7 @@ use Qiick\HttpBasics\Uploads\UploadPolicyResolver;
 use Qiick\HttpBasics\Uploads\UploadValidator;
 
 /**
- * Registers the package in a Laravel app. Auto-discovered through
+ * @api Registers the package in a Laravel app. Auto-discovered through
  * `extra.laravel.providers` in composer.json.
  *
  * Products keep their own error enums and Exception::render wiring (recipes only).

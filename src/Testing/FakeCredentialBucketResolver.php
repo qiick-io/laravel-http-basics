@@ -8,7 +8,7 @@ use Illuminate\Http\Request;
 use Qiick\HttpBasics\Contracts\CredentialBucketResolver;
 
 /**
- * Returns a fixed credential bucket in tests (never from request input).
+ * @api Returns a fixed credential bucket in tests (never from request input).
  */
 final class FakeCredentialBucketResolver implements CredentialBucketResolver
 {

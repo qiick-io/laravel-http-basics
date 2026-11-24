@@ -9,6 +9,8 @@ use Illuminate\Support\Facades\DB;
 use Qiick\HttpBasics\Idempotency\IdempotencyRecord;
 
 /**
+ * @internal The `http-basics:prune-idempotency` command is the public part; the class is not.
+ *
  * Deletes expired idempotency rows (`expires_at` in the past).
  *
  * Prefer scheduling `model:prune` on {@see IdempotencyRecord} when Eloquent is
