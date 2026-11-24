@@ -80,14 +80,15 @@ final class Fingerprinter
 
             // A bare key (`?flag`) fingerprints like an empty value (`?flag=`).
             if ($equalsPosition === false) {
-                $pairs[] = [rawurldecode($segment), ''];
+                $pairs[] = [urldecode($segment), ''];
 
                 continue;
             }
 
+            // Form semantics, as PHP and Symfony read the query: `+` is a space, `%2B` a plus.
             $pairs[] = [
-                rawurldecode(substr($segment, 0, $equalsPosition)),
-                rawurldecode(substr($segment, $equalsPosition + 1)),
+                urldecode(substr($segment, 0, $equalsPosition)),
+                urldecode(substr($segment, $equalsPosition + 1)),
             ];
         }
 

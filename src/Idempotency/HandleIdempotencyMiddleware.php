@@ -77,9 +77,9 @@ final class HandleIdempotencyMiddleware
             return $this->ensureResponse($next($request));
         }
 
-        $key = $this->headerValue($request);
+        $headerValue = $this->headerValue($request);
 
-        if ($key === null) {
+        if ($headerValue === null) {
             if ($parsed['isKeyRequired']) {
                 return $this->reject($request, ErrorCode::IdempotencyKeyRequired, 400);
             }
@@ -87,7 +87,10 @@ final class HandleIdempotencyMiddleware
             return $this->ensureResponse($next($request));
         }
 
-        if (! $this->keyValidator->isValid($key)) {
+        // The stored key: a quoted sf-string key and its bare form are the same key.
+        $key = $this->keyValidator->canonicalKey($headerValue);
+
+        if ($key === null) {
             return $this->reject($request, ErrorCode::IdempotencyKeyInvalid, 400);
         }
 
