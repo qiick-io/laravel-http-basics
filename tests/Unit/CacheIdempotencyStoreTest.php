@@ -736,6 +736,7 @@ it('stores a sealed record without a response and releases the claim lock', func
     $store->sealUnreplayable($claim, $now->modify('+5 seconds'));
 
     expect($repository->get($scope->cacheKey('sealed')))->toBe([
+        'v' => 1,
         'fingerprint' => 'fp',
         'lease' => $claim->lease,
         'status' => 'completed',
@@ -758,6 +759,7 @@ it('stores a completed record with its response and start time', function (): vo
     $store->complete($claim, new ReplayableResponse(201, ['Location' => '/items/1'], '{"id":1}'), $now->modify('+2 seconds'));
 
     expect($repository->get($scope->cacheKey('done')))->toBe([
+        'v' => 1,
         'fingerprint' => 'fp',
         'lease' => $claim->lease,
         'status' => 'completed',
@@ -824,3 +826,39 @@ it('marks a fresh claim as in progress in the cache', function (): void {
 
     expect($repository->get($scope->cacheKey('fresh'))['status'] ?? null)->toBe('in_progress');
 });
+
+it('versions every record it writes (S10)', function (): void {
+    [$store, $repository] = cacheIdempotencyStore();
+    $scope = new IdempotencyScope('bucket-a', 'POST', '/items');
+    $now = new DateTimeImmutable('2026-01-01T00:00:00Z');
+
+    $claim = $store->claim($scope, 'k1', 'fp', $now, idempotencyContext());
+    $inProgress = $repository->get($scope->cacheKey('k1'))['v'] ?? null;
+    $store->complete($claim, new ReplayableResponse(201, [], 'done'), $now);
+    $completed = $repository->get($scope->cacheKey('k1'))['v'] ?? null;
+    $store->sealUnreplayable($store->claim($scope, 'k2', 'fp', $now, idempotencyContext()), $now);
+    $sealed = $repository->get($scope->cacheKey('k2'))['v'] ?? null;
+
+    expect([$inProgress, $completed, $sealed])->toBe([1, 1, 1]);
+});
+
+it('reads an unversioned record as version 1', function (): void {
+    [$store, $repository] = cacheIdempotencyStore();
+    $scope = new IdempotencyScope('bucket-a', 'POST', '/items');
+    $repository->put($scope->cacheKey('legacy'), [
+        'fingerprint' => 'fp', 'status' => 'completed', 'status_code' => 201, 'headers' => [], 'body' => 'done',
+    ], 60);
+
+    expect($store->claim($scope, 'legacy', 'fp', new DateTimeImmutable, idempotencyContext())->outcome)->toBe(ClaimOutcome::Replay);
+});
+
+it('never replays nor re-runs a record of a payload version it does not know', function (mixed $version): void {
+    // A newer package wrote it (or a rollback happened): the handler ran, the shape is unknown.
+    [$store, $repository] = cacheIdempotencyStore();
+    $scope = new IdempotencyScope('bucket-a', 'POST', '/items');
+    $repository->put($scope->cacheKey('future'), [
+        'v' => $version, 'fingerprint' => 'fp', 'status' => 'completed', 'status_code' => 201, 'headers' => [], 'body' => 'done',
+    ], 60);
+
+    expect($store->claim($scope, 'future', 'fp', new DateTimeImmutable, idempotencyContext())->outcome)->toBe(ClaimOutcome::NotReplayable);
+})->with([2, 0, '1']);

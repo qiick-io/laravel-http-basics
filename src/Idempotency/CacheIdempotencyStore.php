@@ -79,6 +79,8 @@ final class CacheIdempotencyStore implements IdempotencyStore
         }
 
         $marker = [
+            // Payload format version (S10), as schema_version is for the database row.
+            'v' => 1,
             'fingerprint' => $fingerprint,
             'lease' => $lease,
             'status' => 'in_progress',
@@ -330,6 +332,7 @@ final class CacheIdempotencyStore implements IdempotencyStore
         ?string $body,
     ): array {
         return [
+            'v' => 1,
             'fingerprint' => $existing['fingerprint'] ?? '',
             'lease' => $claim->lease,
             'status' => 'completed',
@@ -350,6 +353,13 @@ final class CacheIdempotencyStore implements IdempotencyStore
         IdempotencyScope $scope,
         string $key,
     ): ?IdempotencyClaim {
+        // A record from another payload version (a newer package, a rollback) cannot be
+        // read safely, and its handler may have run: never replay it, never re-run it.
+        // Records written before versioning have no `v` and are version 1.
+        if (($existing['v'] ?? 1) !== 1) {
+            return new IdempotencyClaim(ClaimOutcome::NotReplayable, null, null, $scope, $key);
+        }
+
         if (($existing['status'] ?? null) !== 'completed') {
             return null;
         }
