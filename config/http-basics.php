@@ -137,6 +137,19 @@ return [
             'policy' => env('HTTP_BASICS_CSP'),
             'report_only_policy' => env('HTTP_BASICS_CSP_REPORT_ONLY'),
             'report_uri' => env('HTTP_BASICS_CSP_REPORT_URI'),
+            /*
+             * Strict CSP (CSP3): a per-request nonce plus 'strict-dynamic' in the built
+             * script-src, handed to Vite so its tags carry it; no 'unsafe-eval'. A policy
+             * override (`policy` above) is used as written.
+             */
+            'nonce' => (bool) env('HTTP_BASICS_CSP_NONCE', false),
+            /*
+             * Hashes of allowed inline scripts, e.g. 'sha256-…' (base64). Needs `nonce`:
+             * a hash makes browsers ignore 'unsafe-inline', so boot refuses one without it.
+             *
+             * @var list<string>
+             */
+            'script_hashes' => [],
         ],
         'hsts' => [
             'max_age' => (int) env('HTTP_BASICS_HSTS_MAX_AGE', 0),

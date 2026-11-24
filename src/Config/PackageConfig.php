@@ -44,6 +44,8 @@ final class PackageConfig
             'security.referrer_policy' => 'strict-origin-when-cross-origin',
             'security.permissions_policy' => 'camera=(), microphone=(), geolocation=(), payment=(), usb=()',
             'security.csp.mode' => 'enforce',
+            'security.csp.nonce' => false,
+            'security.csp.script_hashes' => [],
             'security.hsts.max_age' => 0,
             'security.hsts.include_subdomains' => false,
             'security.hsts.preload' => false,

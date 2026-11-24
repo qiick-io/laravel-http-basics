@@ -46,7 +46,9 @@ use Qiick\HttpBasics\RequestId\RequestIdPropagator;
 use Qiick\HttpBasics\RequestId\RequestIdResolver;
 use Qiick\HttpBasics\RequestId\UuidIdGenerator;
 use Qiick\HttpBasics\Security\CspMode;
+use Qiick\HttpBasics\Security\CspNonceProvider;
 use Qiick\HttpBasics\Security\CspPolicyBuilder;
+use Qiick\HttpBasics\Security\RequestCspNonceProvider;
 use Qiick\HttpBasics\Security\SecurityHeaderBuilder;
 use Qiick\HttpBasics\Security\SecurityHeadersPolicy;
 use Qiick\HttpBasics\Security\ViteFriendlyCspPolicyBuilder;
@@ -135,7 +137,12 @@ final class HttpBasicsServiceProvider extends ServiceProvider
             );
         });
 
-        $this->app->singleton(CspPolicyBuilder::class, ViteFriendlyCspPolicyBuilder::class);
+        $this->app->singleton(CspNonceProvider::class, RequestCspNonceProvider::class);
+
+        $this->app->singleton(CspPolicyBuilder::class, fn (Application $app): CspPolicyBuilder => new ViteFriendlyCspPolicyBuilder(
+            $this->settings($app)->bool('security.csp.nonce') ? $app->make(CspNonceProvider::class) : null,
+            $this->settings($app)->stringList('security.csp.script_hashes'),
+        ));
 
         $this->app->singleton(SecurityHeadersPolicy::class, function (Application $app): SecurityHeadersPolicy {
             $settings = $this->settings($app);
@@ -153,6 +160,7 @@ final class HttpBasicsServiceProvider extends ServiceProvider
                 hstsIncludeSubdomains: $settings->bool('security.hsts.include_subdomains'),
                 hstsPreload: $settings->bool('security.hsts.preload'),
                 baselineOnMachineDoors: $settings->bool('security.baseline_on_machine_doors'),
+                cspNonce: $settings->bool('security.csp.nonce'),
                 machineDoorPatterns: $settings->stringList('locale.machine_doors'),
             );
         });
@@ -323,8 +331,8 @@ final class HttpBasicsServiceProvider extends ServiceProvider
     }
 
     /**
-     * The enums read only when a request needs them, checked here so a bad value
-     * fails the deploy instead of every request.
+     * The security values read only when a request needs them, checked here so a bad
+     * value fails the deploy instead of every request.
      */
     private function validateSecurityConfig(): void
     {
@@ -332,6 +340,28 @@ final class HttpBasicsServiceProvider extends ServiceProvider
 
         $this->requestIdAcceptFrom($settings);
         $this->cspMode($settings);
+
+        $configuredHashes = $settings->value('security.csp.script_hashes');
+
+        // A bare string would otherwise read as no hashes at all, dropping the one it holds.
+        if ($configuredHashes !== null && ! is_array($configuredHashes)) {
+            throw new \InvalidArgumentException('http-basics.security.csp.script_hashes must be a list of hashes.');
+        }
+
+        $scriptHashes = $settings->stringList('security.csp.script_hashes');
+
+        foreach ($scriptHashes as $hash) {
+            // The value lands inside the CSP header: base64 only, so it cannot add a source.
+            if (preg_match('/\Asha(256|384|512)-[A-Za-z0-9+\/]+={0,2}\z/', $hash) !== 1) {
+                throw new \InvalidArgumentException('http-basics.security.csp.script_hashes must hold sha256-, sha384- or sha512- base64 hashes.');
+            }
+        }
+
+        // CSP2+ browsers ignore 'unsafe-inline' once a hash is present: without the nonce,
+        // every other inline script (the appearance script, Vite's tags) would stop running.
+        if ($scriptHashes !== [] && ! $settings->bool('security.csp.nonce')) {
+            throw new \InvalidArgumentException('http-basics.security.csp.script_hashes needs http-basics.security.csp.nonce: without it a hash turns off \'unsafe-inline\' for every other inline script.');
+        }
     }
 
     private function requestIdAcceptFrom(PackageConfig $settings): RequestIdAcceptFrom
