@@ -139,6 +139,12 @@ SIBLING_FILES=(
 
 MIN="${MUTATE_MIN:-95}"
 
+# Sharding: MUTATE_SHARD of MUTATE_SHARDS (1-based) takes every class whose index
+# modulo the shard count matches, so CI can split the run across jobs. Default: all.
+SHARD="${MUTATE_SHARD:-1}"
+SHARDS="${MUTATE_SHARDS:-1}"
+MEASURED=0
+
 if [[ "${#CLASSES[@]}" -eq 0 ]]; then
   echo "No mutation target classes yet (scaffold). Skipping."
   exit 0
@@ -148,6 +154,11 @@ FAILED=0
 declare -a TABLE_ROWS=()
 
 for index in "${!CLASSES[@]}"; do
+  if (( index % SHARDS != SHARD - 1 )); then
+    continue
+  fi
+
+  MEASURED=$((MEASURED + 1))
   class="${CLASSES[$index]}"
   target_file="${CLASS_FILES[$index]}"
 
@@ -204,4 +215,4 @@ if [[ "${FAILED}" -ne 0 ]]; then
   exit 1
 fi
 
-echo "All ${#CLASSES[@]} classes scored >= ${MIN}%."
+echo "All ${MEASURED} classes of shard ${SHARD}/${SHARDS} scored >= ${MIN}%."
