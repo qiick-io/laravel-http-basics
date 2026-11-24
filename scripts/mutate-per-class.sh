@@ -49,6 +49,7 @@ CLASSES=(
   'Qiick\HttpBasics\Security\ViteFriendlyCspPolicyBuilder'
   'Qiick\HttpBasics\Testing\InMemoryIdempotencyStore'
   'Qiick\HttpBasics\Laravel\HttpBasicsServiceProvider'
+  'Qiick\HttpBasics\Config\PackageConfig'
 )
 
 CLASS_FILES=(
@@ -89,6 +90,7 @@ CLASS_FILES=(
   'src/Security/ViteFriendlyCspPolicyBuilder.php'
   'src/Testing/InMemoryIdempotencyStore.php'
   'src/Laravel/HttpBasicsServiceProvider.php'
+  'src/Config/PackageConfig.php'
 )
 
 # Extra files under RequestId\ / Locale\ / Security\ / Idempotency\ / Cors\ / Uploads\ prefixes that are not mutation targets.
