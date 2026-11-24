@@ -150,3 +150,14 @@ it('reads an hsts max age only from an integer or a numeric string', function ()
 
     expect(app(SecurityHeadersPolicy::class)->hstsMaxAge)->toBe(0);
 });
+
+it('gives the store and the record model the same trimmed connection', function (): void {
+    config([
+        'database.connections.records' => config('database.connections.testing') ?? ['driver' => 'sqlite', 'database' => ':memory:'],
+        'http-basics.idempotency.store' => 'database',
+        'http-basics.idempotency.database.connection' => ' records ',
+    ]);
+
+    expect(wiredProperty(app(IdempotencyStore::class), 'connection')->getName())->toBe('records')
+        ->and((new IdempotencyRecord)->getConnectionName())->toBe('records');
+});
