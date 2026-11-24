@@ -15,3 +15,28 @@ it('accepts uuid keys and rejects malformed values', function (string $key, bool
     ['', false],
     [str_repeat('a', 129), false],
 ]);
+
+it('caps keys at 128 bytes by default', function (): void {
+    $validator = new IdempotencyKeyValidator(IdempotencyKeyFormat::SfString);
+
+    expect($validator->isValid(str_repeat('k', 128)))->toBeTrue()
+        ->and($validator->isValid(str_repeat('k', 129)))->toBeFalse();
+});
+
+it('honours a custom maximum length to the byte', function (): void {
+    $validator = new IdempotencyKeyValidator(IdempotencyKeyFormat::SfString, maxLength: 10);
+
+    expect($validator->isValid(str_repeat('k', 10)))->toBeTrue()
+        ->and($validator->isValid(str_repeat('k', 11)))->toBeFalse();
+});
+
+it('refuses a missing or empty key in either format', function (IdempotencyKeyFormat $format): void {
+    $validator = new IdempotencyKeyValidator($format);
+
+    expect($validator->isValid(null))->toBeFalse()
+        ->and($validator->isValid(''))->toBeFalse();
+})->with([IdempotencyKeyFormat::Uuid, IdempotencyKeyFormat::SfString]);
+
+it('reports the format it validates', function (): void {
+    expect((new IdempotencyKeyValidator(IdempotencyKeyFormat::SfString))->format())->toBe(IdempotencyKeyFormat::SfString);
+});

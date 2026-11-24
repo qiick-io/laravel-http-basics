@@ -21,51 +21,39 @@ final class ReplayHeaderSanitizer
     ) {}
 
     /**
+     * Allowlisted headers only, never a denied one, and never a rate-limit counter:
+     * those describe the original request, so a replay must not repeat them.
+     *
      * @return array<string, string>
      */
     public function extract(Response $response): array
     {
         $denied = array_map(strtolower(...), $this->deniedHeaders);
         $allowed = array_map(strtolower(...), $this->replayAllowlist);
-
-        /** @var array<string, string> $headers */
         $headers = [];
-        foreach ($response->headers->allPreserveCase() as $name => $values) {
-            if (! is_string($name)) {
+
+        // all() keys are lower-case; header names are case-insensitive on the wire.
+        foreach ($response->headers->all() as $name => $values) {
+            if (str_starts_with($name, 'x-ratelimit-') || in_array($name, $denied, true) || ! in_array($name, $allowed, true)) {
                 continue;
             }
 
-            $lower = strtolower($name);
-            if (str_starts_with($lower, 'x-ratelimit-')) {
-                continue;
-            }
-            if (in_array($lower, $denied, true)) {
-                continue;
-            }
-            if (! in_array($lower, $allowed, true)) {
-                continue;
-            }
-
-            $valueList = is_array($values) ? $values : [$values];
-            $headers[$name] = implode(', ', array_map(
-                static fn (mixed $value): string => is_scalar($value) ? (string) $value : '',
-                $valueList,
-            ));
+            $headers[$name] = implode(', ', $values);
         }
 
         return $headers;
     }
 
+    /**
+     * A response carrying a denied header, or any cookie, is never stored: replaying
+     * it would hand one client's session or secret to the next.
+     */
     public function responseHasDeniedHeaders(Response $response): bool
     {
         $denied = array_map(strtolower(...), $this->deniedHeaders);
 
-        foreach ($response->headers->allPreserveCase() as $name => $values) {
-            if (in_array(strtolower($name), $denied, true)) {
-                return true;
-            }
-
-            if (strcasecmp($name, 'Set-Cookie') === 0 && $values !== []) {
+        foreach (array_keys($response->headers->all()) as $name) {
+            if ($name === 'set-cookie' || in_array($name, $denied, true)) {
                 return true;
             }
         }
