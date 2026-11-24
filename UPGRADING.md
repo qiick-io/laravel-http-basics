@@ -56,6 +56,27 @@ Notable configuration changes and requirements:
   - When `allows_archives` is enabled, strict ZIP layout verification (`ZipLayoutVerifier`)
     and streaming uncompressed byte/ratio limits are enforced.
 
+- **Missing, null and invalid values:**
+  - A key missing from a block you published before it existed takes the package
+    default (the publish only merges top-level blocks, so nested keys can be absent).
+  - A boolean set to `null` now takes the package default instead of `false`: for
+    example, a `null` `security.enabled`, `security.baseline_on_machine_doors` or
+    `idempotency.require_json` is now on. An explicit `false` stays off. Any other value
+    of the wrong type (a string for a number, a blank string for a header value) also
+    takes the default, so a blank `HTTP_BASICS_X_FRAME_OPTIONS` still sends `DENY`.
+  - A present but invalid `security.csp.mode` or `request_id.accept_from` now fails at
+    boot (so a deploy step such as `php artisan config:cache` or `migrate` reports it),
+    instead of failing every request that needs it.
+  - With `idempotency.anonymous.enabled`, a missing `idempotency.anonymous.components`
+    takes `ip, user_agent, route` instead of failing at boot; a value that is not a list
+    (such as `'ip'`) still fails.
+  - A missing `locale.machine_doors` gives the security headers the same doors as the
+    locale classifier: `api`, `api/*`, `mcp`, `mcp/*`, so `/api` itself is a machine door.
+
+- **Replayed idempotent responses:** their headers keep their values but are now named
+  in lower case (`content-type`, `location`). HTTP header names are case-insensitive;
+  check any client or test that compares them as exact strings.
+
 ### Migrations
 
 Idempotency database storage is optional. The migration is **not** auto-loaded
