@@ -79,13 +79,11 @@ final class HttpBasicsServiceProvider extends ServiceProvider
 
         $this->app->singleton(RequestIdResolver::class, function (Application $app): RequestIdResolver {
             $settings = $this->settings($app);
-            $acceptFrom = $settings->value('request_id.accept_from');
 
             return new RequestIdResolver(
                 $app->make(IdGenerator::class),
                 $app->make(TrustedProxyDetector::class),
-                (is_string($acceptFrom) ? RequestIdAcceptFrom::tryFrom($acceptFrom) : null)
-                    ?? throw new \InvalidArgumentException('http-basics.request_id.accept_from must be trusted_proxy, any, or never.'),
+                $this->requestIdAcceptFrom($settings),
                 $settings->stringList('request_id.hidden_context_keys'),
                 'http_basics.request_id_source',
                 $settings->string('request_id.accept_pattern'),
@@ -141,15 +139,13 @@ final class HttpBasicsServiceProvider extends ServiceProvider
 
         $this->app->singleton(SecurityHeadersPolicy::class, function (Application $app): SecurityHeadersPolicy {
             $settings = $this->settings($app);
-            $cspMode = $settings->value('security.csp.mode');
 
             return new SecurityHeadersPolicy(
                 enabled: $settings->bool('security.enabled'),
                 xFrameOptions: $settings->string('security.x_frame_options'),
                 referrerPolicy: $settings->string('security.referrer_policy'),
                 permissionsPolicy: $settings->string('security.permissions_policy'),
-                cspMode: (is_string($cspMode) ? CspMode::tryFrom($cspMode) : null)
-                    ?? throw new \InvalidArgumentException('http-basics.security.csp.mode must be enforce, report-only, off, or both.'),
+                cspMode: $this->cspMode($settings),
                 csp: $settings->optionalString('security.csp.policy'),
                 cspReportOnly: $settings->optionalString('security.csp.report_only_policy'),
                 cspReportUri: $settings->optionalString('security.csp.report_uri'),
@@ -280,7 +276,7 @@ final class HttpBasicsServiceProvider extends ServiceProvider
                 $settings->int('idempotency.lock_ttl_seconds'),
                 $settings->int('idempotency.max_handler_seconds'),
                 $settings->int('idempotency.stale_after_seconds'),
-                // Empty or null turns the replay header off.
+                // Set blank or null, the replay header is off; a missing key keeps it on.
                 $settings->optionalString('idempotency.replay_header'),
             );
         });
@@ -290,6 +286,7 @@ final class HttpBasicsServiceProvider extends ServiceProvider
     {
         $this->validateIdempotencyConfig();
         $this->validateErrorsConfig();
+        $this->validateSecurityConfig();
         $this->validateCorsConfig();
 
         $this->loadTranslationsFrom(__DIR__.'/../../lang', 'http-basics');
@@ -323,6 +320,34 @@ final class HttpBasicsServiceProvider extends ServiceProvider
         if (! in_array($this->settings($this->app)->value('errors.format'), ['fleet', 'problem_details'], true)) {
             throw new \InvalidArgumentException('http-basics.errors.format must be fleet or problem_details.');
         }
+    }
+
+    /**
+     * The enums read only when a request needs them, checked here so a bad value
+     * fails the deploy instead of every request.
+     */
+    private function validateSecurityConfig(): void
+    {
+        $settings = $this->settings($this->app);
+
+        $this->requestIdAcceptFrom($settings);
+        $this->cspMode($settings);
+    }
+
+    private function requestIdAcceptFrom(PackageConfig $settings): RequestIdAcceptFrom
+    {
+        $acceptFrom = $settings->value('request_id.accept_from');
+
+        return (is_string($acceptFrom) ? RequestIdAcceptFrom::tryFrom($acceptFrom) : null)
+            ?? throw new \InvalidArgumentException('http-basics.request_id.accept_from must be trusted_proxy, any, or never.');
+    }
+
+    private function cspMode(PackageConfig $settings): CspMode
+    {
+        $cspMode = $settings->value('security.csp.mode');
+
+        return (is_string($cspMode) ? CspMode::tryFrom($cspMode) : null)
+            ?? throw new \InvalidArgumentException('http-basics.security.csp.mode must be enforce, report-only, off, or both.');
     }
 
     private function validateCorsConfig(): void
@@ -375,7 +400,10 @@ final class HttpBasicsServiceProvider extends ServiceProvider
             );
         }
 
-        $this->normalizeAnonComponents($settings->stringList('idempotency.anonymous.components'));
+        // A string such as 'ip' is a mistake to report, not a reason to use the default list.
+        $components = $settings->value('idempotency.anonymous.components');
+
+        $this->normalizeAnonComponents(is_array($components) ? $settings->stringList('idempotency.anonymous.components') : []);
     }
 
     private function cacheRepository(mixed $cache): CacheRepository
@@ -421,6 +449,6 @@ final class HttpBasicsServiceProvider extends ServiceProvider
 
     private function settings(Application $app): PackageConfig
     {
-        return PackageConfig::fromRepository($this->config($app));
+        return new PackageConfig($this->config($app));
     }
 }

@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 namespace Qiick\HttpBasics\Idempotency;
 
+use Illuminate\Contracts\Config\Repository as ConfigRepository;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\MassPrunable;
 use Illuminate\Database\Eloquent\Model;
+use Qiick\HttpBasics\Config\PackageConfig;
 
 /**
  * Optional Eloquent model for the published idempotency migration.
@@ -27,9 +29,7 @@ class IdempotencyRecord extends Model
 
     public function getTable(): string
     {
-        $table = config('http-basics.idempotency.database.table', 'idempotency_records');
-
-        return is_string($table) && $table !== '' ? $table : 'idempotency_records';
+        return $this->settings()->string('idempotency.database.table');
     }
 
     /**
@@ -42,9 +42,7 @@ class IdempotencyRecord extends Model
             return $this->connection;
         }
 
-        $connection = config('http-basics.idempotency.database.connection');
-
-        return is_string($connection) && $connection !== '' ? $connection : null;
+        return $this->settings()->optionalString('idempotency.database.connection');
     }
 
     /**
@@ -54,5 +52,13 @@ class IdempotencyRecord extends Model
     {
         // expires_at is UTC wall-clock, so the cutoff must be too, whatever app.timezone is.
         return static::query()->where('expires_at', '<=', now('UTC'));
+    }
+
+    /**
+     * The same reads as the store's, so the store and `model:prune` never disagree.
+     */
+    private function settings(): PackageConfig
+    {
+        return new PackageConfig(app(ConfigRepository::class));
     }
 }

@@ -21,6 +21,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Config: a boolean `http-basics.*` value set to `null` now takes the package's shipped
   default for that key instead of being read as `false`. Any other value of the wrong
   type also falls back to the shipped default, through the internal `PackageConfig`.
+  The shipped defaults are constants in the package, never the environment read again,
+  so a blank or `null` `HTTP_BASICS_X_FRAME_OPTIONS`, `HTTP_BASICS_REFERRER_POLICY` or
+  `HTTP_BASICS_PERMISSIONS_POLICY` still sends the safe header.
+
+- Config: a present but invalid `http-basics.security.csp.mode` or
+  `http-basics.request_id.accept_from` now fails at boot, like the other enums, instead
+  of on the first request that needs it. A missing key still takes its default.
+
+- Config: with anonymous idempotency enabled, a missing
+  `http-basics.idempotency.anonymous.components` now takes the shipped
+  `ip, user_agent, route` instead of failing at boot; a value that is not a list still
+  fails. A missing `http-basics.locale.machine_doors` now gives the security headers the
+  same doors as the locale classifier (`api`, `api/*`, `mcp`, `mcp/*`), so `/api` itself
+  counts as a machine door.
 
 - Idempotency (breaking for custom stores): `IdempotencyStore::claim()` takes an
   `IdempotencyContext` (key format, fingerprint version, request id, trace id,
