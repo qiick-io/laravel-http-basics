@@ -38,21 +38,6 @@ use Qiick\HttpBasics\Security\CspMode;
 use Qiick\HttpBasics\Security\SecurityHeadersPolicy;
 use Qiick\HttpBasics\Uploads\UploadPolicyResolver;
 
-/**
- * Reads a private property: the bindings expose no getters for what they were built with.
- */
-function wiredProperty(object $object, string $property): mixed
-{
-    return (fn (): mixed => $this->{$property})->call($object);
-}
-
-function bootProvider(): void
-{
-    /** @var HttpBasicsServiceProvider $provider */
-    $provider = app()->getProvider(HttpBasicsServiceProvider::class);
-    $provider->boot();
-}
-
 it('wires the request-id services from config', function (): void {
     config([
         'http-basics.request_id.trust_wildcard_proxies' => true,
