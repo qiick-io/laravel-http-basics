@@ -111,6 +111,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Security headers: strict CSP with a per-request nonce (`HTTP_BASICS_CSP_NONCE`). The
+  built `script-src` becomes `'self' 'nonce-…' 'strict-dynamic'` (no `'unsafe-eval'`),
+  `SetSecurityHeadersMiddleware` hands the nonce to `Vite::useCspNonce()` before the
+  handler runs, and `security.csp.script_hashes` adds hashes of allowed inline scripts,
+  validated at boot. New `CspNonceProvider` contract and `RequestCspNonceProvider`
+  (128 random bits per request). Standards review S2.
+
 - Uploads: `UploadValidator`, the `SafeUpload` rule, `HardFloor`, `FileNameSanitizer`,
   per-context `UploadPolicy` from `http-basics.uploads.contexts`, and the `MalwareScanner`
   seam. Archives are refused unless a context sets `allows_archives`; an allowed ZIP is

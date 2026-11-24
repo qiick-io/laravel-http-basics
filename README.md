@@ -159,8 +159,19 @@ $middleware->prepend(SetSecurityHeadersMiddleware::class);
 | `HTTP_BASICS_CSP_MODE` | `enforce` | `enforce` / `report-only` / `off` / `both`. |
 | `HTTP_BASICS_CSP` | empty → Vite-friendly default | Full CSP override (verbatim). |
 | `HTTP_BASICS_CSP_REPORT_URI` | empty | Appended to the built/override CSP string before set. |
+| `HTTP_BASICS_CSP_NONCE` | `false` | Strict CSP: a per-request nonce plus `'strict-dynamic'` in the built `script-src`, no `'unsafe-eval'`. |
+| `security.csp.script_hashes` | `[]` | `sha256-…` / `sha384-…` / `sha512-…` hashes of allowed inline scripts. |
 | `HTTP_BASICS_HSTS_MAX_AGE` | `0` | HSTS only when greater than 0 and the request is HTTPS; proxy usually owns this. |
 | `HTTP_BASICS_BASELINE_ON_API` | `true` | Machine doors still get nosniff / Referrer / Permissions. |
+
+With `HTTP_BASICS_CSP_NONCE=true` the middleware takes the request's nonce from
+`CspNonceProvider` before the handler runs and hands it to `Vite::useCspNonce()`, so
+every tag `@vite` renders carries it. Other inline scripts need the same nonce
+(`nonce="{{ Vite::cspNonce() }}"`) or a hash in `security.csp.script_hashes`.
+`'unsafe-inline'` stays in `script-src` only as the fallback for pre-CSP2 browsers,
+which ignore nonces. `style-src` keeps `'unsafe-inline'`: a style nonce would block the
+inline `style` attributes most front ends render. A full override (`HTTP_BASICS_CSP`) is
+sent as written, without a nonce.
 
 Existing HSTS / XFO / Referrer / Permissions / nosniff on the response are never
 replaced. If the response already has **either** `Content-Security-Policy` or

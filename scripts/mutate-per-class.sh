@@ -50,6 +50,8 @@ CLASSES=(
   'Qiick\HttpBasics\Testing\InMemoryIdempotencyStore'
   'Qiick\HttpBasics\Laravel\HttpBasicsServiceProvider'
   'Qiick\HttpBasics\Config\PackageConfig'
+  'Qiick\HttpBasics\Security\SetSecurityHeadersMiddleware'
+  'Qiick\HttpBasics\Security\RequestCspNonceProvider'
 )
 
 CLASS_FILES=(
@@ -91,6 +93,8 @@ CLASS_FILES=(
   'src/Testing/InMemoryIdempotencyStore.php'
   'src/Laravel/HttpBasicsServiceProvider.php'
   'src/Config/PackageConfig.php'
+  'src/Security/SetSecurityHeadersMiddleware.php'
+  'src/Security/RequestCspNonceProvider.php'
 )
 
 # Extra files under RequestId\ / Locale\ / Security\ / Idempotency\ / Cors\ / Uploads\ prefixes that are not mutation targets.
@@ -104,7 +108,6 @@ SIBLING_FILES=(
   'src/Security/CspMode.php'
   'src/Security/SecurityHeadersPolicy.php'
   'src/Security/CspPolicyBuilder.php'
-  'src/Security/SetSecurityHeadersMiddleware.php'
   'src/Idempotency/ClaimOutcome.php'
   'src/Idempotency/IdempotencyClaim.php'
   'src/Idempotency/IdempotencyScope.php'
@@ -135,6 +138,7 @@ SIBLING_FILES=(
   'src/Errors/MachineDoorJson.php'
   'src/Testing/FixedClock.php'
   'src/Testing/FakeCredentialBucketResolver.php'
+  'src/Security/CspNonceProvider.php'
 )
 
 MIN="${MUTATE_MIN:-95}"

@@ -11,15 +11,30 @@ use Illuminate\Support\Facades\Vite;
  * @api Default CSP for Vite + Echo/Reverb style apps: `'self'` with pragmatic
  * script/style/connect allowances and `frame-ancestors 'none'`. Adds the Vite
  * hot-server origin when the Vite facade root exposes `devServerUrl()` (Laravel
- * 13+). Laravel 12 has no such method; feature-detect and skip the origin.
+ * 13+). Laravel 12 has no such method; feature-detect and skip the origin. With a
+ * nonce provider, the script-src becomes a strict CSP (S2).
  */
 final class ViteFriendlyCspPolicyBuilder implements CspPolicyBuilder
 {
+    /**
+     * @param  CspNonceProvider|null  $nonces  set: a strict script-src around the request nonce
+     * @param  list<string>  $scriptHashes  `sha256-…` / `sha384-…` / `sha512-…` sources for inline scripts
+     */
+    public function __construct(
+        private ?CspNonceProvider $nonces = null,
+        private array $scriptHashes = [],
+    ) {}
+
     public function build(Request $request): string
     {
         $developmentServerOrigins = $this->viteDevOrigins();
+        $hashSources = array_map(static fn (string $hash): string => "'{$hash}'", $this->scriptHashes);
 
-        $scriptSources = array_merge(["'self'", "'unsafe-inline'", "'unsafe-eval'"], $developmentServerOrigins);
+        $scriptSources = $this->nonces === null
+            ? ["'self'", "'unsafe-inline'", "'unsafe-eval'", ...$hashSources, ...$developmentServerOrigins]
+            // Strict CSP (CSP3): the nonce and 'strict-dynamic' decide what runs, so no
+            // 'unsafe-eval'; 'unsafe-inline' only reaches pre-CSP2 browsers, which ignore nonces.
+            : ["'self'", "'nonce-".$this->nonces->nonceFor($request)."'", "'strict-dynamic'", ...$hashSources, ...$developmentServerOrigins, "'unsafe-inline'"];
         $styleSources = array_merge(["'self'", "'unsafe-inline'"], $developmentServerOrigins);
         $fontSources = array_merge(["'self'", 'data:'], $developmentServerOrigins);
         $imageSources = array_merge(["'self'", 'data:', 'blob:', 'https:'], $developmentServerOrigins);

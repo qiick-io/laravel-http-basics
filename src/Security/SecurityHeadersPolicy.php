@@ -27,5 +27,7 @@ final readonly class SecurityHeadersPolicy
         public bool $hstsPreload = false,
         public bool $baselineOnMachineDoors = true,
         public array $machineDoorPatterns = ['api/*', 'mcp', 'mcp/*'],
+        // A per-request CSP nonce, handed to Vite before the handler renders (S2).
+        public bool $cspNonce = false,
     ) {}
 }

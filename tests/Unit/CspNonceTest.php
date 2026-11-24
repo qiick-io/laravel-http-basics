@@ -10,7 +10,9 @@ declare(strict_types=1);
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Facade;
 use Illuminate\Support\Facades\Vite;
+use Qiick\HttpBasics\Laravel\HttpBasicsServiceProvider;
 use Qiick\HttpBasics\Security\CspNonceProvider;
+use Qiick\HttpBasics\Security\CspPolicyBuilder;
 use Qiick\HttpBasics\Security\RequestCspNonceProvider;
 use Qiick\HttpBasics\Security\SecurityHeaderBuilder;
 use Qiick\HttpBasics\Security\SecurityHeadersPolicy;
@@ -153,16 +155,42 @@ it('wires nonces and script hashes from config', function (): void {
     $request = Request::create('/');
 
     expect(app(SecurityHeadersPolicy::class)->cspNonce)->toBeTrue()
-        ->and(scriptSourceOf(app(Qiick\HttpBasics\Security\CspPolicyBuilder::class)->build($request)))
+        ->and(scriptSourceOf(app(CspPolicyBuilder::class)->build($request)))
         ->toBe("'self' 'nonce-".app(CspNonceProvider::class)->nonceFor($request)."' 'strict-dynamic' 'sha256-AbC+/9=' 'unsafe-inline'");
 });
 
 it('refuses a script hash that is not a CSP hash source, at boot', function (string $hash): void {
     config(['http-basics.security.csp.script_hashes' => [$hash]]);
 
-    /** @var Qiick\HttpBasics\Laravel\HttpBasicsServiceProvider $provider */
-    $provider = app()->getProvider(Qiick\HttpBasics\Laravel\HttpBasicsServiceProvider::class);
+    /** @var HttpBasicsServiceProvider $provider */
+    $provider = app()->getProvider(HttpBasicsServiceProvider::class);
 
     expect(fn () => $provider->boot())
         ->toThrow(InvalidArgumentException::class, 'http-basics.security.csp.script_hashes must hold sha256-, sha384- or sha512- base64 hashes.');
 })->with(['md5-abc', "sha256-abc' 'unsafe-eval", 'sha256-']);
+
+it('refuses a handler that does not return a Symfony response', function (): void {
+    $middleware = new SetSecurityHeadersMiddleware(new SecurityHeaderBuilder(new ViteFriendlyCspPolicyBuilder), new SecurityHeadersPolicy);
+
+    expect(fn () => $middleware->handle(Request::create('/'), static fn (): string => 'not a response'))
+        ->toThrow(UnexpectedValueException::class);
+});
+
+it('keeps the Vite dev server origin in a strict script-src', function (): void {
+    Facade::setFacadeApplication(app());
+    Vite::swap(new class
+    {
+        public function devServerUrl(): string
+        {
+            return 'http://vite.test:5173';
+        }
+    });
+
+    try {
+        $policy = (new ViteFriendlyCspPolicyBuilder(fixedNonceProvider('n0nce')))->build(Request::create('/'));
+    } finally {
+        Vite::clearResolvedInstance();
+    }
+
+    expect(scriptSourceOf($policy))->toBe("'self' 'nonce-n0nce' 'strict-dynamic' http://vite.test:5173 'unsafe-inline'");
+});
