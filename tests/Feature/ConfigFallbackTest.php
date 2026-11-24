@@ -161,3 +161,25 @@ it('gives the store and the record model the same trimmed connection', function 
     expect(wiredProperty(app(IdempotencyStore::class), 'connection')->getName())->toBe('records')
         ->and((new IdempotencyRecord)->getConnectionName())->toBe('records');
 });
+
+it('refuses a request-id accept pattern that is not anchored at both ends, at boot', function (string $pattern): void {
+    config(['http-basics.request_id.accept_pattern' => $pattern]);
+
+    expect(fn () => bootProvider())->toThrow(
+        InvalidArgumentException::class,
+        'http-basics.request_id.accept_pattern must be a valid pattern anchored with \A and \z.',
+    );
+})->with([
+    'no anchors' => ['/[A-Za-z0-9]{8,128}/'],
+    'start only' => ['/\A[A-Za-z0-9]{8,128}/'],
+    'line anchors' => ['/^[A-Za-z0-9]{8,128}$/'],
+    'not a pattern' => ['\A[A-Za-z0-9]{8,128}\z'],
+]);
+
+it('accepts an anchored request-id accept pattern at boot', function (): void {
+    config(['http-basics.request_id.accept_pattern' => '#\A[a-z0-9]{8,64}\z#i']);
+
+    bootProvider();
+
+    expect(wiredProperty(app(RequestIdResolver::class), 'acceptPattern'))->toBe('#\A[a-z0-9]{8,64}\z#i');
+});
