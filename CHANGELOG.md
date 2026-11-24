@@ -15,6 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Idempotency: replayed response headers keep their values but are named in lower case
+  (they come from `HeaderBag::all()`); HTTP header names are case-insensitive.
+
+- Config: a boolean `http-basics.*` value set to `null` now takes the package's shipped
+  default for that key instead of being read as `false`. Any other value of the wrong
+  type also falls back to the shipped default, through the internal `PackageConfig`.
+
 - Idempotency (breaking for custom stores): `IdempotencyStore::claim()` takes an
   `IdempotencyContext` (key format, fingerprint version, request id, trace id,
   credential public id, metadata), filled by the middleware. The idempotency migration

@@ -18,8 +18,7 @@ jobs:
   tests:
     name: PHP ${{ matrix.php }} Laravel ${{ matrix.laravel }} ${{ matrix.dependency-version }}
     runs-on: ubuntu-latest
-    # Must stay above the mutate step's own bound below, or the job cap cancels it first.
-    timeout-minutes: 45
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -48,8 +47,7 @@ jobs:
         uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
         with:
           php-version: ${{ matrix.php }}
-          # pcov required for the mutate cell (pest --mutate needs a coverage driver).
-          coverage: ${{ (matrix.php == '8.4' && matrix.laravel == '12' && matrix.dependency-version == 'stable') && 'pcov' || 'none' }}
+          coverage: none
           tools: composer:v2
 
       - name: Validate composer.json
@@ -90,30 +88,18 @@ jobs:
       - name: Pest
         run: vendor/bin/pest
 
-      # Mutation targets from the design §8. Per-class min 95; surface the table
-      # in the job summary. Bound the step so a hung php -S / mutate cannot burn
-      # the whole matrix cell.
-      - name: Pest mutate (security-critical classes, per-class min 95)
-        if: matrix.php == '8.4' && matrix.laravel == '12' && matrix.dependency-version == 'stable'
-        # About a minute per gated class, run one after another; shard 2 runs in the
-        # mutation-shard-2 job below so neither passes the 40-minute bound.
-        timeout-minutes: 40
-        env:
-          MUTATE_SHARD: '1'
-          MUTATE_SHARDS: '2'
-        run: |
-          set -euo pipefail
-          output="$(mktemp)"
-          bash scripts/mutate-per-class.sh | tee "${output}"
-          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
-            awk '/^## Per-class mutation scores$/{flag=1} flag{print}' "${output}" >> "${GITHUB_STEP_SUMMARY}"
-          fi
-
-  # The second half of the per-class mutation gate (see the tests job's mutate step).
-  mutation-shard-2:
-    name: Pest mutate (shard 2 of 2)
+  # Mutation targets from the design §8: one pest --mutate invocation per class
+  # (pcov, no --covered-only, no || true), split round-robin across parallel
+  # shards so no job runs near its timeout. Add a shard (and update
+  # MUTATE_SHARDS) before one passes 20 minutes.
+  mutation-shards:
+    name: Mutation (shard ${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - name: Checkout
         # actions/checkout@v4.2.2
@@ -124,6 +110,7 @@ jobs:
         uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
         with:
           php-version: '8.4'
+          # pest --mutate needs a coverage driver.
           coverage: pcov
           tools: composer:v2
 
@@ -138,11 +125,10 @@ jobs:
             "illuminate/database:^12.0"
           composer update --no-interaction --prefer-dist --with-all-dependencies
 
-      - name: Pest mutate (shard 2 of 2, per-class min 95)
-        timeout-minutes: 40
+      - name: Pest mutate (per-class min 95)
         env:
-          MUTATE_SHARD: '2'
-          MUTATE_SHARDS: '2'
+          MUTATE_SHARD: ${{ matrix.shard }}
+          MUTATE_SHARDS: 4
         run: |
           set -euo pipefail
           output="$(mktemp)"
@@ -150,6 +136,18 @@ jobs:
           if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
             awk '/^## Per-class mutation scores$/{flag=1} flag{print}' "${output}" >> "${GITHUB_STEP_SUMMARY}"
           fi
+
+  # One stable check name over every shard, for branch protection: it fails
+  # unless every shard succeeded (a cancelled or skipped shard fails it too).
+  mutation:
+    name: Mutation (per-class ≥95%)
+    needs: mutation-shards
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every shard passed
+        run: test "${{ needs.mutation-shards.result }}" = "success"
 
   # DatabaseIdempotencyStore on the four engines (checklist item 6 / M8).
   database-store-sqlite:
