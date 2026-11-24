@@ -99,3 +99,18 @@ it('appends Accept-Language to Vary once, whatever is already there', function (
     'a token sorting before it' => ['Accept', 'Accept, Accept-Language'],
     'already there, padded and lower-case' => ['Origin , accept-language', 'Origin , accept-language'],
 ]);
+
+it('keeps every Vary line when it appends Accept-Language', function (): void {
+    // A shared cache keyed on one line only would serve a Cookie-bound variant to everyone.
+    $middleware = new SetLocaleMiddleware(setLocaleNegotiator(['en', 'de']));
+
+    $response = $middleware->handle(setLocaleApiRequest(headers: ['Accept-Language' => 'de']), static function (): Response {
+        $response = new Response;
+        $response->headers->set('Vary', 'Origin');
+        $response->headers->set('Vary', ['Cookie', 'origin, ACCEPT-LANGUAGE'], false);
+
+        return $response;
+    });
+
+    expect($response->headers->all('vary'))->toBe(['origin, Cookie, ACCEPT-LANGUAGE']);
+});
