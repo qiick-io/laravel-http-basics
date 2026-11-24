@@ -4,5 +4,124 @@ This package is **pre-release** (`0.x`). Breaking changes are allowed between
 minor versions while the major is `0`, and each break is recorded here before a
 tagged release.
 
-There are no published versions yet. When `0.1.0` ships, first-install steps and
-any follow-on breaks will land in this file.
+## From 0.x toward 1.0.0
+
+This section documents what changes for applications adopting the package or
+upgrading from pre-release `0.x` milestones to the stable `1.0.0` release.
+
+### Configuration
+
+Publish or re-publish the package configuration file to pick up new sections:
+
+```bash
+php artisan vendor:publish --tag=http-basics-config --force
+```
+
+Notable configuration changes and requirements:
+
+- **CORS (`http-basics.cors` / `config/cors.php`):**
+  - The `http-basics.cors.validate_on_boot` switch (`HTTP_BASICS_CORS_VALIDATE_ON_BOOT`)
+    has been removed. Boot-time validation of `config('cors')` now always runs.
+  - When `cors.supports_credentials` is `true`, boot-time validation strictly
+    forbids wildcard origins (`*`), wildcard origin patterns (`allowed_origins_patterns`),
+    and wildcards in `allowed_headers` or `exposed_headers` (e.g. `allowed_headers: ['*']`).
+    Every allowed origin and header must be listed explicitly, or resolved dynamically
+    via a bound `AllowedOriginsResolver`.
+  - Expose fleet headers in `config/cors.php` by merging `CorsHeaderCatalog::exposedHeaders()`
+    and `CorsHeaderCatalog::allowedRequestHeaders()`.
+
+- **Errors (`http-basics.errors`):**
+  - `errors.format` controls the error envelope: `'fleet'` (default, top-level
+    `message` and `error` codes) or `'problem_details'` (RFC 9457 `application/problem+json`).
+  - `errors.problem_type_base_uri` optionally prefixes `type` URIs for problem details.
+    When null, `about:blank` is used.
+
+- **Idempotency (`http-basics.idempotency`):**
+  - `idempotency.store` selects the backing engine (`cache` or `database`).
+  - When using the database store, `idempotency.database.connection` specifies the
+    connection. If unset, it falls back to the application default connection.
+  - `max_handler_seconds` must be strictly less than `lock_ttl_seconds` to guarantee
+    locks do not expire while handlers execute normally.
+  - On machine doors, request fingerprinting now includes the negotiated response
+    locale (rather than the raw `Accept-Language` header), ensuring equivalent language
+    negotiations match the same idempotency claim.
+  - Middleware parameter syntax enforces a strict grammar: options must be exact and
+    case-sensitive (`replayable=false` or `replayable=true`); invalid or misspelled
+    options throw an exception at runtime.
+
+- **Uploads (`http-basics.uploads`):**
+  - `uploads.contexts` defines validation contexts. Archives (`.zip`, `.docx`, etc.)
+    are refused by default unless `allows_archives: true` is explicitly enabled for
+    that context.
+  - When `allows_archives` is enabled, strict ZIP layout verification (`ZipLayoutVerifier`)
+    and streaming uncompressed byte/ratio limits are enforced.
+
+### Migrations
+
+Idempotency database storage is optional. The migration is **not** auto-loaded
+by default. If your application uses `HTTP_BASICS_IDEMPOTENCY_STORE=database`:
+
+1. Publish the migration:
+   ```bash
+   php artisan vendor:publish --tag=http-basics-migrations
+   ```
+2. Run migrations:
+   ```bash
+   php artisan migrate
+   ```
+
+> [!IMPORTANT]
+> In accordance with qiick standards, migrations are frozen at the first stable release
+> (`1.0.0`). Before `1.0.0`, schema modifications are made directly in the initial
+> `2026_11_22_000001_create_idempotency_records_table.php` migration. If you were
+> using an earlier pre-release schema, run `migrate:fresh` or recreate the table to match
+> the reference schema in `docs/reference-schema.md`.
+
+Pruning completed records can be performed via:
+```bash
+php artisan http-basics:prune-idempotency
+```
+or by registering Laravel's `model:prune` against `Qiick\HttpBasics\Idempotency\IdempotencyRecord`.
+
+### Middleware Registration
+
+The package requires specific registration order in `bootstrap/app.php`:
+
+1. **Outer global middleware (prepend):**
+   - `AssignRequestIdMiddleware` must be prepended outermost so error responses (401, 404, 503)
+     and maintenance responses carry `X-Request-Id`.
+   - `SetSecurityHeadersMiddleware` must be prepended so baseline security headers
+     (`nosniff`, `Referrer-Policy`, `Permissions-Policy`) are present on all responses.
+   - `SetLocaleMiddleware` should be prepended if early maintenance responses require
+     `Content-Language`.
+
+2. **Route groups:**
+   - Append `SetLocaleMiddleware` to the `web` and `api` groups to enable session/cookie
+     or `Accept-Language` negotiation.
+   - `ConfigureCorsMiddleware` should be placed ahead of `HandleCors` if using dynamic
+     origin resolution via `AllowedOriginsResolver`.
+
+3. **Per-route middleware:**
+   - Register `HandleIdempotencyMiddleware` on mutating routes (`POST`, `PATCH`) after
+     authentication, throttling, and authorization.
+   - For endpoints that issue one-time secrets or credentials (e.g. API keys, password resets),
+     always disable replay:
+     ```php
+     Route::post('/api/keys', ...)->middleware(HandleIdempotencyMiddleware::class.':replayable=false');
+     ```
+
+### Error Handling
+
+Wire error augmentation into your application's bootstrap:
+
+```php
+use Qiick\HttpBasics\Errors\ExceptionErrorCodeAugmenter;
+use Qiick\HttpBasics\Errors\MachineDoorJson;
+
+// Target machine-door routes
+$exceptions->shouldRenderJsonWhen(MachineDoorJson::whenCallback(['api/*', 'mcp', 'mcp/*']));
+
+// Augment JSON error responses with top-level error codes
+$exceptions->respond(fn ($response, $exception, $request) => app(ExceptionErrorCodeAugmenter::class)
+    ->respond($response, $exception, $request));
+```
