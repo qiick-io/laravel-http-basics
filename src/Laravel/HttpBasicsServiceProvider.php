@@ -350,12 +350,8 @@ final class HttpBasicsServiceProvider extends ServiceProvider
 
         $scriptHashes = $settings->stringList('security.csp.script_hashes');
 
-        foreach ($scriptHashes as $hash) {
-            // The value lands inside the CSP header: base64 only, so it cannot add a source.
-            if (preg_match('/\Asha(256|384|512)-[A-Za-z0-9+\/]+={0,2}\z/', $hash) !== 1) {
-                throw new \InvalidArgumentException('http-basics.security.csp.script_hashes must hold sha256-, sha384- or sha512- base64 hashes.');
-            }
-        }
+        // The builder refuses a malformed hash; building it here fails the deploy instead of a request.
+        new ViteFriendlyCspPolicyBuilder(null, $scriptHashes);
 
         // CSP2+ browsers ignore 'unsafe-inline' once a hash is present: without the nonce,
         // every other inline script (the appearance script, Vite's tags) would stop running.
