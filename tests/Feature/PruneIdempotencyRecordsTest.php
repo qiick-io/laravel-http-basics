@@ -109,3 +109,60 @@ it('keeps a connection chosen with on() or setConnection() over the configured o
     expect((new IdempotencyRecord)->setConnection('sqlite')->getConnectionName())->toBe('sqlite')
         ->and((new IdempotencyRecord)->getConnectionName())->toBe('idempotency');
 });
+
+it('prunes only rows expired at least --hours ago, never a negative window', function (string $hours, array $kept): void {
+    // Now is 12:00 UTC (beforeEach).
+    insertIdempotencyRecordExpiringAt('2026-01-01 08:00:00', 'four-hours-ago');
+    insertIdempotencyRecordExpiringAt('2026-01-01 11:00:00', 'one-hour-ago');
+    insertIdempotencyRecordExpiringAt('2026-01-01 13:00:00', 'live');
+
+    $this->artisan('http-basics:prune-idempotency', ['--hours' => $hours])->assertSuccessful();
+
+    expect(DB::table('idempotency_records')->orderBy('expires_at')->pluck('key_hash')->all())
+        ->toBe(array_map(static fn (string $suffix): string => hash('sha256', 'key-'.$suffix), $kept));
+})->with([
+    'two hours' => ['2', ['one-hour-ago', 'live']],
+    'negative clamps to zero' => ['-5', ['live']],
+]);
+
+it('only counts on --dry-run', function (): void {
+    insertIdempotencyRecordExpiringAt('2026-01-01 11:00:00', 'expired');
+
+    $this->artisan('http-basics:prune-idempotency', ['--dry-run' => true])
+        ->expectsOutput('Would delete 1 expired idempotency record(s).')
+        ->assertSuccessful();
+
+    expect(DB::table('idempotency_records')->count())->toBe(1);
+});
+
+it('prunes the configured table', function (): void {
+    Schema::rename('idempotency_records', 'idempotency_custom');
+    config(['http-basics.idempotency.database.table' => 'idempotency_custom']);
+    DB::table('idempotency_custom')->insert([
+        'public_id' => (string) Str::uuid7(),
+        'key_format' => 'uuid',
+        'bucket' => 'bucket-a',
+        'key_hash' => hash('sha256', 'custom'),
+        'method' => 'POST',
+        'path' => '/items',
+        'fingerprint' => 'fp',
+        'lease' => str_repeat('a', 64),
+        'status' => 'completed',
+        'expires_at' => '2026-01-01 11:00:00',
+    ]);
+
+    $this->artisan('http-basics:prune-idempotency')
+        ->expectsOutput('Deleted 1 expired idempotency record(s).')
+        ->assertSuccessful();
+
+    expect(DB::table('idempotency_custom')->count())->toBe(0);
+});
+
+it('reads --hours as whole hours', function (): void {
+    // 1.5 counts as 1: a row expired at 10:45 is past the 11:00 cutoff.
+    insertIdempotencyRecordExpiringAt('2026-01-01 10:45:00', 'quarter-to-eleven');
+
+    $this->artisan('http-basics:prune-idempotency', ['--hours' => '1.5'])->assertSuccessful();
+
+    expect(DB::table('idempotency_records')->count())->toBe(0);
+});

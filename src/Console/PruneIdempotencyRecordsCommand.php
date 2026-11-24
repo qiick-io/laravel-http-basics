@@ -24,18 +24,18 @@ final class PruneIdempotencyRecordsCommand extends Command
 
     public function handle(): int
     {
-        $table = config('http-basics.idempotency.database.table', 'idempotency_records');
-        $tableName = is_string($table) && $table !== '' ? $table : 'idempotency_records';
+        $record = new IdempotencyRecord;
         $hours = max(0, (int) $this->option('hours'));
         // expires_at is UTC wall-clock, so the cutoff must be too, whatever app.timezone is.
         $cutoff = now('UTC')->subHours($hours);
 
-        $query = DB::connection((new IdempotencyRecord)->getConnectionName())
-            ->table($tableName)
+        // The model resolves the configured table and connection, the store's own.
+        $query = DB::connection($record->getConnectionName())
+            ->table($record->getTable())
             ->where('expires_at', '<=', $cutoff);
         $count = (clone $query)->count();
 
-        if ((bool) $this->option('dry-run')) {
+        if ($this->option('dry-run') === true) {
             $this->info("Would delete {$count} expired idempotency record(s).");
 
             return self::SUCCESS;
