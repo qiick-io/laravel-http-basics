@@ -36,6 +36,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   same doors as the locale classifier (`api`, `api/*`, `mcp`, `mcp/*`), so `/api` itself
   counts as a machine door.
 
+- Idempotency: cache-store records carry a payload version `v` (1), as the database row
+  carries `schema_version`. A record without `v` reads as version 1; a record of any other
+  version answers `idempotency_not_replayable`, so a rollback never replays or re-runs a
+  format it cannot read (standards review S10).
+
 - Idempotency (breaking for custom stores): `IdempotencyStore::claim()` takes an
   `IdempotencyContext` (key format, fingerprint version, request id, trace id,
   credential public id, metadata), filled by the middleware. The idempotency migration

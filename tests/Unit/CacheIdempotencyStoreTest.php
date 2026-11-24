@@ -736,6 +736,7 @@ it('stores a sealed record without a response and releases the claim lock', func
     $store->sealUnreplayable($claim, $now->modify('+5 seconds'));
 
     expect($repository->get($scope->cacheKey('sealed')))->toBe([
+        'v' => 1,
         'fingerprint' => 'fp',
         'lease' => $claim->lease,
         'status' => 'completed',
@@ -758,6 +759,7 @@ it('stores a completed record with its response and start time', function (): vo
     $store->complete($claim, new ReplayableResponse(201, ['Location' => '/items/1'], '{"id":1}'), $now->modify('+2 seconds'));
 
     expect($repository->get($scope->cacheKey('done')))->toBe([
+        'v' => 1,
         'fingerprint' => 'fp',
         'lease' => $claim->lease,
         'status' => 'completed',
