@@ -215,3 +215,9 @@ it('refuses script hashes without the nonce, at boot', function (): void {
     expect(fn () => bootProvider())
         ->toThrow(InvalidArgumentException::class, 'http-basics.security.csp.script_hashes needs http-basics.security.csp.nonce: without it a hash turns off \'unsafe-inline\' for every other inline script.');
 });
+
+it('refuses a script hash that is not a CSP hash source when the builder is made', function (): void {
+    // The boot check misses a config()->set() after boot and a builder made by hand.
+    expect(fn () => new ViteFriendlyCspPolicyBuilder(fixedNonceProvider('n0nce'), ["sha256-abc' 'unsafe-eval"]))
+        ->toThrow(InvalidArgumentException::class, 'http-basics.security.csp.script_hashes must hold sha256-, sha384- or sha512- base64 hashes.');
+});
