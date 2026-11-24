@@ -15,6 +15,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Idempotency (breaking for code that builds claims): `IdempotencyClaim::$lease` is
+  `?string` instead of `mixed`.
+
+- Uploads (breaking for code that calls the factories): the `UploadRejectedException`
+  factories (`forbiddenType()`, `typeNotAllowed()`, `contentMismatch()`, `tooLarge()`,
+  `nameInvalid()`, `infected()`, `scanFailed()`) no longer take the unused file name.
+
+- Request id: boot fails when `http-basics.request_id.accept_pattern` is not a valid
+  pattern anchored with `\A` and `\z`; unanchored, it matched inside longer values.
+
 - Idempotency: replayed response headers keep their values but are named in lower case
   (they come from `HeaderBag::all()`); HTTP header names are case-insensitive.
 

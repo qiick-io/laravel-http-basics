@@ -83,6 +83,11 @@ Notable configuration changes and requirements:
   accepted in both key formats and stored without its quotes, so `"abc"` and `abc` are
   the same key.
 
+- **Public signatures settled before 1.0:** `IdempotencyClaim::$lease` is `?string`, and
+  the `UploadRejectedException` factories take no argument (drop the file name you
+  passed). A custom `request_id.accept_pattern` must be anchored with `\A` and `\z`, or
+  boot fails.
+
 - **Replayed idempotent responses:** their headers keep their values but are now named
   in lower case (`content-type`, `location`). HTTP header names are case-insensitive;
   check any client or test that compares them as exact strings.

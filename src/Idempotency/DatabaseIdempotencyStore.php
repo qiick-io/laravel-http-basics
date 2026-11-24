@@ -217,7 +217,7 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
     public function abandon(IdempotencyClaim $claim, DateTimeImmutable $now): void
     {
         // Nothing of ours to clear: skip the database round trip entirely.
-        if ($claim->outcome !== ClaimOutcome::New || ! is_string($claim->lease) || $claim->lease === '') {
+        if ($claim->outcome !== ClaimOutcome::New || $claim->lease === null || $claim->lease === '') {
             return;
         }
 
@@ -319,7 +319,7 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
             throw new IdempotencyStoreException($notNewMessage);
         }
 
-        if (! is_string($claim->lease) || $claim->lease === '') {
+        if ($claim->lease === null || $claim->lease === '') {
             throw new IdempotencyStoreException('Missing lease on idempotency claim.');
         }
 

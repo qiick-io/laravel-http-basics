@@ -127,13 +127,13 @@ it('gives every exception the package lets escape a documented fleet code', func
             $idempotencyCodes,
         ),
         UploadRejectedException::class => [
-            [UploadRejectedException::forbiddenType('a.php'), ErrorCode::UploadForbiddenType],
-            [UploadRejectedException::typeNotAllowed('a.txt'), ErrorCode::UploadTypeNotAllowed],
-            [UploadRejectedException::contentMismatch('a.png'), ErrorCode::UploadContentMismatch],
-            [UploadRejectedException::tooLarge('a.zip'), ErrorCode::UploadTooLarge],
-            [UploadRejectedException::nameInvalid('a'), ErrorCode::UploadNameInvalid],
-            [UploadRejectedException::infected('a.pdf'), ErrorCode::UploadInfected],
-            [UploadRejectedException::scanFailed('a.pdf'), ErrorCode::UploadScanFailed],
+            [UploadRejectedException::forbiddenType(), ErrorCode::UploadForbiddenType],
+            [UploadRejectedException::typeNotAllowed(), ErrorCode::UploadTypeNotAllowed],
+            [UploadRejectedException::contentMismatch(), ErrorCode::UploadContentMismatch],
+            [UploadRejectedException::tooLarge(), ErrorCode::UploadTooLarge],
+            [UploadRejectedException::nameInvalid(), ErrorCode::UploadNameInvalid],
+            [UploadRejectedException::infected(), ErrorCode::UploadInfected],
+            [UploadRejectedException::scanFailed(), ErrorCode::UploadScanFailed],
         ],
     ];
 

@@ -341,6 +341,12 @@ final class HttpBasicsServiceProvider extends ServiceProvider
         $this->requestIdAcceptFrom($settings);
         $this->cspMode($settings);
 
+        // Unanchored, the pattern would match inside a longer value and let arbitrary text
+        // into Context, logs and outbound headers.
+        if (! $this->isAnchoredPattern($settings->string('request_id.accept_pattern'))) {
+            throw new \InvalidArgumentException('http-basics.request_id.accept_pattern must be a valid pattern anchored with \\A and \\z.');
+        }
+
         $configuredHashes = $settings->value('security.csp.script_hashes');
 
         // A bare string would otherwise read as no hashes at all, dropping the one it holds.
@@ -358,6 +364,28 @@ final class HttpBasicsServiceProvider extends ServiceProvider
         if ($scriptHashes !== [] && ! $settings->bool('security.csp.nonce')) {
             throw new \InvalidArgumentException('http-basics.security.csp.script_hashes needs http-basics.security.csp.nonce: without it a hash turns off \'unsafe-inline\' for every other inline script.');
         }
+    }
+
+    /**
+     * A pattern PCRE compiles whose body starts with `\A` and ends with `\z`, between
+     * the same delimiter (`/…/D`, `#…#i`).
+     */
+    private function isAnchoredPattern(string $pattern): bool
+    {
+        // An invalid pattern warns and returns false; the warning adds nothing to the boot error.
+        if (@preg_match($pattern, '') === false) {
+            return false;
+        }
+
+        $closingDelimiterAt = strrpos($pattern, $pattern[0]);
+
+        if ($closingDelimiterAt === false || $closingDelimiterAt === 0) {
+            return false;
+        }
+
+        $body = substr($pattern, 1, $closingDelimiterAt - 1);
+
+        return str_starts_with($body, '\\A') && str_ends_with($body, '\\z');
     }
 
     private function requestIdAcceptFrom(PackageConfig $settings): RequestIdAcceptFrom
