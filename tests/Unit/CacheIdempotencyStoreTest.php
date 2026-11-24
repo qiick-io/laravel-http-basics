@@ -862,3 +862,17 @@ it('never replays nor re-runs a record of a payload version it does not know', f
 
     expect($store->claim($scope, 'future', 'fp', new DateTimeImmutable, idempotencyContext())->outcome)->toBe(ClaimOutcome::NotReplayable);
 })->with([2, 0, '1']);
+
+it('never replays a completed record to another bucket (I7)', function (): void {
+    [$store] = cacheIdempotencyStore();
+    $now = new DateTimeImmutable('2026-01-01T00:00:00Z');
+    $key = '550e8400-e29b-41d4-a716-446655440000';
+
+    $claim = $store->claim(new IdempotencyScope('tenant:1', 'POST', '/items'), $key, 'fp-1', $now, idempotencyContext());
+    $store->complete($claim, new ReplayableResponse(201, [], '{"tenant":1}'), $now);
+
+    $otherBucket = $store->claim(new IdempotencyScope('tenant:2', 'POST', '/items'), $key, 'fp-1', $now, idempotencyContext());
+
+    expect($otherBucket->outcome)->toBe(ClaimOutcome::New)
+        ->and($otherBucket->replay)->toBeNull();
+});
