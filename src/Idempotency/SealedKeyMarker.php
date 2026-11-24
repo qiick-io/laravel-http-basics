@@ -7,7 +7,7 @@ namespace Qiick\HttpBasics\Idempotency;
 use Illuminate\Cache\Repository;
 
 /**
- * Last-resort seal for a key whose handler ran but whose record could not be
+ * @internal Last-resort seal for a key whose handler ran but whose record could not be
  * written, neither with the response nor as a sealed record.
  *
  * Without it the record stays "in progress", goes stale, and a retry takes it

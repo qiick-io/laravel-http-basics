@@ -6,7 +6,7 @@ namespace Qiick\HttpBasics\Locale;
 
 use Qiick\HttpBasics\Contracts\SupportedLocales;
 
-/** Supported locales from an explicit list (config / testing). */
+/** @internal Supported locales from an explicit list (config / testing). */
 final class ConfigSupportedLocales implements SupportedLocales
 {
     /**

@@ -14,7 +14,7 @@ use Qiick\HttpBasics\Idempotency\IdempotencyStoreException;
 use Qiick\HttpBasics\Idempotency\ReplayableResponse;
 
 /**
- * In-memory idempotency store for unit and kernel tests: one process, so no
+ * @api In-memory idempotency store for unit and kernel tests: one process, so no
  * re-read under the lock is needed, but the same outcomes, leases, lock TTL,
  * stale takeover and expiry as the real stores.
  */

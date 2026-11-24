@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Qiick\HttpBasics\Idempotency;
 
 /**
- * Validates client Idempotency-Key values for the configured wire format.
+ * @api Validates client Idempotency-Key values for the configured wire format.
  */
 final class IdempotencyKeyValidator
 {

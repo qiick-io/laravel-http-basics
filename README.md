@@ -376,6 +376,12 @@ No `composer.lock` is committed (library). CI resolves with `--prefer-lowest` an
 stable across PHP 8.3/8.4/8.5 × Laravel 12/13. Mutation targets from the design
 run with `pest --mutate` (per-class MSI ≥ 95%).
 
+## Public API
+
+`docs/public-api.md` lists what is public: classes, interfaces and enums marked
+`@api`, config keys, environment variables, the Artisan command, publish tags, the
+migration and the wire formats. Everything else in `src/` is `@internal`.
+
 ## Deprecation policy
 
 This package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (SemVer):

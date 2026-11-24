@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Qiick\HttpBasics\Uploads;
 
 /**
- * Checks that a ZIP holds nothing a streaming reader would find but libzip would not.
+ * @internal Checks that a ZIP holds nothing a streaming reader would find but libzip would not.
  *
  * libzip reads only what the central directory references; streaming readers
  * (libarchive from a pipe, Java's ZipInputStream) walk the local headers from

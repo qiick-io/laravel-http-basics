@@ -7,7 +7,7 @@ namespace Qiick\HttpBasics\RequestId;
 use Illuminate\Support\Str;
 use Qiick\HttpBasics\Contracts\IdGenerator;
 
-/** Default CSPRNG-backed UUID v7 generator. */
+/** @internal Default CSPRNG-backed UUID v7 generator. */
 final class UuidIdGenerator implements IdGenerator
 {
     public function generate(): string
