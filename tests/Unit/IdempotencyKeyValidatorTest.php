@@ -65,10 +65,12 @@ it('caps the unquoted sf-string key, not the quoted header', function (): void {
         ->and($validator->canonicalKey('"abcde"'))->toBeNull();
 });
 
-it('keeps uuid keys bare', function (): void {
-    $validator = new IdempotencyKeyValidator(IdempotencyKeyFormat::Uuid);
-
-    expect($validator->canonicalKey('550e8400-e29b-41d4-a716-446655440000'))->toBe('550e8400-e29b-41d4-a716-446655440000')
-        ->and($validator->canonicalKey('"550e8400-e29b-41d4-a716-446655440000"'))->toBeNull()
-        ->and($validator->canonicalKey(null))->toBeNull();
-});
+it('reads a uuid key bare or in the draft\'s quoted form', function (?string $header, ?string $expected): void {
+    expect((new IdempotencyKeyValidator(IdempotencyKeyFormat::Uuid))->canonicalKey($header))->toBe($expected);
+})->with([
+    'bare' => ['550e8400-e29b-41d4-a716-446655440000', '550e8400-e29b-41d4-a716-446655440000'],
+    'quoted' => ['"550e8400-e29b-41d4-a716-446655440000"', '550e8400-e29b-41d4-a716-446655440000'],
+    'quoted, not a uuid' => ['"order-42"', null],
+    'unterminated' => ['"550e8400-e29b-41d4-a716-446655440000', null],
+    'null' => [null, null],
+]);

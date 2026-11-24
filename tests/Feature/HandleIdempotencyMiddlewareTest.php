@@ -152,3 +152,14 @@ it('treats a quoted sf-string key and its bare form as the same key', function (
         ->assertStatus(201)
         ->assertHeader('Idempotent-Replayed', 'true');
 });
+
+it('treats a quoted uuid key and its bare form as the same key', function (): void {
+    // The draft's own example is a quoted UUID; the default uuid mode must read it too.
+    $this->postJson('/api/items', [], ['Idempotency-Key' => '"8e03978e-40d5-43e8-bc93-6894a57f9324"'])
+        ->assertStatus(201)
+        ->assertHeaderMissing('Idempotent-Replayed');
+
+    $this->postJson('/api/items', [], ['Idempotency-Key' => '8e03978e-40d5-43e8-bc93-6894a57f9324'])
+        ->assertStatus(201)
+        ->assertHeader('Idempotent-Replayed', 'true');
+});

@@ -276,3 +276,8 @@ it('reads the raw query the way the app does: + is a space, %2B a plus', functio
         ->and($fingerprintOf('a+b=1'))->toBe($fingerprintOf('a%20b=1'))
         ->and($fingerprintOf('a+b'))->toBe($fingerprintOf('a%20b='));
 });
+
+it('is at fingerprint version 2 since + reads as a space', function (): void {
+    // Records keep the version they were fingerprinted with (fingerprint_version column).
+    expect(Fingerprinter::VERSION)->toBe(2);
+});
