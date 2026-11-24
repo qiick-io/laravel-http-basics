@@ -6,6 +6,7 @@ namespace Qiick\HttpBasics\Cors;
 
 use Closure;
 use Illuminate\Http\Request;
+use Qiick\HttpBasics\Http\VaryHeaderMerger;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
@@ -52,7 +53,7 @@ final class ConfigureCorsMiddleware
         $response = $next($request);
 
         if ($didOverride) {
-            $response->headers->set('Vary', $this->mergeVaryOrigin($response->headers->all('vary')));
+            VaryHeaderMerger::add($response->headers, 'Origin');
         }
 
         return $response;
@@ -87,31 +88,5 @@ final class ConfigureCorsMiddleware
         }
 
         return array_values(array_unique($normalizedOrigins));
-    }
-
-    /**
-     * Merges `Origin` into every existing `Vary` line: a response may carry several
-     * `Vary` header lines, and dropping one (for example `Cookie`) would let a shared
-     * cache serve one user's variant to another.
-     *
-     * @param  list<string|null>  $varyLines
-     */
-    private function mergeVaryOrigin(array $varyLines): string
-    {
-        $varyTokens = [];
-
-        foreach ($varyLines as $varyLine) {
-            foreach (explode(',', (string) $varyLine) as $varyToken) {
-                $trimmedToken = trim($varyToken);
-
-                if ($trimmedToken !== '') {
-                    $varyTokens[strtolower($trimmedToken)] = $trimmedToken;
-                }
-            }
-        }
-
-        $varyTokens['origin'] ??= 'Origin';
-
-        return implode(', ', $varyTokens);
     }
 }
