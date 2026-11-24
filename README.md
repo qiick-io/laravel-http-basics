@@ -234,7 +234,9 @@ replays another route's response. Clients should send a fresh key per operation.
 A custom `IdempotencyStore` receives an `IdempotencyContext` with every claim: the
 key format, the fingerprint version, the request id, and room for a trace id, a
 credential public id and namespaced metadata. The database store writes them to the
-record (see `docs/reference-schema.md`).
+record (see `docs/reference-schema.md`). The cache store keeps only what a replay needs
+and drops the rest, so an audit trail of idempotent operations (who, which request,
+which trace) requires `HTTP_BASICS_IDEMPOTENCY_STORE=database`.
 
 When the response cannot be stored, the store seals the key so a retry gets
 `idempotency_not_replayable` instead of running the handler again. If the record
@@ -248,6 +250,27 @@ behind: wrap its writes in one database transaction, make no external call (paym
 email, webhook) before the point where it can still fail, or make those calls
 idempotent themselves (pass the same key downstream). A handler that writes or calls
 out and then throws will run twice.
+
+**A handler slower than its budget can run twice.** PHP-FPM cannot stop a running
+handler, so `max_handler_seconds` is checked after it returns. Past the budget the lock
+may have expired, and another request may have claimed the key and run the handler
+again. The middleware then seals the key (retries get `idempotency_not_replayable`) and
+answers 503 instead of the handler's response, though the handler's work is done. Keep
+the effect itself idempotent: write it in one transaction keyed by the operation (a
+unique column the second run hits), or record it in an outbox table in that
+transaction and let a worker perform it once.
+
+With the database store, schedule the prune of expired records (Laravel 11+,
+`routes/console.php`):
+
+```php
+use Illuminate\Support\Facades\Schedule;
+
+Schedule::command('http-basics:prune-idempotency')->hourly()->onOneServer();
+```
+
+`--dry-run` counts what would be deleted. `model:prune` against
+`Qiick\HttpBasics\Idempotency\IdempotencyRecord` does the same job.
 
 On machine doors the fingerprint includes the locale the response is served in, so
 a retry that negotiates to the same locale replays (`it-CH,it;q=0.9` and `it`; an
@@ -286,6 +309,12 @@ credentialed request, to resolver output and to config alike. Resolver
 responses get `Vary: Origin`, merged into every existing `Vary` line; a shared
 cache in front must honour it.
 
+The middleware writes the resolver's origins into `config('cors.*')` for the request
+and does not restore them. That is safe on PHP-FPM, where each request starts a new
+process state, and on Octane, which gives each request a fresh copy of the config. On
+any other long-running worker that reuses one application across requests, one
+request's origins would carry over to the next: it is not supported there.
+
 Merge `CorsHeaderCatalog::exposedHeaders()` / `allowedRequestHeaders()` into
 `config/cors.php`. Catalog includes `X-Request-Id`, `X-RateLimit-*`,
 `Retry-After`, `Deprecation`, `Sunset`, `Content-Language`, `Vary`, `Link`,
@@ -300,6 +329,13 @@ filename suffix and on the sniffed MIME, the extension and MIME allowlists,
 `max_bytes`, magic bytes, the archive budget, and the bound `MalwareScanner`.
 The storage name is a random id plus an extension chosen from the sniffed MIME,
 never the client suffix.
+
+SVG is refused unless a context sets `allows_svg: true`, and then the package does
+**not** sanitize it: an SVG can carry `<script>`, event handlers and links that run
+in your origin when the file is opened. With `allows_svg`, serve uploaded SVGs as a
+download (`Content-Disposition: attachment`), or from a separate origin with no
+cookies (a storage bucket domain), or sanitize them in the product before storing.
+Never serve them inline from the app's own origin.
 
 Archives are refused by default. A context accepts them only with
 `allows_archives: true`; otherwise a name with an archive suffix (`zip`, `7z`,
