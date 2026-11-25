@@ -305,6 +305,8 @@ it('refuses idempotency config that cannot work, at boot', function (array $conf
     'ttl zero' => [['http-basics.idempotency.ttl_seconds' => 0], 'http-basics.idempotency.ttl_seconds must be greater than 0.'],
     'body cap zero' => [['http-basics.idempotency.max_body_bytes' => 0], 'http-basics.idempotency.max_body_bytes must be greater than 0.'],
     'response cap zero' => [['http-basics.idempotency.max_response_bytes' => 0], 'http-basics.idempotency.max_response_bytes must be greater than 0.'],
+    'ttl equal to lock' => [['http-basics.idempotency.ttl_seconds' => 60, 'http-basics.idempotency.lock_ttl_seconds' => 60], 'http-basics.idempotency.ttl_seconds must be greater than http-basics.idempotency.lock_ttl_seconds.'],
+    'ttl below lock' => [['http-basics.idempotency.ttl_seconds' => 10, 'http-basics.idempotency.lock_ttl_seconds' => 60, 'http-basics.idempotency.max_handler_seconds' => 55], 'http-basics.idempotency.ttl_seconds must be greater than http-basics.idempotency.lock_ttl_seconds.'],
     'lock not above handler' => [['http-basics.idempotency.lock_ttl_seconds' => 30, 'http-basics.idempotency.max_handler_seconds' => 30], 'lock_ttl_seconds must be greater than max_handler_seconds.'],
     'unknown key format' => [['http-basics.idempotency.key_format' => 'ulid'], 'key_format must be uuid or sf-string.'],
     'key format not a string' => [['http-basics.idempotency.key_format' => ['uuid']], 'key_format must be uuid or sf-string.'],
@@ -318,7 +320,8 @@ it('refuses idempotency config that cannot work, at boot', function (array $conf
 
 it('accepts the smallest valid idempotency config, and skips anonymous checks when it is off', function (): void {
     config([
-        'http-basics.idempotency.ttl_seconds' => 1,
+        // A record must outlive its lock, so prune never deletes a claim still in progress.
+        'http-basics.idempotency.ttl_seconds' => 3,
         'http-basics.idempotency.max_body_bytes' => 1,
         'http-basics.idempotency.max_response_bytes' => 1,
         'http-basics.idempotency.lock_ttl_seconds' => 2,
