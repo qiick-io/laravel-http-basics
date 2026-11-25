@@ -1297,7 +1297,7 @@ it('hands the store the key format, fingerprint version and request id of the cl
         ->handle(idempotencyRequest(), static fn () => response('ok', 201));
 
     expect($store->context?->keyFormat)->toBe(IdempotencyKeyFormat::Uuid)
-        ->and($store->context?->fingerprintVersion)->toBe(1)
+        ->and($store->context?->fingerprintVersion)->toBe(Fingerprinter::VERSION)
         ->and($currentRequestId)->not->toBeNull()
         ->and($store->context?->requestId)->toBe($currentRequestId);
 });

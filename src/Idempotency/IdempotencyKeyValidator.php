@@ -12,10 +12,16 @@ final class IdempotencyKeyValidator
     private const string UUID_PATTERN = '/\A[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\z/i';
 
     /*
-     * RFC 9651 sf-string: visible ASCII without CTL/DEL; no leading/trailing SP/HTAB.
-     * ponytail: full structured-field parser is not required for v1 key validation.
+     * The bare form: visible ASCII without the quote, backslash, comma or semicolon that
+     * would need quoting in a structured field. Kept for clients that send the key unquoted.
      */
     private const string SF_STRING_PATTERN = '/\A[\x21\x23-\x27\x2A\x2B\x2D\x2E\x30-\x39\x3A\x3C-\x5B\x5D-\x7E]+\z/';
+
+    /*
+     * RFC 9651 §3.3.3 sf-string: DQUOTE *( unescaped / "\\" ( DQUOTE / "\\" ) ) DQUOTE,
+     * where unescaped is %x20-21 / %x23-5B / %x5D-7E.
+     */
+    private const string QUOTED_SF_STRING_PATTERN = '/\A"((?:[\x20\x21\x23-\x5B\x5D-\x7E]|\\\\["\\\\])*)"\z/';
 
     public function __construct(
         private IdempotencyKeyFormat $format,
@@ -29,18 +35,44 @@ final class IdempotencyKeyValidator
 
     public function isValid(?string $key): bool
     {
-        // An empty key fails both patterns below.
-        if ($key === null) {
-            return false;
+        return $this->canonicalKey($key) !== null;
+    }
+
+    /**
+     * The key as stored and compared, or null when the header value is not a valid key.
+     * The draft's quoted form (`"8e03…"`, draft-ietf-httpapi-idempotency-key-header-09)
+     * is unquoted and unescaped in both modes, so `"abc"` and `abc` are the same key;
+     * a uuid key must still be a UUID once unquoted.
+     */
+    public function canonicalKey(?string $headerValue): ?string
+    {
+        // An empty key fails every pattern below.
+        if ($headerValue === null) {
+            return null;
         }
 
-        if (strlen($key) > $this->maxLength) {
-            return false;
-        }
+        // The draft sends the key as an RFC 9651 String; the bare form stays accepted.
+        $unquoted = $this->unquoted($headerValue);
+        $bareSfString = preg_match(self::SF_STRING_PATTERN, $headerValue) === 1 ? $headerValue : null;
 
-        return match ($this->format) {
-            IdempotencyKeyFormat::Uuid => preg_match(self::UUID_PATTERN, $key) === 1,
-            IdempotencyKeyFormat::SfString => preg_match(self::SF_STRING_PATTERN, $key) === 1,
+        $key = match ($this->format) {
+            IdempotencyKeyFormat::Uuid => preg_match(self::UUID_PATTERN, $unquoted ?? $headerValue) === 1 ? $unquoted ?? $headerValue : null,
+            IdempotencyKeyFormat::SfString => $unquoted ?? $bareSfString,
         };
+
+        return $key !== null && $key !== '' && strlen($key) <= $this->maxLength ? $key : null;
+    }
+
+    /**
+     * The content of a quoted sf-string with `\"` and `\\` unescaped, or null when the
+     * value is not one.
+     */
+    private function unquoted(string $headerValue): ?string
+    {
+        if (preg_match(self::QUOTED_SF_STRING_PATTERN, $headerValue, $matches) !== 1) {
+            return null;
+        }
+
+        return preg_replace('/\\\\(.)/', '$1', $matches[1]);
     }
 }

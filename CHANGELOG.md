@@ -60,6 +60,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Idempotency: the quoted RFC 9651 form the draft sends
+  (`Idempotency-Key: "8e03…"`, draft-ietf-httpapi-idempotency-key-header-09) is accepted
+  in both key formats, unquoted and unescaped; `"abc"` and `abc` are the same key, and a
+  `uuid` key must still be a UUID once unquoted. `IdempotencyKeyValidator` gains
+  `canonicalKey()`.
+
+- Idempotency: the query fingerprint reads `+` as a space and `%2B` as a plus, as PHP
+  and Symfony do, so `?q=a+b` and `?q=a%2Bb` no longer replay each other's response.
+  `Fingerprinter::VERSION` is now 2 (the `fingerprint_version` default too). A key
+  claimed before the deploy and retried after it with `+` or `%2B` in its query gets
+  `idempotency_payload_mismatch` (422) until its record expires (`ttl_seconds`).
+
 - Idempotency: `require_json` accepts `application/<name>+json` only with a non-empty RFC
   6838 name before `+json` (`application/+json` is now 415), and the English and Italian
   415 messages name both accepted media types.
