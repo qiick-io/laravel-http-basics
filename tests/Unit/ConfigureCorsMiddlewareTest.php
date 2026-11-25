@@ -27,6 +27,24 @@ function corsMiddlewareReturning(?array $resolvedOrigins): ConfigureCorsMiddlewa
 }
 
 /**
+ * The CORS config HandleCors would read during the last request: the middleware puts
+ * the configured lists back once the response is built.
+ *
+ * @param  array<string, mixed>|null  $seenConfig
+ * @return array<string, mixed>
+ */
+function corsConfigDuringRequest(?array $seenConfig = null): array
+{
+    static $lastSeenConfig = [];
+
+    if ($seenConfig !== null) {
+        $lastSeenConfig = $seenConfig;
+    }
+
+    return $lastSeenConfig;
+}
+
+/**
  * @param  list<string|null>  $varyLines
  */
 function corsMiddlewareResponse(ConfigureCorsMiddleware $middleware, array $varyLines = []): Response
@@ -34,6 +52,10 @@ function corsMiddlewareResponse(ConfigureCorsMiddleware $middleware, array $vary
     return $middleware->handle(
         Request::create('http://localhost/api/items'),
         static function () use ($varyLines): Response {
+            corsConfigDuringRequest([
+                'cors.allowed_origins' => config('cors.allowed_origins'),
+                'cors.allowed_origins_patterns' => config('cors.allowed_origins_patterns'),
+            ]);
             $response = response('ok');
 
             foreach ($varyLines as $varyLine) {
@@ -56,7 +78,7 @@ it('drops non-string and duplicate resolver origins and keeps the list order', f
         'https://*.example.com',
     ]));
 
-    expect(config('cors.allowed_origins'))->toBe([
+    expect(corsConfigDuringRequest()['cors.allowed_origins'])->toBe([
         'https://app.example.com',
         'https://admin.example.com',
         'https://*.example.com',
@@ -68,7 +90,7 @@ it('treats a truthy non-boolean supports_credentials as credentialed', function 
 
     corsMiddlewareResponse(corsMiddlewareReturning(['https://*', 'https://app.example.com']));
 
-    expect(config('cors.allowed_origins'))->toBe(['https://app.example.com']);
+    expect(corsConfigDuringRequest()['cors.allowed_origins'])->toBe(['https://app.example.com']);
 });
 
 it('re-normalises configured origins on credentialed requests without a resolver override', function (): void {
@@ -78,8 +100,8 @@ it('re-normalises configured origins on credentialed requests without a resolver
 
     $response = corsMiddlewareResponse(corsMiddlewareReturning(null), ['Accept']);
 
-    expect(config('cors.allowed_origins'))->toBe(['https://app.example.com'])
-        ->and(config('cors.allowed_origins_patterns'))->toBe([])
+    expect(corsConfigDuringRequest()['cors.allowed_origins'])->toBe(['https://app.example.com'])
+        ->and(corsConfigDuringRequest()['cors.allowed_origins_patterns'])->toBe([])
         ->and($response->headers->all('vary'))->toBe(['Accept']);
 });
 
@@ -90,8 +112,8 @@ it('leaves non-credentialed config alone when the resolver does not override', f
 
     corsMiddlewareResponse(corsMiddlewareReturning(null));
 
-    expect(config('cors.allowed_origins'))->toBe(['*'])
-        ->and(config('cors.allowed_origins_patterns'))->toBe(['#^https://app\.example\.com$#']);
+    expect(corsConfigDuringRequest()['cors.allowed_origins'])->toBe(['*'])
+        ->and(corsConfigDuringRequest()['cors.allowed_origins_patterns'])->toBe(['#^https://app\.example\.com$#']);
 });
 
 it('merges Origin into every Vary line without losing or duplicating tokens', function (array $varyLines, string $expectedVary): void {

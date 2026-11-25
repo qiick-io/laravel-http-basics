@@ -60,6 +60,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- CORS: `ConfigureCorsMiddleware` puts `cors.allowed_origins` and
+  `cors.allowed_origins_patterns` back after each request. On a long-running worker a
+  request whose resolver returned `null` used to inherit the previous request's origins,
+  credentials included.
+
 - Idempotency: the quoted RFC 9651 form the draft sends
   (`Idempotency-Key: "8e03…"`, draft-ietf-httpapi-idempotency-key-header-09) is accepted
   in both key formats, unquoted and unescaped; `"abc"` and `abc` are the same key, and a

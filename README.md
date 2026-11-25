@@ -286,6 +286,12 @@ credentialed request, to resolver output and to config alike. Resolver
 responses get `Vary: Origin`, merged into every existing `Vary` line; a shared
 cache in front must honour it.
 
+The middleware writes the request's origins into `config('cors.*')` and puts the
+configured lists back once the response is built, even when the handler throws, so a
+long-running worker (Octane, RoadRunner, FrankenPHP) never answers one request with the
+previous request's origins. A runtime that serves several requests at once in one process
+(Swoole coroutines without Octane's sandbox) shares that config and is not supported.
+
 Merge `CorsHeaderCatalog::exposedHeaders()` / `allowedRequestHeaders()` into
 `config/cors.php`. Catalog includes `X-Request-Id`, `X-RateLimit-*`,
 `Retry-After`, `Deprecation`, `Sunset`, `Content-Language`, `Vary`, `Link`,
