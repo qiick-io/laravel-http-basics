@@ -74,10 +74,11 @@ Notable configuration changes and requirements:
     locale classifier: `api`, `api/*`, `mcp`, `mcp/*`, so `/api` itself is a machine door.
 
 - **Idempotency fingerprint version 2:** the raw query is read as a form (`+` is a
-  space, `%2B` a plus) and `Fingerprinter::VERSION` is 2. Within `ttl_seconds` of the
-  deploy, a client retrying a key claimed before it, with `+` or `%2B` in the query, gets
-  `idempotency_payload_mismatch` (422) instead of the replay; other keys are unaffected.
-  Deploy outside peak traffic, or let clients retry with a new key.
+  space, `%2B` a plus), the media type (lower case, without parameters) is part of the
+  fingerprint, and `Fingerprinter::VERSION` is 2. Within `ttl_seconds` of the deploy,
+  every client retrying a key claimed before it gets `idempotency_payload_mismatch` (422)
+  instead of the replay, since the media type changes every fingerprint. Deploy outside
+  peak traffic, or let clients retry with a new key.
 
 - **Quoted idempotency keys:** the draft's quoted form (`Idempotency-Key: "…"`) is
   accepted in both key formats and stored without its quotes, so `"abc"` and `abc` are

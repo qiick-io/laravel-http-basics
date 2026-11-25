@@ -68,8 +68,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Idempotency: the query fingerprint reads `+` as a space and `%2B` as a plus, as PHP
   and Symfony do, so `?q=a+b` and `?q=a%2Bb` no longer replay each other's response.
-  `Fingerprinter::VERSION` is now 2 (the `fingerprint_version` default too). A key
-  claimed before the deploy and retried after it with `+` or `%2B` in its query gets
+  The fingerprint also includes the media type (lower case, without parameters), so
+  `application/json` and `application/merge-patch+json` with the same body no longer
+  replay each other. `Fingerprinter::VERSION` is now 2 (the `fingerprint_version`
+  default too). Every key claimed before the deploy and retried after it gets
   `idempotency_payload_mismatch` (422) until its record expires (`ttl_seconds`).
 
 - Idempotency: `require_json` accepts `application/<name>+json` only with a non-empty RFC
