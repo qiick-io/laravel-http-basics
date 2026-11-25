@@ -278,6 +278,14 @@ unsupported `fr`, no header and `en` when `en` is the default). The database sto
 treats an `expires_at` it cannot read as never expiring, so such a row keeps
 answering instead of letting the handler run again.
 
+The fingerprint covers the media type (lower case, without parameters), so
+`application/json` and `application/merge-patch+json` with the same body are different
+requests, while a `charset` parameter changes nothing. One known limit: a JSON integer
+above 2^63 − 1 and a string of the same digits fingerprint alike (`{"n":9223372036854775808}`
+and `{"n":"9223372036854775808"}`), because the body is decoded with
+`JSON_BIGINT_AS_STRING`. Telling them apart needs a canonical JSON tokenizer; a client
+that sends both with one key gets the first response replayed.
+
 ## Threat model (short)
 
 | Topic | Contract |
