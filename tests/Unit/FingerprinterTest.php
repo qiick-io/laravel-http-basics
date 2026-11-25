@@ -281,3 +281,16 @@ it('is at fingerprint version 2 since + reads as a space', function (): void {
     // Records keep the version they were fingerprinted with (fingerprint_version column).
     expect(Fingerprinter::VERSION)->toBe(2);
 });
+
+it('fingerprints the media type, lower-cased and without its parameters', function (): void {
+    // A JSON document and a merge patch with the same body are different operations.
+    $fingerprinter = new Fingerprinter;
+    $fingerprintOf = static fn (string $contentType): string => $fingerprinter->fingerprint(
+        Request::create('/items', 'PATCH', [], [], [], ['CONTENT_TYPE' => $contentType], '{"status":"paid"}'),
+        1048576,
+    );
+
+    expect($fingerprintOf('application/json'))->not->toBe($fingerprintOf('application/merge-patch+json'))
+        ->and($fingerprintOf('application/json'))->toBe($fingerprintOf('Application/JSON; charset=utf-8'))
+        ->and($fingerprintOf('application/merge-patch+json'))->toBe($fingerprintOf(' application/merge-patch+json ;charset=UTF-8'));
+});
