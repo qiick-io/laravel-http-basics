@@ -109,3 +109,36 @@ it('merges Origin into every Vary line without losing or duplicating tokens', fu
     'lower-case origin kept as sent' => [['accept-encoding, origin'], 'accept-encoding, origin'],
     'case-insensitive duplicate' => [['Accept', 'ACCEPT'], 'ACCEPT, Origin'],
 ]);
+
+it('never carries one request\'s origins into the next request of the same process', function (): void {
+    // A long-running worker (Octane, RoadRunner, FrankenPHP) keeps the config between requests.
+    config([
+        'cors.supports_credentials' => true,
+        'cors.allowed_origins' => ['https://public.example'],
+        'cors.allowed_origins_patterns' => ['#^https://.*\.public\.example$#'],
+    ]);
+    $originsSeenByHandleCors = [];
+    $handler = static function () use (&$originsSeenByHandleCors): Response {
+        $originsSeenByHandleCors[] = config('cors.allowed_origins');
+
+        return response('ok');
+    };
+
+    corsMiddlewareReturning(['https://tenant.example'])->handle(Request::create('http://localhost/api/items'), $handler);
+    corsMiddlewareReturning(null)->handle(Request::create('http://localhost/api/items'), $handler);
+
+    expect($originsSeenByHandleCors)->toBe([['https://tenant.example'], ['https://public.example']])
+        ->and(config('cors.allowed_origins'))->toBe(['https://public.example'])
+        ->and(config('cors.allowed_origins_patterns'))->toBe(['#^https://.*\.public\.example$#']);
+});
+
+it('restores the origins even when the handler throws', function (): void {
+    config(['cors.allowed_origins' => ['https://public.example'], 'cors.allowed_origins_patterns' => []]);
+
+    expect(fn () => corsMiddlewareReturning(['https://tenant.example'])->handle(
+        Request::create('http://localhost/api/items'),
+        static fn (): Response => throw new RuntimeException('handler failed'),
+    ))->toThrow(RuntimeException::class, 'handler failed');
+
+    expect(config('cors.allowed_origins'))->toBe(['https://public.example']);
+});
