@@ -83,6 +83,9 @@ Notable configuration changes and requirements:
   accepted in both key formats and stored without its quotes, so `"abc"` and `abc` are
   the same key.
 
+- **Idempotency ttl above the lock:** `idempotency.ttl_seconds` must be greater than
+  `idempotency.lock_ttl_seconds`, or boot fails. The defaults (86400 and 60) pass.
+
 - **Replayed idempotent responses:** their headers keep their values but are now named
   in lower case (`content-type`, `location`). HTTP header names are case-insensitive;
   check any client or test that compares them as exact strings.

@@ -404,6 +404,15 @@ final class HttpBasicsServiceProvider extends ServiceProvider
             );
         }
 
+        // A row in progress already carries expires_at = now + ttl: with a ttl no longer than
+        // the lock, prune can delete a claim whose handler is still running, complete() then
+        // finds no row to seal, and a retry runs the handler again.
+        if ($settings->int('idempotency.ttl_seconds') <= $settings->int('idempotency.lock_ttl_seconds')) {
+            throw new \InvalidArgumentException(
+                'http-basics.idempotency.ttl_seconds must be greater than http-basics.idempotency.lock_ttl_seconds.',
+            );
+        }
+
         $keyFormat = $settings->value('idempotency.key_format');
 
         if (! is_string($keyFormat) || IdempotencyKeyFormat::tryFrom($keyFormat) === null) {

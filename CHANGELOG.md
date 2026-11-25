@@ -60,6 +60,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Idempotency: boot fails when `http-basics.idempotency.ttl_seconds` is not greater than
+  `lock_ttl_seconds`. A shorter ttl let the prune delete a claim whose handler was still
+  running; `complete()` then found no row to seal and a retry ran the handler again.
+
 - Idempotency: the quoted RFC 9651 form the draft sends
   (`Idempotency-Key: "8e03…"`, draft-ietf-httpapi-idempotency-key-header-09) is accepted
   in both key formats, unquoted and unescaped; `"abc"` and `abc` are the same key, and a
