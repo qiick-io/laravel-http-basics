@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -134,6 +135,59 @@ it('only counts on --dry-run', function (): void {
 
     expect(DB::table('idempotency_records')->count())->toBe(1);
 });
+
+it('deletes a backlog in bounded batches and keeps live rows', function (): void {
+    insertIdempotencyRecordExpiringAt('2026-01-01 13:00:00', 'live');
+
+    for ($index = 0; $index < 501; $index++) {
+        insertIdempotencyRecordExpiringAt('2026-01-01 11:00:00', "expired-{$index}");
+    }
+
+    DB::enableQueryLog();
+
+    try {
+        $this->artisan('http-basics:prune-idempotency')
+            ->expectsOutput('Deleted 501 expired idempotency record(s).')
+            ->assertSuccessful();
+        $deletes = collect(DB::getQueryLog())
+            ->filter(static fn (array $query): bool => str_starts_with($query['query'], 'delete from'));
+    } finally {
+        DB::disableQueryLog();
+        DB::flushQueryLog();
+    }
+
+    // Each deletion binds the cutoff plus at most 500 selected IDs.
+    expect($deletes->map(static fn (array $query): int => count($query['bindings']))->values()->all())
+        ->toBe([501, 2])
+        ->and(DB::table('idempotency_records')->pluck('key_hash')->all())->toBe([hash('sha256', 'key-live')]);
+});
+
+it('schedules database pruning daily with both scheduler locks', function (): void {
+    // An older published config may not contain the schedule switch.
+    config(['http-basics.idempotency' => ['store' => 'database']]);
+    bootProvider();
+
+    $events = app(Schedule::class)->events();
+
+    expect($events)->toHaveCount(1)
+        ->and($events[0]->command)->toContain('http-basics:prune-idempotency')
+        ->and($events[0]->expression)->toBe('0 0 * * *')
+        ->and($events[0]->onOneServer)->toBeTrue()
+        ->and($events[0]->withoutOverlapping)->toBeTrue();
+});
+
+it('leaves pruning unscheduled when its switch is off or the cache adapter is selected', function (string $store, bool $shouldSchedule): void {
+    config([
+        'http-basics.idempotency.store' => $store,
+        'http-basics.idempotency.schedule' => $shouldSchedule,
+    ]);
+    bootProvider();
+
+    expect(app(Schedule::class)->events())->toBe([]);
+})->with([
+    'database scheduling disabled' => ['database', false],
+    'cache adapter' => ['cache', true],
+]);
 
 it('prunes the configured table', function (): void {
     Schema::rename('idempotency_records', 'idempotency_custom');

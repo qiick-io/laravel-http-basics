@@ -260,17 +260,14 @@ the effect itself idempotent: write it in one transaction keyed by the operation
 unique column the second run hits), or record it in an outbox table in that
 transaction and let a worker perform it once.
 
-With the database store, schedule the prune of expired records (Laravel 11+,
-`routes/console.php`):
+With the database store, the package schedules `http-basics:prune-idempotency`
+daily at midnight. Run Laravel's scheduler and use a shared cache that supports
+scheduler locks when running it on multiple servers. Set
+`http-basics.idempotency.schedule` to `false` if the product already has a
+pruning schedule or needs a different cadence.
 
-```php
-use Illuminate\Support\Facades\Schedule;
-
-Schedule::command('http-basics:prune-idempotency')->hourly()->onOneServer();
-```
-
-`--dry-run` counts what would be deleted. `model:prune` against
-`Qiick\HttpBasics\Idempotency\IdempotencyRecord` does the same job.
+`--dry-run` counts what would be deleted. `--hours` keeps records that expired
+more recently than the specified number of hours.
 
 On machine doors the fingerprint includes the locale the response is served in, so
 a retry that negotiates to the same locale replays (`it-CH,it;q=0.9` and `it`; an
