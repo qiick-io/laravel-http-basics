@@ -161,6 +161,8 @@ return [
 
     'idempotency' => [
         'store' => env('HTTP_BASICS_IDEMPOTENCY_STORE', 'cache'),
+        // Turn off when the product owns the database pruning schedule.
+        'schedule' => true,
         'cache_store' => env('HTTP_BASICS_IDEMPOTENCY_CACHE_STORE'),
         'database' => [
             'connection' => env('HTTP_BASICS_IDEMPOTENCY_CONNECTION'),

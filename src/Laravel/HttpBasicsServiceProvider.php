@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Qiick\HttpBasics\Laravel;
 
 use Illuminate\Cache\Repository as CacheRepository;
+use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Contracts\Cache\Factory as CacheFactory;
 use Illuminate\Contracts\Config\Repository as ConfigRepository;
 use Illuminate\Contracts\Foundation\Application;
@@ -315,6 +316,17 @@ final class HttpBasicsServiceProvider extends ServiceProvider
             $this->commands([
                 PruneIdempotencyRecordsCommand::class,
             ]);
+
+            $settings = $this->settings($this->app);
+
+            if ($settings->value('idempotency.store') === 'database' && $settings->bool('idempotency.schedule')) {
+                $this->callAfterResolving(Schedule::class, static function (Schedule $schedule): void {
+                    $schedule->command(PruneIdempotencyRecordsCommand::class)
+                        ->daily()
+                        ->onOneServer()
+                        ->withoutOverlapping();
+                });
+            }
         }
     }
 

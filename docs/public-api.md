@@ -168,6 +168,7 @@ file documents each one.
 - `security.hsts.preload`
 - `security.baseline_on_machine_doors`
 - `idempotency.store`
+- `idempotency.schedule`
 - `idempotency.cache_store`
 - `idempotency.database.connection`
 - `idempotency.database.table`

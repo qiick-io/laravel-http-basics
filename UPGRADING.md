@@ -40,6 +40,8 @@ Notable configuration changes and requirements:
   - `idempotency.store` selects the backing engine (`cache` or `database`).
   - When using the database store, `idempotency.database.connection` specifies the
     connection. If unset, it falls back to the application default connection.
+  - The package now schedules database pruning daily. Set `idempotency.schedule`
+    to `false` if you keep an existing application-level schedule.
   - `max_handler_seconds` must be strictly less than `lock_ttl_seconds` to guarantee
     locks do not expire while handlers execute normally.
   - On machine doors, request fingerprinting now includes the negotiated response

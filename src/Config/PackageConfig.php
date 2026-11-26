@@ -51,6 +51,7 @@ final class PackageConfig
             'security.hsts.preload' => false,
             'security.baseline_on_machine_doors' => true,
             'idempotency.store' => 'cache',
+            'idempotency.schedule' => true,
             'idempotency.database.table' => 'idempotency_records',
             'idempotency.ttl_seconds' => 86400,
             'idempotency.lock_ttl_seconds' => 60,

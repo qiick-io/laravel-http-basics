@@ -5,16 +5,14 @@ declare(strict_types=1);
 namespace Qiick\HttpBasics\Console;
 
 use Illuminate\Console\Command;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Qiick\HttpBasics\Idempotency\IdempotencyRecord;
 
 /**
  * @internal The `http-basics:prune-idempotency` command is the public part; the class is not.
  *
- * Deletes expired idempotency rows (`expires_at` in the past).
- *
- * Prefer scheduling `model:prune` on {@see IdempotencyRecord} when Eloquent is
- * available; this command is the package-namespaced entry point.
+ * Deletes expired idempotency rows in batches to bound the locks a prune holds.
  */
 final class PruneIdempotencyRecordsCommand extends Command
 {
@@ -35,15 +33,20 @@ final class PruneIdempotencyRecordsCommand extends Command
         $query = DB::connection($record->getConnectionName())
             ->table($record->getTable())
             ->where('expires_at', '<=', $cutoff);
-        $count = (clone $query)->count();
 
         if ($this->option('dry-run') === true) {
+            $count = $query->count();
             $this->info("Would delete {$count} expired idempotency record(s).");
 
             return self::SUCCESS;
         }
 
-        $deleted = $query->delete();
+        $deleted = 0;
+        (clone $query)->select('id')->chunkById(500, function (Collection $records) use ($query, &$deleted): void {
+            // Recheck expiry: the store may have reclaimed a key since selection.
+            $deleted += (clone $query)->whereIn('id', $records->pluck('id'))->delete();
+        });
+
         $this->info("Deleted {$deleted} expired idempotency record(s).");
 
         return self::SUCCESS;
