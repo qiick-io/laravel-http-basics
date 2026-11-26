@@ -24,13 +24,18 @@ final class SealedKeyMarker
         private int $ttlSeconds,
     ) {}
 
+    public static function key(string $bucket, string $keyHash): string
+    {
+        return IdempotencyScope::cacheKeyFromHash($bucket, $keyHash).self::SUFFIX;
+    }
+
     /**
      * @return bool whether the marker was stored
      */
     public function mark(IdempotencyScope $scope, string $key): bool
     {
         try {
-            return $this->cache->put($scope->cacheKey($key).self::SUFFIX, true, $this->ttlSeconds);
+            return $this->cache->put(self::key($scope->bucket, hash('sha256', $key)), true, $this->ttlSeconds);
         } catch (\Throwable) {
             return false;
         }
@@ -44,7 +49,7 @@ final class SealedKeyMarker
     public function isMarked(IdempotencyScope $scope, string $key): bool
     {
         try {
-            return $this->cache->get($scope->cacheKey($key).self::SUFFIX) === true;
+            return $this->cache->get(self::key($scope->bucket, hash('sha256', $key))) === true;
         } catch (\Throwable $exception) {
             throw new IdempotencyStoreException('Failed to read idempotency seal.', previous: $exception);
         }

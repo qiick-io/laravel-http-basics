@@ -7,6 +7,7 @@ namespace Qiick\HttpBasics\Laravel;
 use Illuminate\Cache\Repository as CacheRepository;
 use Illuminate\Contracts\Cache\Factory as CacheFactory;
 use Illuminate\Contracts\Config\Repository as ConfigRepository;
+use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Support\ServiceProvider;
 use Qiick\HttpBasics\Config\PackageConfig;
@@ -21,6 +22,7 @@ use Qiick\HttpBasics\Contracts\TrustedProxyDetector;
 use Qiick\HttpBasics\Cors\AllowedOriginsResolver;
 use Qiick\HttpBasics\Cors\CorsConfigValidator;
 use Qiick\HttpBasics\Cors\NullAllowedOriginsResolver;
+use Qiick\HttpBasics\Erasure\HttpBasicsEraser;
 use Qiick\HttpBasics\Errors\ErrorCodeResolver;
 use Qiick\HttpBasics\Errors\ExceptionErrorCodeAugmenter;
 use Qiick\HttpBasics\Errors\FrameworkErrorCodeResolver;
@@ -262,6 +264,22 @@ final class HttpBasicsServiceProvider extends ServiceProvider
             );
         });
 
+        $this->app->bind(HttpBasicsEraser::class, function (Application $app): HttpBasicsEraser {
+            $settings = $this->settings($app);
+            $cache = $this->cacheRepository($app->make(CacheFactory::class)->store($settings->optionalString('idempotency.cache_store')));
+            $cacheName = $cache->getName();
+
+            return new HttpBasicsEraser(
+                $app->make(Dispatcher::class),
+                $cache->getStore(),
+                is_string($cacheName) ? $cacheName : 'default',
+                $settings->string('idempotency.database.table'),
+                $settings->value('idempotency.store') === 'database'
+                    ? $app->make('db')->connection($settings->optionalString('idempotency.database.connection'))
+                    : null,
+            );
+        });
+
         $this->app->bind(HandleIdempotencyMiddleware::class, function (Application $app): HandleIdempotencyMiddleware {
             $settings = $this->settings($app);
 
@@ -395,6 +413,10 @@ final class HttpBasicsServiceProvider extends ServiceProvider
             if ($settings->int('idempotency.'.$positiveKey) <= 0) {
                 throw new \InvalidArgumentException("http-basics.idempotency.{$positiveKey} must be greater than 0.");
             }
+        }
+
+        if (max($settings->int('idempotency.ttl_seconds'), $settings->int('idempotency.lock_ttl_seconds')) > 86400) {
+            throw new \InvalidArgumentException('Idempotency records and locks must expire within 24 hours.');
         }
 
         // Equal budgets leave no margin: the lock can expire while the handler is still allowed to run.

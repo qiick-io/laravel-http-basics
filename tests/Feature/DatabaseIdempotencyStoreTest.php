@@ -2,30 +2,67 @@
 
 declare(strict_types=1);
 
+use Illuminate\Auth\GenericUser;
 use Illuminate\Cache\ArrayStore;
 use Illuminate\Cache\Repository;
 use Illuminate\Contracts\Cache\Store;
 use Illuminate\Database\ConnectionInterface;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\QueryException;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
+use Qiick\HttpBasics\Contracts\CredentialBucketResolver;
+use Qiick\HttpBasics\Erasure\HttpBasicsEraser;
 use Qiick\HttpBasics\Idempotency\ClaimOutcome;
 use Qiick\HttpBasics\Idempotency\DatabaseIdempotencyStore;
 use Qiick\HttpBasics\Idempotency\Fingerprinter;
+use Qiick\HttpBasics\Idempotency\HandleIdempotencyMiddleware;
 use Qiick\HttpBasics\Idempotency\IdempotencyClaim;
 use Qiick\HttpBasics\Idempotency\IdempotencyContext;
 use Qiick\HttpBasics\Idempotency\IdempotencyKeyFormat;
 use Qiick\HttpBasics\Idempotency\IdempotencyScope;
 use Qiick\HttpBasics\Idempotency\IdempotencyStoreException;
 use Qiick\HttpBasics\Idempotency\ReplayableResponse;
+use Qiick\HttpBasics\Testing\FakeCredentialBucketResolver;
 
 beforeEach(function (): void {
     Schema::dropIfExists('idempotency_records');
     /** @var Migration $migration */
     $migration = require dirname(__DIR__, 2).'/database/migrations/2026_11_22_000001_create_idempotency_records_table.php';
     $migration->up();
+});
+
+it('erases a middleware claim by its trusted user and organisation even when its bucket is opaque', function (): void {
+    config()->set('http-basics.idempotency.store', 'database');
+    config()->set('http-basics.idempotency.cache_store', 'array');
+    app()->instance(CredentialBucketResolver::class, new FakeCredentialBucketResolver('opaque-bucket'));
+
+    $user = new GenericUser(['id' => 123456]);
+    $userPublicId = (string) Str::uuid();
+    $credentialPublicId = (string) Str::uuid();
+    $request = Request::create('/api/items', 'POST', server: [
+        'CONTENT_TYPE' => 'application/json',
+        'HTTP_IDEMPOTENCY_KEY' => (string) Str::uuid(),
+    ], content: '{"organisation_id":"untrusted"}');
+    $request->setUserResolver(static fn (): GenericUser => $user);
+    $request->attributes->set('http_basics.credential_public_id', strtoupper($credentialPublicId));
+    $request->attributes->set('http_basics.organisation_id', '0');
+
+    $response = app(HandleIdempotencyMiddleware::class)->handle($request, static fn () => response()->json(['created' => true], 201));
+
+    expect($response->getStatusCode())->toBe(201)
+        ->and((array) DB::table('idempotency_records')->first())->toMatchArray([
+            'bucket' => 'opaque-bucket',
+            'user_id' => '123456',
+            'organisation_id' => '0',
+            'credential_public_id' => $credentialPublicId,
+        ]);
+
+    $eraser = app(HttpBasicsEraser::class);
+    expect($eraser->erase('123456', $userPublicId, HttpBasicsEraser::DELETE, organisationId: 'untrusted')->changed())->toBe(0)
+        ->and($eraser->erase('123456', $userPublicId, HttpBasicsEraser::DELETE, organisationId: '0')->changed())->toBe(1);
 });
 
 function databaseIdempotencyStore(

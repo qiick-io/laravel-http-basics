@@ -213,7 +213,7 @@ app()->bind(CredentialBucketResolver::class, MyCredentialBucketResolver::class);
 | Config / env | Default | Meaning |
 | --- | --- | --- |
 | `HTTP_BASICS_IDEMPOTENCY_STORE` | `cache` | `cache` or `database` (see `docs/reference-schema.md`). |
-| `HTTP_BASICS_IDEMPOTENCY_TTL` | `86400` | Completed record TTL from completion time. |
+| `HTTP_BASICS_IDEMPOTENCY_TTL` | `86400` | Completed record TTL from completion time, up to 24 hours. |
 | `HTTP_BASICS_IDEMPOTENCY_LOCK_TTL` | `60` | Must be > `max_handler_seconds`. |
 | `HTTP_BASICS_IDEMPOTENCY_KEY_FORMAT` | `uuid` | `uuid` or `sf-string`. Both read the RFC 9651 String of draft-ietf-httpapi-idempotency-key-header-09 (`"8e03…"`, quotes and `\"` / `\\` escapes removed before storage) or the same key bare; `uuid` then requires a UUID. |
 | `HTTP_BASICS_IDEMPOTENCY_ANON_ENABLED` | `false` | Public writes via HMAC bucket (`ip`, `user_agent`, `route`). |
@@ -277,6 +277,46 @@ a retry that negotiates to the same locale replays (`it-CH,it;q=0.9` and `it`; a
 unsupported `fr`, no header and `en` when `en` is the default). The database store
 treats an `expires_at` it cannot read as never expiring, so such a row keeps
 answering instead of letting the handler run again.
+
+### Personal data erasure
+
+Resolve `Qiick\HttpBasics\Erasure\HttpBasicsEraser` from Laravel's container in the
+product's [erasure orchestrator](https://github.com/qiick-io/app-ui/blob/v0.15.0/standards/rules/erasure.md).
+Revoke the subject's access and let in-flight requests finish before erasing their records.
+
+```php
+use Qiick\HttpBasics\Erasure\HttpBasicsEraser;
+
+$report = app(HttpBasicsEraser::class)->erase(
+    userId: (string) $user->getAuthIdentifier(),
+    userPublicId: $user->public_id,
+    mode: HttpBasicsEraser::DELETE,
+    publicIds: $principalAndApiKeyPublicIds,
+);
+```
+
+The database adapter records the authenticated user's key automatically. For a
+principal or API key, set the `http_basics.credential_public_id` request attribute to
+its UUID in trusted authentication middleware that runs before idempotency. Set
+`http_basics.organisation_id` from trusted server state for organisation-scoped
+requests, and pass the same organisation key to `erase(organisationId: ...)`.
+Direct adapter callers supply these values through `IdempotencyContext`.
+
+`DELETE` removes matching records. `ANONYMISE` leaves detached rows without replay
+payloads or identifiers and preserves their expiration times. A `dryRun: true`
+predicts the counts. Real runs forget matching database fallback seals and dispatch
+`SubjectErasedEvent` after commit. The user's own row belongs to the product.
+
+The cache-only adapter expires replay entries within 24 hours. It reports one
+retained cache store with `reason: cache_ttl` because it cannot count entries by
+subject, and throws `OrganisationScopeUnsupportedException` for an organisation-only
+request. Database-adapter locks and any seals whose rows have already been pruned
+also expire by TTL. For immediate subject erasure, use the database adapter.
+
+Pre-1.0 installations using the database adapter must republish the updated create
+migration and rebuild the idempotency table. Its records are transient, and rebuilding
+the table removes replay protection for outstanding keys, so schedule that change
+after existing keys have expired.
 
 ## Threat model (short)
 

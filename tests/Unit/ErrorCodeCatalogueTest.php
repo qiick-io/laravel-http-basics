@@ -6,6 +6,7 @@ use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Auth\AuthenticationException;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Validation\ValidationException;
+use Qiick\HttpBasics\Erasure\OrganisationScopeUnsupportedException;
 use Qiick\HttpBasics\Errors\ErrorCode;
 use Qiick\HttpBasics\Errors\FrameworkErrorCodeResolver;
 use Qiick\HttpBasics\Idempotency\IdempotencyRejection;
@@ -122,6 +123,8 @@ it('gives every exception the package lets escape a documented fleet code', func
 
     /** @var array<class-string<Throwable>, list<array{Throwable, ErrorCode}>> $samplesByExceptionClass */
     $samplesByExceptionClass = [
+        // The product orchestrator handles this configuration failure; HTTP uses the generic server code.
+        OrganisationScopeUnsupportedException::class => [[new OrganisationScopeUnsupportedException, ErrorCode::ServerError]],
         IdempotencyRejection::class => array_map(
             static fn (ErrorCode $code): array => [new IdempotencyRejection($code, 409), $code],
             $idempotencyCodes,

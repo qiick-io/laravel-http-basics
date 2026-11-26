@@ -185,6 +185,11 @@ jobs:
           DB_DATABASE: ':memory:'
         run: vendor/bin/pest --filter=DatabaseIdempotency
 
+      - run: node tests/Erasure/run.mjs
+        env:
+          DB_CONNECTION: sqlite
+          DB_DATABASE: ':memory:'
+
   database-store:
     name: DB store (${{ matrix.engine }})
     runs-on: ubuntu-latest
@@ -261,7 +266,7 @@ jobs:
           composer update --no-interaction --prefer-dist --with-all-dependencies
 
       - name: Pest (database store)
-        env:
+        env: &database-test-env
           DB_CONNECTION: ${{ matrix.connection }}
           DB_DATABASE: httpbasics
           DB_HOST: 127.0.0.1
@@ -269,6 +274,9 @@ jobs:
           DB_USERNAME: ${{ matrix.username }}
           DB_PASSWORD: ${{ matrix.password }}
         run: vendor/bin/pest --filter=DatabaseIdempotency
+
+      - run: node tests/Erasure/run.mjs
+        env: *database-test-env
 
   # Real HTTP against php -S (middleware stack). Feature PRs fill the Pest group;
   # scaffold keeps the Laravel 12/13 cells so the matrix shape matches the fleet rule.
@@ -344,8 +352,8 @@ jobs:
           php -r 'require "vendor/autoload.php"; echo class_exists("Qiick\\HttpBasics\\Laravel\\HttpBasicsServiceProvider") ? "ok\n" : exit(1);'
 
   standards:
-    # qiick-io/app-ui@v0.12.0
-    uses: qiick-io/app-ui/.github/workflows/drift-check.yml@f613af9febfce3b6d7f7f41785e9845a610080c7 # v0.12.0
+    # qiick-io/app-ui@v0.15.0
+    uses: qiick-io/app-ui/.github/workflows/drift-check.yml@0d97ae1429a856411c76e6de1ec258cae0eabab6 # v0.15.0
     with:
       standards: true
       registry: false

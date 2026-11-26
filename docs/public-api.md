@@ -29,6 +29,12 @@ case names and backing values (backing values are wire values).
 - `NullAllowedOriginsResolver` (class)
 - `OriginNormalizer` (class)
 
+### `Qiick\HttpBasics\Erasure`
+
+- `ErasureReport` (class)
+- `HttpBasicsEraser` (class)
+- `OrganisationScopeUnsupportedException` (class)
+
 ### `Qiick\HttpBasics\Errors`
 
 - `ErrorCode` (enum)
@@ -40,6 +46,10 @@ case names and backing values (backing values are wire values).
 - `MachineDoorJson` (class)
 - `ProblemDetailsErrorRenderer` (class)
 - `ProblemInstanceResolver` (interface)
+
+### `Qiick\HttpBasics\Events`
+
+- `SubjectErasedEvent` (class)
 
 ### `Qiick\HttpBasics\Idempotency`
 
