@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Str;
 use Qiick\HttpBasics\Contracts\IdempotencyStore;
@@ -13,6 +14,25 @@ use Qiick\HttpBasics\Idempotency\IdempotencyContext;
 use Qiick\HttpBasics\Idempotency\IdempotencyKeyFormat;
 use Qiick\HttpBasics\Idempotency\IdempotencyScope;
 use Qiick\HttpBasics\Idempotency\ReplayableResponse;
+
+it('dispatches the cache-only event only after the caller commits', function (): void {
+    Event::fake([SubjectErasedEvent::class]);
+    $erase = static fn () => app(HttpBasicsEraser::class)->erase('123456', (string) Str::uuid(), HttpBasicsEraser::DELETE);
+
+    expect(fn () => DB::transaction(function () use ($erase): void {
+        $erase();
+
+        throw new RuntimeException('Roll back the caller.');
+    }))->toThrow(RuntimeException::class, 'Roll back the caller.');
+    Event::assertNotDispatched(SubjectErasedEvent::class);
+
+    DB::transaction(function () use ($erase): void {
+        $erase();
+        Event::assertNotDispatched(SubjectErasedEvent::class);
+    });
+
+    Event::assertDispatchedOnce(SubjectErasedEvent::class);
+});
 
 it('reports cache-only retention without forgetting unrelated keys or falling back from organisation scope', function (): void {
     config()->set('http-basics.idempotency.cache_store', 'array');

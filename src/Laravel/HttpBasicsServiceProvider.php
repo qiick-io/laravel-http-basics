@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Qiick\HttpBasics\Laravel;
 
 use Illuminate\Cache\Repository as CacheRepository;
+use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Contracts\Cache\Factory as CacheFactory;
 use Illuminate\Contracts\Config\Repository as ConfigRepository;
 use Illuminate\Contracts\Events\Dispatcher;
@@ -266,6 +267,7 @@ final class HttpBasicsServiceProvider extends ServiceProvider
 
         $this->app->bind(HttpBasicsEraser::class, function (Application $app): HttpBasicsEraser {
             $settings = $this->settings($app);
+            $isDatabaseStore = $settings->value('idempotency.store') === 'database';
             $cache = $this->cacheRepository($app->make(CacheFactory::class)->store($settings->optionalString('idempotency.cache_store')));
             $cacheName = $cache->getName();
 
@@ -274,9 +276,10 @@ final class HttpBasicsServiceProvider extends ServiceProvider
                 $cache->getStore(),
                 is_string($cacheName) ? $cacheName : 'default',
                 $settings->string('idempotency.database.table'),
-                $settings->value('idempotency.store') === 'database'
+                $isDatabaseStore
                     ? $app->make('db')->connection($settings->optionalString('idempotency.database.connection'))
                     : null,
+                ! $isDatabaseStore && $app->bound('db') ? $app->make('db')->connection() : null,
             );
         });
 
@@ -333,6 +336,14 @@ final class HttpBasicsServiceProvider extends ServiceProvider
             $this->commands([
                 PruneIdempotencyRecordsCommand::class,
             ]);
+
+            $settings = $this->settings($this->app);
+
+            if ($settings->value('idempotency.store') === 'database' && $settings->bool('idempotency.database.schedule')) {
+                $this->callAfterResolving(Schedule::class, static function (Schedule $schedule): void {
+                    $schedule->command('http-basics:prune-idempotency')->hourly()->onOneServer()->withoutOverlapping();
+                });
+            }
         }
     }
 

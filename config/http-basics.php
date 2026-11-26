@@ -165,6 +165,7 @@ return [
         'database' => [
             'connection' => env('HTTP_BASICS_IDEMPOTENCY_CONNECTION'),
             'table' => env('HTTP_BASICS_IDEMPOTENCY_TABLE', 'idempotency_records'),
+            'schedule' => (bool) env('HTTP_BASICS_IDEMPOTENCY_SCHEDULE_PRUNE', true),
         ],
         'ttl_seconds' => (int) env('HTTP_BASICS_IDEMPOTENCY_TTL', 86400),
         'lock_ttl_seconds' => (int) env('HTTP_BASICS_IDEMPOTENCY_LOCK_TTL', 60),

@@ -52,6 +52,7 @@ final class PackageConfig
             'security.baseline_on_machine_doors' => true,
             'idempotency.store' => 'cache',
             'idempotency.database.table' => 'idempotency_records',
+            'idempotency.database.schedule' => true,
             'idempotency.ttl_seconds' => 86400,
             'idempotency.lock_ttl_seconds' => 60,
             'idempotency.max_handler_seconds' => 55,

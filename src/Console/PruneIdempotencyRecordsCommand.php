@@ -13,8 +13,7 @@ use Qiick\HttpBasics\Idempotency\IdempotencyRecord;
  *
  * Deletes expired idempotency rows (`expires_at` in the past).
  *
- * Prefer scheduling `model:prune` on {@see IdempotencyRecord} when Eloquent is
- * available; this command is the package-namespaced entry point.
+ * The service provider schedules this command for the database adapter.
  */
 final class PruneIdempotencyRecordsCommand extends Command
 {
@@ -35,15 +34,20 @@ final class PruneIdempotencyRecordsCommand extends Command
         $query = DB::connection($record->getConnectionName())
             ->table($record->getTable())
             ->where('expires_at', '<=', $cutoff);
-        $count = (clone $query)->count();
 
         if ($this->option('dry-run') === true) {
+            $count = $query->count();
             $this->info("Would delete {$count} expired idempotency record(s).");
 
             return self::SUCCESS;
         }
 
-        $deleted = $query->delete();
+        $deleted = 0;
+        $query->select('id')->chunkById(250, function ($rows) use ($query, &$deleted): void {
+            // A claim may extend its expiry after the batch was read.
+            $deleted += (clone $query)->whereIn('id', $rows->pluck('id')->all())->delete();
+        });
+
         $this->info("Deleted {$deleted} expired idempotency record(s).");
 
         return self::SUCCESS;

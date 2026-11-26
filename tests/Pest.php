@@ -17,10 +17,13 @@ require_once __DIR__.'/Support/provider-helpers.php';
 pest()->extend(PackageTestCase::class)->in('Feature', 'Unit', 'Http', 'Erasure');
 
 pest()->in('Erasure')->beforeEach(function (): void {
-    config()->set('http-basics.idempotency.store', 'database');
     config()->set('http-basics.idempotency.cache_store', 'array');
 
     Schema::dropIfExists('idempotency_records');
     $migration = require dirname(__DIR__).'/database/migrations/2026_11_22_000001_create_idempotency_records_table.php';
     $migration->up();
+});
+
+pest()->in('Erasure/ErasureConformanceTest.php')->beforeEach(function (): void {
+    config()->set('http-basics.idempotency.store', 'database');
 });

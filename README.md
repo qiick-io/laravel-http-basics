@@ -260,17 +260,22 @@ the effect itself idempotent: write it in one transaction keyed by the operation
 unique column the second run hits), or record it in an outbox table in that
 transaction and let a worker perform it once.
 
-With the database store, schedule the prune of expired records (Laravel 11+,
-`routes/console.php`):
+The database adapter schedules `http-basics:prune-idempotency` hourly with
+`onOneServer()` and `withoutOverlapping()`. Run the Laravel scheduler and use a
+shared cache for the scheduler's locks. Expired rows stay in the database until
+pruning succeeds. The `--dry-run` flag counts the rows due for deletion.
+
+If the product owns the schedule, set `HTTP_BASICS_IDEMPOTENCY_SCHEDULE_PRUNE=false`
+and keep an hourly entry in `routes/console.php`.
 
 ```php
 use Illuminate\Support\Facades\Schedule;
 
-Schedule::command('http-basics:prune-idempotency')->hourly()->onOneServer();
+Schedule::command('http-basics:prune-idempotency')->hourly()->onOneServer()->withoutOverlapping();
 ```
 
-`--dry-run` counts what would be deleted. `model:prune` against
-`Qiick\HttpBasics\Idempotency\IdempotencyRecord` does the same job.
+`model:prune` against `Qiick\HttpBasics\Idempotency\IdempotencyRecord` can also
+prune expired records.
 
 On machine doors the fingerprint includes the locale the response is served in, so
 a retry that negotiates to the same locale replays (`it-CH,it;q=0.9` and `it`; an
@@ -295,23 +300,37 @@ $report = app(HttpBasicsEraser::class)->erase(
 );
 ```
 
-The database adapter records the authenticated user's key automatically. For a
-principal or API key, set the `http_basics.credential_public_id` request attribute to
-its UUID in trusted authentication middleware that runs before idempotency. Set
-`http_basics.organisation_id` from trusted server state for organisation-scoped
-requests, and pass the same organisation key to `erase(organisationId: ...)`.
-Direct adapter callers supply these values through `IdempotencyContext`.
+Run idempotency after authentication so the database adapter can record the user's
+key. For a principal or API key, set the trusted request attribute
+`HandleIdempotencyMiddleware::CREDENTIAL_PUBLIC_ID_ATTRIBUTE` to its UUID. An
+invalid value raises `InvalidArgumentException` before the store is called. Set
+`HandleIdempotencyMiddleware::ORGANISATION_ID_ATTRIBUTE` from trusted server state
+for organisation-scoped requests, and pass the same organisation key to
+`erase(organisationId: ...)`. Direct adapter callers supply these values through
+`IdempotencyContext`.
 
 `DELETE` removes matching records. `ANONYMISE` leaves detached rows without replay
 payloads or identifiers and preserves their expiration times. A `dryRun: true`
 predicts the counts. Real runs forget matching database fallback seals and dispatch
-`SubjectErasedEvent` after commit. The user's own row belongs to the product.
+`SubjectErasedEvent` after commit. The default cache adapter defers the event when
+the caller has a transaction on Laravel's default connection. The user's own row
+belongs to the product.
+
+Database records with neither a user key nor a credential UUID can contain
+personal data from requests such as sign-up or guest checkout. The table report's
+`kept` count includes all such unlinked rows in scope, with the package-specific
+reason `unlinked_until_expiry`. It is an aggregate count of unattributed rows.
+These records stop replaying after the configured TTL of up to 24 hours and the
+prune deletes them at the next successful run. Avoid replayable responses that
+contain personal data on routes that cannot record an owner.
 
 The cache-only adapter expires replay entries within 24 hours. It reports one
 retained cache store with `reason: cache_ttl` because it cannot count entries by
 subject, and throws `OrganisationScopeUnsupportedException` for an organisation-only
 request. Database-adapter locks and any seals whose rows have already been pruned
-also expire by TTL. For immediate subject erasure, use the database adapter.
+also expire by TTL. After a persistent cache deletion failure, the event reports
+the affected seals as kept with `cache_ttl`, and expiry removes them. For immediate
+subject erasure, use the database adapter with recorded owners.
 
 Pre-1.0 installations using the database adapter must republish the updated create
 migration and rebuild the idempotency table. Its records are transient, and rebuilding

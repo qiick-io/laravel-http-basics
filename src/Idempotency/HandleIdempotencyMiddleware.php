@@ -7,6 +7,7 @@ namespace Qiick\HttpBasics\Idempotency;
 use Closure;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Http\Request;
+use Illuminate\Support\Str;
 use JsonException;
 use Qiick\HttpBasics\Contracts\CredentialBucketResolver;
 use Qiick\HttpBasics\Contracts\ErrorRenderer;
@@ -32,6 +33,10 @@ final class HandleIdempotencyMiddleware
     public const string HEADER = 'Idempotency-Key';
 
     public const string DEFAULT_REPLAY_HEADER = 'Idempotent-Replayed';
+
+    public const string CREDENTIAL_PUBLIC_ID_ATTRIBUTE = 'http_basics.credential_public_id';
+
+    public const string ORGANISATION_ID_ATTRIBUTE = 'http_basics.organisation_id';
 
     public function __construct(
         private IdempotencyStore $store,
@@ -122,14 +127,18 @@ final class HandleIdempotencyMiddleware
 
         $scope = new IdempotencyScope($bucket, $request->getMethod(), $request->getPathInfo());
         $now = new \DateTimeImmutable;
-        $credentialPublicId = $request->attributes->getString('http_basics.credential_public_id');
-        $organisationId = $request->attributes->getString('http_basics.organisation_id');
+        $credentialPublicId = $request->attributes->get(self::CREDENTIAL_PUBLIC_ID_ATTRIBUTE);
+        $organisationId = $request->attributes->getString(self::ORGANISATION_ID_ATTRIBUTE);
+
+        if ($credentialPublicId !== null && (! is_string($credentialPublicId) || ! Str::isUuid($credentialPublicId))) {
+            throw new \InvalidArgumentException('The trusted '.self::CREDENTIAL_PUBLIC_ID_ATTRIBUTE.' attribute must be a UUID.');
+        }
 
         try {
             $claim = $this->store->claim($scope, $key, $fingerprint, $now, new IdempotencyContext(
                 $this->keyValidator->format(),
                 requestId: $this->storableRequestId(),
-                credentialPublicId: $credentialPublicId === '' ? null : $credentialPublicId,
+                credentialPublicId: $credentialPublicId,
                 userId: $this->authenticatedUserId($request),
                 organisationId: $organisationId === '' ? null : $organisationId,
             ));

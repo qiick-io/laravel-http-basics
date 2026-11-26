@@ -16,14 +16,21 @@ use Qiick\Standards\Erasure\Support\ErasurePerson;
 
 /**
  * Seeds the database adapter and its `array` cache's http-basics:v1:<bucket>:<hash>:sealed entry.
- * Driver-native :lock keys expire on their own. The separate cache-only adapter's
- * replay entries have a bounded TTL and cannot be enumerated by subject.
+ * The cache-only variant writes an `array` replay entry and a :sealed marker.
+ * Driver-native :lock keys and cache-only entries expire on their own.
  * This package has no subject files or additional database connections.
  */
 return new class implements ErasureFixture
 {
-    /** @var array<string, string> */
-    private array $sealKeysByUser = [];
+    /** @var array<string, list<string>> */
+    private array $cacheKeysByUser = [];
+
+    public function __construct(private readonly bool $isCacheOnly = false) {}
+
+    public function forCache(): self
+    {
+        return new self(isCacheOnly: true);
+    }
 
     public function packageName(): string
     {
@@ -101,6 +108,18 @@ return new class implements ErasureFixture
         $now = new DateTimeImmutable;
         $credentialPublicId = $person->publicIds[1];
 
+        if ($this->isCacheOnly) {
+            $scope = new IdempotencyScope('session:'.$person->userId, 'POST', '/people/'.$person->userPublicId);
+            $key = (string) Str::uuid();
+            $claim = $store->claim($scope, $key, hash('sha256', $key), $now, new IdempotencyContext(IdempotencyKeyFormat::Uuid));
+            $store->complete($claim, new ReplayableResponse(201, ['Location' => $scope->path], $person->identifiers[0]), $now);
+            $sealKey = SealedKeyMarker::key($scope->bucket, hash('sha256', $key));
+            (new SealedKeyMarker(Cache::store('array'), 86400))->mark($scope, $key);
+            $this->cacheKeysByUser[$person->userId] = [$scope->cacheKey($key), $sealKey];
+
+            return;
+        }
+
         // A session identifies the user; a machine credential may only provide its public ID.
         foreach (['session' => $person->userId, 'key' => $credentialPublicId] as $ownerType => $ownerId) {
             $scope = new IdempotencyScope("{$ownerType}:{$ownerId}:{$organisationId}", 'POST', '/people/'.$person->userPublicId);
@@ -117,29 +136,29 @@ return new class implements ErasureFixture
             $store->complete($claim, new ReplayableResponse(201, ['Location' => $scope->path], $person->identifiers[0]), $now);
 
             // Give each person one fallback seal, in the first organisation they use.
-            if (! isset($this->sealKeysByUser[$person->userId])) {
+            if (! isset($this->cacheKeysByUser[$person->userId])) {
                 $marker = new SealedKeyMarker(Cache::store('array'), 86400);
                 $marker->mark($scope, $key);
-                $this->sealKeysByUser[$person->userId] = SealedKeyMarker::key($scope->bucket, hash('sha256', $key));
+                $this->cacheKeysByUser[$person->userId] = [SealedKeyMarker::key($scope->bucket, hash('sha256', $key))];
             }
         }
     }
 
     public function supportsOrganisationScope(): bool
     {
-        return true;
+        return ! $this->isCacheOnly;
     }
 
     public function organisationScopedTables(): array
     {
-        return ['idempotency_records'];
+        return $this->isCacheOnly ? [] : ['idempotency_records'];
     }
 
     public function cacheKeys(ErasurePerson $person): array
     {
-        $sealKey = $this->sealKeysByUser[$person->userId] ?? null;
+        $cacheKeys = $this->cacheKeysByUser[$person->userId] ?? [];
 
-        return $sealKey === null ? [] : ['array' => [$sealKey]];
+        return $cacheKeys === [] ? [] : ['array' => $cacheKeys];
     }
 
     public function call(Closure $erase): object
