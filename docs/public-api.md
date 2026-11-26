@@ -234,6 +234,7 @@ own `cors.*` config at boot.
 
 ## Artisan commands
 
+- `http-basics:check` validates configuration and checks the selected idempotency stores.
 - `http-basics:prune-idempotency` (`--hours`, `--dry-run`)
 
 ## Publish tags
