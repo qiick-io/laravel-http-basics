@@ -5,15 +5,14 @@ declare(strict_types=1);
 namespace Qiick\HttpBasics\Console;
 
 use Illuminate\Console\Command;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Qiick\HttpBasics\Idempotency\IdempotencyRecord;
 
 /**
  * @internal The `http-basics:prune-idempotency` command is the public part; the class is not.
  *
- * Deletes expired idempotency rows (`expires_at` in the past).
- *
- * The service provider schedules this command for the database adapter.
+ * Deletes expired idempotency rows in batches to bound the locks a prune holds.
  */
 final class PruneIdempotencyRecordsCommand extends Command
 {
@@ -43,9 +42,9 @@ final class PruneIdempotencyRecordsCommand extends Command
         }
 
         $deleted = 0;
-        $query->select('id')->chunkById(250, function ($rows) use ($query, &$deleted): void {
-            // A claim may extend its expiry after the batch was read.
-            $deleted += (clone $query)->whereIn('id', $rows->pluck('id')->all())->delete();
+        (clone $query)->select('id')->chunkById(500, function (Collection $records) use ($query, &$deleted): void {
+            // Recheck expiry: the store may have reclaimed a key since selection.
+            $deleted += (clone $query)->whereIn('id', $records->pluck('id'))->delete();
         });
 
         $this->info("Deleted {$deleted} expired idempotency record(s).");

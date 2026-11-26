@@ -37,7 +37,7 @@ afterEach(function (): void {
 
 it('schedules idempotency pruning only for the database adapter when enabled', function (string $store, bool $shouldSchedule, int $expectedCount): void {
     config()->set('http-basics.idempotency.store', $store);
-    config()->set('http-basics.idempotency.database.schedule', $shouldSchedule);
+    config()->set('http-basics.idempotency.schedule', $shouldSchedule);
     $this->app->getProvider(HttpBasicsServiceProvider::class)->boot();
 
     $events = array_values(array_filter(app(Schedule::class)->events(), static fn ($event): bool => str_contains((string) $event->command, 'http-basics:prune-idempotency')));
@@ -106,7 +106,7 @@ it('prunes a backlog in bounded batches', function (): void {
 
     $expiredRecords = [];
 
-    foreach (range(2, 251) as $recordNumber) {
+    foreach (range(2, 501) as $recordNumber) {
         $expiredRecords[] = array_replace($expiredRecord, [
             'public_id' => (string) Str::uuid7(),
             'key_hash' => hash('sha256', 'expired-'.$recordNumber),
@@ -125,9 +125,9 @@ it('prunes a backlog in bounded batches', function (): void {
         }
     });
 
-    $this->artisan('http-basics:prune-idempotency')->expectsOutput('Deleted 251 expired idempotency record(s).')->assertSuccessful();
+    $this->artisan('http-basics:prune-idempotency')->expectsOutput('Deleted 501 expired idempotency record(s).')->assertSuccessful();
 
-    expect($deleteBatchSizes)->toBe([250, 1])
+    expect($deleteBatchSizes)->toBe([500, 1])
         ->and(DB::table('idempotency_records')->count())->toBe(0);
 });
 
@@ -190,6 +190,59 @@ it('only counts on --dry-run', function (): void {
 
     expect(DB::table('idempotency_records')->count())->toBe(1);
 });
+
+it('deletes a backlog in bounded batches and keeps live rows', function (): void {
+    insertIdempotencyRecordExpiringAt('2026-01-01 13:00:00', 'live');
+
+    for ($index = 0; $index < 501; $index++) {
+        insertIdempotencyRecordExpiringAt('2026-01-01 11:00:00', "expired-{$index}");
+    }
+
+    DB::enableQueryLog();
+
+    try {
+        $this->artisan('http-basics:prune-idempotency')
+            ->expectsOutput('Deleted 501 expired idempotency record(s).')
+            ->assertSuccessful();
+        $deletes = collect(DB::getQueryLog())
+            ->filter(static fn (array $query): bool => str_starts_with($query['query'], 'delete from'));
+    } finally {
+        DB::disableQueryLog();
+        DB::flushQueryLog();
+    }
+
+    // Each deletion binds the cutoff plus at most 500 selected IDs.
+    expect($deletes->map(static fn (array $query): int => count($query['bindings']))->values()->all())
+        ->toBe([501, 2])
+        ->and(DB::table('idempotency_records')->pluck('key_hash')->all())->toBe([hash('sha256', 'key-live')]);
+});
+
+it('schedules database pruning hourly with both scheduler locks', function (): void {
+    // An older published config may not contain the schedule switch.
+    config(['http-basics.idempotency' => ['store' => 'database']]);
+    bootProvider();
+
+    $events = app(Schedule::class)->events();
+
+    expect($events)->toHaveCount(1)
+        ->and($events[0]->command)->toContain('http-basics:prune-idempotency')
+        ->and($events[0]->expression)->toBe('0 * * * *')
+        ->and($events[0]->onOneServer)->toBeTrue()
+        ->and($events[0]->withoutOverlapping)->toBeTrue();
+});
+
+it('leaves pruning unscheduled when its switch is off or the cache adapter is selected', function (string $store, bool $shouldSchedule): void {
+    config([
+        'http-basics.idempotency.store' => $store,
+        'http-basics.idempotency.schedule' => $shouldSchedule,
+    ]);
+    bootProvider();
+
+    expect(app(Schedule::class)->events())->toBe([]);
+})->with([
+    'database scheduling disabled' => ['database', false],
+    'cache adapter' => ['cache', true],
+]);
 
 it('prunes the configured table', function (): void {
     Schema::rename('idempotency_records', 'idempotency_custom');

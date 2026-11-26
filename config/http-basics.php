@@ -161,11 +161,12 @@ return [
 
     'idempotency' => [
         'store' => env('HTTP_BASICS_IDEMPOTENCY_STORE', 'cache'),
+        // Turn off when the product owns the database pruning schedule.
+        'schedule' => true,
         'cache_store' => env('HTTP_BASICS_IDEMPOTENCY_CACHE_STORE'),
         'database' => [
             'connection' => env('HTTP_BASICS_IDEMPOTENCY_CONNECTION'),
             'table' => env('HTTP_BASICS_IDEMPOTENCY_TABLE', 'idempotency_records'),
-            'schedule' => (bool) env('HTTP_BASICS_IDEMPOTENCY_SCHEDULE_PRUNE', true),
         ],
         'ttl_seconds' => (int) env('HTTP_BASICS_IDEMPOTENCY_TTL', 86400),
         'lock_ttl_seconds' => (int) env('HTTP_BASICS_IDEMPOTENCY_LOCK_TTL', 60),

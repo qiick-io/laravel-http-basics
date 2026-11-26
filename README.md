@@ -45,6 +45,10 @@ per-route after throttle / auth / scope / cost. Products wire
 `ExceptionErrorCodeAugmenter` through their own bootstrap (no Foundation types in
 this package).
 
+Run `php artisan http-basics:check` during deployment and from the product's
+upgrade command after migrations. It reports invalid settings and unreachable
+idempotency stores and exits with status 1 when a check fails.
+
 ### Fleet error shape (landed)
 
 ```php
@@ -263,19 +267,12 @@ transaction and let a worker perform it once.
 The database adapter schedules `http-basics:prune-idempotency` hourly with
 `onOneServer()` and `withoutOverlapping()`. Run the Laravel scheduler and use a
 shared cache for the scheduler's locks. Expired rows stay in the database until
-pruning succeeds. The `--dry-run` flag counts the rows due for deletion.
+pruning succeeds. If the product owns the schedule, set
+`http-basics.idempotency.schedule` to `false` and schedule the prune in the product.
 
-If the product owns the schedule, set `HTTP_BASICS_IDEMPOTENCY_SCHEDULE_PRUNE=false`
-and keep an hourly entry in `routes/console.php`.
-
-```php
-use Illuminate\Support\Facades\Schedule;
-
-Schedule::command('http-basics:prune-idempotency')->hourly()->onOneServer()->withoutOverlapping();
-```
-
-`model:prune` against `Qiick\HttpBasics\Idempotency\IdempotencyRecord` can also
-prune expired records.
+`--dry-run` counts what would be deleted. `--hours` keeps records that expired
+more recently than the specified number of hours. `model:prune` against
+`Qiick\HttpBasics\Idempotency\IdempotencyRecord` can also prune expired records.
 
 On machine doors the fingerprint includes the locale the response is served in, so
 a retry that negotiates to the same locale replays (`it-CH,it;q=0.9` and `it`; an
@@ -468,23 +465,13 @@ run with `pest --mutate` (per-class MSI ≥ 95%).
 ## Public API
 
 `docs/public-api.md` lists what is public: classes, interfaces and enums marked
-`@api`, config keys, environment variables, the Artisan command, publish tags, the
+`@api`, config keys, environment variables, Artisan commands, publish tags, the
 migration and the wire formats. Everything else in `src/` is `@internal`.
 
 ## Deprecation policy
 
-This package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (SemVer):
-
-- **Deprecation in minor releases:** When a public API (class, method, interface, config key,
-  or environment variable) is deprecated, it is marked with `@deprecated` docblocks, documented
-  in `CHANGELOG.md` and `UPGRADING.md`, and triggers a runtime notice or warning where appropriate.
-  The deprecated feature remains functional and supported for at least one minor release.
-- **Removal in major releases only:** Deprecated APIs are never removed within the same major
-  version (`0.x` or `1.x`). Breaking removals occur exclusively at the next major release
-  boundary (e.g. `2.0.0`).
-- **Pre-1.0 stability:** In `0.x`, breaking changes are documented in `UPGRADING.md` before
-  each tagged release. Once `1.0.0` ships, public contracts and migrations are frozen and
-  follow strict SemVer forward compatibility.
+See the [public API deprecation policy](docs/public-api.md#deprecation-policy)
+for notice periods, release rules, and upgrade guidance.
 
 ## Security
 

@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Process;
 use Illuminate\Support\Facades\Schema;
 use Qiick\HttpBasics\Tests\Support\PackageTestCase;
 
@@ -14,7 +16,11 @@ require_once __DIR__.'/Support/provider-helpers.php';
  * TestCase + migrated schema). phpunit.xml excludes that directory so the
  * synced suite stays for drift-check without running here.
  */
-pest()->extend(PackageTestCase::class)->in('Feature', 'Unit', 'Http', 'Erasure');
+pest()->extend(PackageTestCase::class)
+    ->beforeEach(function (): void {
+        Http::preventStrayRequests();
+        Process::preventStrayProcesses();
+    })->in('Feature', 'Unit', 'Http', 'Erasure');
 
 pest()->in('Erasure')->beforeEach(function (): void {
     config()->set('http-basics.idempotency.cache_store', 'array');
