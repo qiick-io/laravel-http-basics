@@ -11,6 +11,8 @@ use Illuminate\Contracts\Config\Repository as ConfigRepository;
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Support\ServiceProvider;
 use Qiick\HttpBasics\Config\PackageConfig;
+use Qiick\HttpBasics\Config\PackageConfigValidator;
+use Qiick\HttpBasics\Console\CheckHttpBasicsCommand;
 use Qiick\HttpBasics\Console\PruneIdempotencyRecordsCommand;
 use Qiick\HttpBasics\Contracts\CredentialBucketResolver;
 use Qiick\HttpBasics\Contracts\DefaultLocaleResolver;
@@ -20,7 +22,6 @@ use Qiick\HttpBasics\Contracts\IdGenerator;
 use Qiick\HttpBasics\Contracts\SupportedLocales;
 use Qiick\HttpBasics\Contracts\TrustedProxyDetector;
 use Qiick\HttpBasics\Cors\AllowedOriginsResolver;
-use Qiick\HttpBasics\Cors\CorsConfigValidator;
 use Qiick\HttpBasics\Cors\NullAllowedOriginsResolver;
 use Qiick\HttpBasics\Errors\ErrorCodeResolver;
 use Qiick\HttpBasics\Errors\ExceptionErrorCodeAugmenter;
@@ -42,11 +43,9 @@ use Qiick\HttpBasics\Locale\ConfigSupportedLocales;
 use Qiick\HttpBasics\Locale\LocaleNegotiator;
 use Qiick\HttpBasics\Locale\MachineDoorClassifier;
 use Qiick\HttpBasics\RequestId\ConfigTrustedProxyDetector;
-use Qiick\HttpBasics\RequestId\RequestIdAcceptFrom;
 use Qiick\HttpBasics\RequestId\RequestIdPropagator;
 use Qiick\HttpBasics\RequestId\RequestIdResolver;
 use Qiick\HttpBasics\RequestId\UuidIdGenerator;
-use Qiick\HttpBasics\Security\CspMode;
 use Qiick\HttpBasics\Security\CspNonceProvider;
 use Qiick\HttpBasics\Security\CspPolicyBuilder;
 use Qiick\HttpBasics\Security\RequestCspNonceProvider;
@@ -60,6 +59,10 @@ use Qiick\HttpBasics\Uploads\MalwareScanner;
 use Qiick\HttpBasics\Uploads\NullMalwareScanner;
 use Qiick\HttpBasics\Uploads\UploadPolicyResolver;
 use Qiick\HttpBasics\Uploads\UploadValidator;
+use Symfony\Component\Console\Application as ConsoleApplication;
+use Symfony\Component\Console\Exception\ExceptionInterface as ConsoleException;
+use Symfony\Component\Console\Input\ArgvInput;
+use Symfony\Component\Console\Input\InputOption;
 
 /**
  * @api Registers the package in a Laravel app. Auto-discovered through
@@ -86,7 +89,7 @@ final class HttpBasicsServiceProvider extends ServiceProvider
             return new RequestIdResolver(
                 $app->make(IdGenerator::class),
                 $app->make(TrustedProxyDetector::class),
-                $this->requestIdAcceptFrom($settings),
+                $settings->requestIdAcceptFrom(),
                 $settings->stringList('request_id.hidden_context_keys'),
                 'http_basics.request_id_source',
                 $settings->string('request_id.accept_pattern'),
@@ -153,7 +156,7 @@ final class HttpBasicsServiceProvider extends ServiceProvider
                 xFrameOptions: $settings->string('security.x_frame_options'),
                 referrerPolicy: $settings->string('security.referrer_policy'),
                 permissionsPolicy: $settings->string('security.permissions_policy'),
-                cspMode: $this->cspMode($settings),
+                cspMode: $settings->cspMode(),
                 csp: $settings->optionalString('security.csp.policy'),
                 cspReportOnly: $settings->optionalString('security.csp.report_only_policy'),
                 cspReportUri: $settings->optionalString('security.csp.report_uri'),
@@ -174,7 +177,7 @@ final class HttpBasicsServiceProvider extends ServiceProvider
 
         $this->app->singleton(Fingerprinter::class, Fingerprinter::class);
 
-        // An unknown key format fails at boot (validateIdempotencyConfig) with a clear message.
+        // An unknown key format fails at boot with a clear message.
         $this->app->singleton(IdempotencyKeyValidator::class, fn (Application $app): IdempotencyKeyValidator => new IdempotencyKeyValidator(
             IdempotencyKeyFormat::from($this->settings($app)->string('idempotency.key_format')),
             $this->settings($app)->int('idempotency.max_key_length'),
@@ -187,7 +190,7 @@ final class HttpBasicsServiceProvider extends ServiceProvider
 
             return new AnonymousBucketResolver(
                 is_string($secret) ? $secret : '',
-                $this->normalizeAnonComponents($settings->stringList('idempotency.anonymous.components')),
+                PackageConfigValidator::normalizeAnonymousComponents($settings->stringList('idempotency.anonymous.components')),
             );
         });
 
@@ -293,10 +296,12 @@ final class HttpBasicsServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
-        $this->validateIdempotencyConfig();
-        $this->validateErrorsConfig();
-        $this->validateSecurityConfig();
-        $this->validateCorsConfig();
+        // This command needs to finish boot so it can print every validation problem.
+        if (! $this->isRunningCheckCommand()) {
+            foreach ($this->app->make(PackageConfigValidator::class)->problems(shouldNormalizeCors: true) as $problem) {
+                throw $problem;
+            }
+        }
 
         $this->loadTranslationsFrom(__DIR__.'/../../lang', 'http-basics');
 
@@ -314,6 +319,7 @@ final class HttpBasicsServiceProvider extends ServiceProvider
             ], 'http-basics-lang');
 
             $this->commands([
+                CheckHttpBasicsCommand::class,
                 PruneIdempotencyRecordsCommand::class,
             ]);
 
@@ -330,118 +336,30 @@ final class HttpBasicsServiceProvider extends ServiceProvider
         }
     }
 
+    private function isRunningCheckCommand(): bool
+    {
+        $arguments = $_SERVER['argv'] ?? null;
+
+        if (! $this->app->runningInConsole() || ! is_array($arguments) || ! in_array('http-basics:check', $arguments, true)) {
+            return false;
+        }
+
+        // Bind the global options so a value such as --env http-basics:check cannot select the command.
+        $definition = (new ConsoleApplication)->getDefinition();
+        $definition->addOption(new InputOption('env', mode: InputOption::VALUE_OPTIONAL));
+
+        try {
+            $input = new ArgvInput(definition: $definition);
+        } catch (ConsoleException) {
+            return false;
+        }
+
+        return $input->getArgument('command') === 'http-basics:check';
+    }
+
     private function usesProblemDetails(Application $app): bool
     {
         return $this->settings($app)->value('errors.format') === 'problem_details';
-    }
-
-    private function validateErrorsConfig(): void
-    {
-        if (! in_array($this->settings($this->app)->value('errors.format'), ['fleet', 'problem_details'], true)) {
-            throw new \InvalidArgumentException('http-basics.errors.format must be fleet or problem_details.');
-        }
-    }
-
-    /**
-     * The security values read only when a request needs them, checked here so a bad
-     * value fails the deploy instead of every request.
-     */
-    private function validateSecurityConfig(): void
-    {
-        $settings = $this->settings($this->app);
-
-        $this->requestIdAcceptFrom($settings);
-        $this->cspMode($settings);
-
-        $configuredHashes = $settings->value('security.csp.script_hashes');
-
-        // A bare string would otherwise read as no hashes at all, dropping the one it holds.
-        if ($configuredHashes !== null && ! is_array($configuredHashes)) {
-            throw new \InvalidArgumentException('http-basics.security.csp.script_hashes must be a list of hashes.');
-        }
-
-        $scriptHashes = $settings->stringList('security.csp.script_hashes');
-
-        // The builder refuses a malformed hash; building it here fails the deploy instead of a request.
-        new ViteFriendlyCspPolicyBuilder(null, $scriptHashes);
-
-        // CSP2+ browsers ignore 'unsafe-inline' once a hash is present: without the nonce,
-        // every other inline script (the appearance script, Vite's tags) would stop running.
-        if ($scriptHashes !== [] && ! $settings->bool('security.csp.nonce')) {
-            throw new \InvalidArgumentException('http-basics.security.csp.script_hashes needs http-basics.security.csp.nonce: without it a hash turns off \'unsafe-inline\' for every other inline script.');
-        }
-    }
-
-    private function requestIdAcceptFrom(PackageConfig $settings): RequestIdAcceptFrom
-    {
-        $acceptFrom = $settings->value('request_id.accept_from');
-
-        return (is_string($acceptFrom) ? RequestIdAcceptFrom::tryFrom($acceptFrom) : null)
-            ?? throw new \InvalidArgumentException('http-basics.request_id.accept_from must be trusted_proxy, any, or never.');
-    }
-
-    private function cspMode(PackageConfig $settings): CspMode
-    {
-        $cspMode = $settings->value('security.csp.mode');
-
-        return (is_string($cspMode) ? CspMode::tryFrom($cspMode) : null)
-            ?? throw new \InvalidArgumentException('http-basics.security.csp.mode must be enforce, report-only, off, or both.');
-    }
-
-    private function validateCorsConfig(): void
-    {
-        // Always on: a security guard has no switch to turn it off.
-        $config = $this->config($this->app);
-        $cors = $config->get('cors');
-
-        if (is_array($cors)) {
-            $config->set('cors', (new CorsConfigValidator)->validate($cors));
-        }
-    }
-
-    private function validateIdempotencyConfig(): void
-    {
-        $settings = $this->settings($this->app);
-
-        foreach (['ttl_seconds', 'max_body_bytes', 'max_response_bytes'] as $positiveKey) {
-            if ($settings->int('idempotency.'.$positiveKey) <= 0) {
-                throw new \InvalidArgumentException("http-basics.idempotency.{$positiveKey} must be greater than 0.");
-            }
-        }
-
-        // Equal budgets leave no margin: the lock can expire while the handler is still allowed to run.
-        if ($settings->int('idempotency.lock_ttl_seconds') <= $settings->int('idempotency.max_handler_seconds')) {
-            throw new \InvalidArgumentException(
-                'http-basics.idempotency.lock_ttl_seconds must be greater than max_handler_seconds.',
-            );
-        }
-
-        $keyFormat = $settings->value('idempotency.key_format');
-
-        if (! is_string($keyFormat) || IdempotencyKeyFormat::tryFrom($keyFormat) === null) {
-            throw new \InvalidArgumentException('http-basics.idempotency.key_format must be uuid or sf-string.');
-        }
-
-        if (! in_array($settings->value('idempotency.store'), ['cache', 'database'], true)) {
-            throw new \InvalidArgumentException('http-basics.idempotency.store must be cache or database.');
-        }
-
-        if (! $settings->bool('idempotency.anonymous.enabled')) {
-            return;
-        }
-
-        $secret = $settings->value('idempotency.anonymous.secret');
-
-        if (! is_string($secret) || strlen($secret) < 32) {
-            throw new \InvalidArgumentException(
-                'http-basics.idempotency.anonymous.secret must be at least 32 bytes when anonymous idempotency is enabled.',
-            );
-        }
-
-        // A string such as 'ip' is a mistake to report, not a reason to use the default list.
-        $components = $settings->value('idempotency.anonymous.components');
-
-        $this->normalizeAnonComponents(is_array($components) ? $settings->stringList('idempotency.anonymous.components') : []);
     }
 
     private function cacheRepository(mixed $cache): CacheRepository
@@ -451,33 +369,6 @@ final class HttpBasicsServiceProvider extends ServiceProvider
         }
 
         throw new \InvalidArgumentException('The idempotency cache store must be an Illuminate cache repository.');
-    }
-
-    /**
-     * @param  list<string>  $components
-     * @return list<'ip'|'user_agent'|'route'>
-     */
-    private function normalizeAnonComponents(array $components): array
-    {
-        $normalized = [];
-
-        foreach ($components as $component) {
-            if (! in_array($component, ['ip', 'user_agent', 'route'], true)) {
-                throw new \InvalidArgumentException(
-                    'http-basics.idempotency.anonymous.components may only contain ip, user_agent, and route.',
-                );
-            }
-
-            $normalized[] = $component;
-        }
-
-        if ($normalized === []) {
-            throw new \InvalidArgumentException(
-                'http-basics.idempotency.anonymous.components must contain at least one valid component.',
-            );
-        }
-
-        return array_values(array_unique($normalized));
     }
 
     private function config(Application $app): ConfigRepository

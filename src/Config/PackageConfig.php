@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Qiick\HttpBasics\Config;
 
 use Illuminate\Contracts\Config\Repository as ConfigRepository;
+use Qiick\HttpBasics\RequestId\RequestIdAcceptFrom;
+use Qiick\HttpBasics\Security\CspMode;
 
 /**
  * @internal Typed reads of `http-basics.*` with one fallback rule: a key that is
@@ -92,6 +94,24 @@ final class PackageConfig
     public function __construct(
         private ConfigRepository $config,
     ) {}
+
+    /** @throws \InvalidArgumentException for an unknown request ID trust policy. */
+    public function requestIdAcceptFrom(): RequestIdAcceptFrom
+    {
+        $acceptFrom = $this->value('request_id.accept_from');
+
+        return (is_string($acceptFrom) ? RequestIdAcceptFrom::tryFrom($acceptFrom) : null)
+            ?? throw new \InvalidArgumentException('http-basics.request_id.accept_from must be trusted_proxy, any, or never.');
+    }
+
+    /** @throws \InvalidArgumentException for an unknown CSP mode. */
+    public function cspMode(): CspMode
+    {
+        $cspMode = $this->value('security.csp.mode');
+
+        return (is_string($cspMode) ? CspMode::tryFrom($cspMode) : null)
+            ?? throw new \InvalidArgumentException('http-basics.security.csp.mode must be enforce, report-only, off, or both.');
+    }
 
     /**
      * A non-empty string, or the default.

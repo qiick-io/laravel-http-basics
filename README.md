@@ -45,6 +45,10 @@ per-route after throttle / auth / scope / cost. Products wire
 `ExceptionErrorCodeAugmenter` through their own bootstrap (no Foundation types in
 this package).
 
+Run `php artisan http-basics:check` during deployment and from the product's
+upgrade command after migrations. It reports invalid settings and unreachable
+idempotency stores and exits with status 1 when a check fails.
+
 ### Fleet error shape (landed)
 
 ```php
@@ -406,7 +410,7 @@ run with `pest --mutate` (per-class MSI ≥ 95%).
 ## Public API
 
 `docs/public-api.md` lists what is public: classes, interfaces and enums marked
-`@api`, config keys, environment variables, the Artisan command, publish tags, the
+`@api`, config keys, environment variables, Artisan commands, publish tags, the
 migration and the wire formats. Everything else in `src/` is `@internal`.
 
 ## Deprecation policy
