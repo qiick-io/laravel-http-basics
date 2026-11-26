@@ -414,18 +414,8 @@ migration and the wire formats. Everything else in `src/` is `@internal`.
 
 ## Deprecation policy
 
-This package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (SemVer):
-
-- **Deprecation in minor releases:** When a public API (class, method, interface, config key,
-  or environment variable) is deprecated, it is marked with `@deprecated` docblocks, documented
-  in `CHANGELOG.md` and `UPGRADING.md`, and triggers a runtime notice or warning where appropriate.
-  The deprecated feature remains functional and supported for at least one minor release.
-- **Removal in major releases only:** Deprecated APIs are never removed within the same major
-  version (`0.x` or `1.x`). Breaking removals occur exclusively at the next major release
-  boundary (e.g. `2.0.0`).
-- **Pre-1.0 stability:** In `0.x`, breaking changes are documented in `UPGRADING.md` before
-  each tagged release. Once `1.0.0` ships, public contracts and migrations are frozen and
-  follow strict SemVer forward compatibility.
+See the [public API deprecation policy](docs/public-api.md#deprecation-policy)
+for notice periods, release rules, and upgrade guidance.
 
 ## Security
 

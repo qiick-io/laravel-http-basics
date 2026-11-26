@@ -262,3 +262,18 @@ own `cors.*` config at boot.
 ## Events
 
 The package dispatches no events.
+
+## Deprecation policy
+
+This package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+- **Deprecation in minor releases.** Mark deprecated PHP symbols with
+  `@deprecated`, issue a runtime notice where appropriate, and document the
+  deprecated API in `CHANGELOG.md` under **Deprecated** and its replacement
+  in `UPGRADING.md`. The deprecated API keeps working for at least one minor
+  release.
+- **Removal in major releases.** Starting with 1.0.0, remove deprecated
+  public APIs only in a major release.
+- **Pre-1.0 changes.** A minor release may include breaking changes. Record
+  every break in `UPGRADING.md` before tagging the release. Migrations become
+  forward-only at 1.0.0.
