@@ -33,3 +33,12 @@ it('fails boot when lock ttl equals max handler seconds', function (): void {
 
     expect(fn () => $provider->boot())->toThrow(InvalidArgumentException::class);
 });
+
+it('rejects retention beyond the erasure TTL limit', function (string $setting): void {
+    config()->set('http-basics.idempotency.'.$setting, 86401);
+
+    /** @var HttpBasicsServiceProvider $provider */
+    $provider = $this->app->getProvider(HttpBasicsServiceProvider::class);
+
+    expect(fn () => $provider->boot())->toThrow(InvalidArgumentException::class, 'must expire within 24 hours');
+})->with(['ttl_seconds', 'lock_ttl_seconds']);

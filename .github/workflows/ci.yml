@@ -185,6 +185,11 @@ jobs:
           DB_DATABASE: ':memory:'
         run: vendor/bin/pest --filter=DatabaseIdempotency
 
+      - run: node tests/Erasure/run.mjs
+        env:
+          DB_CONNECTION: sqlite
+          DB_DATABASE: ':memory:'
+
   database-store:
     name: DB store (${{ matrix.engine }})
     runs-on: ubuntu-latest
@@ -261,7 +266,7 @@ jobs:
           composer update --no-interaction --prefer-dist --with-all-dependencies
 
       - name: Pest (database store)
-        env:
+        env: &database-test-env
           DB_CONNECTION: ${{ matrix.connection }}
           DB_DATABASE: httpbasics
           DB_HOST: 127.0.0.1
@@ -269,6 +274,9 @@ jobs:
           DB_USERNAME: ${{ matrix.username }}
           DB_PASSWORD: ${{ matrix.password }}
         run: vendor/bin/pest --filter=DatabaseIdempotency
+
+      - run: node tests/Erasure/run.mjs
+        env: *database-test-env
 
   # Real HTTP against php -S (middleware stack). Feature PRs fill the Pest group;
   # scaffold keeps the Laravel 12/13 cells so the matrix shape matches the fleet rule.

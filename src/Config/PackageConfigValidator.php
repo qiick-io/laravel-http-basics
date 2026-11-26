@@ -72,6 +72,10 @@ final class PackageConfigValidator
             }
         }
 
+        if (max($settings->int('idempotency.ttl_seconds'), $settings->int('idempotency.lock_ttl_seconds')) > 86400) {
+            yield new InvalidArgumentException('Idempotency records and locks must expire within 24 hours.');
+        }
+
         // Equal budgets leave no margin: the lock can expire while the handler is still allowed to run.
         if ($settings->int('idempotency.lock_ttl_seconds') <= $settings->int('idempotency.max_handler_seconds')) {
             yield new InvalidArgumentException(

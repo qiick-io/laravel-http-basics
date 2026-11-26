@@ -13,10 +13,12 @@ the create migration is edited in place. Tests load the same migration.
 | Column | Type | Notes |
 | --- | --- | --- |
 | `id` | bigint PK | Internal only |
-| `public_id` | `uuid`, unique | UUIDv7 stamped with the claim time; the id a product may expose. One id names one operation: a takeover of an expired or stale row gets a new one, with its own `method`, `path` and `created_at` |
-| `bucket` | `varchar(128)`, binary NO PAD collation on MySQL (`utf8mb4_0900_bin`, MySQL 8.0+) and MariaDB (`utf8mb4_nopad_bin`) | Server-side credential / anon bucket, compared byte for byte on every engine; a bucket over 128 characters is stored as `sha256:<hex>` |
+| `public_id` | `uuid` null, unique | UUIDv7 stamped with the claim time and exposed as the operation ID. A takeover gets a new one. Erasure clears it when anonymising a row. |
+| `bucket` | `varchar(128)` null, binary NO PAD collation on MySQL (`utf8mb4_0900_bin`, MySQL 8.0+) and MariaDB (`utf8mb4_nopad_bin`) | Server-side credential or anonymous bucket, compared byte for byte on every engine. Buckets over 128 characters become `sha256:<hex>`. Null detaches an anonymised row from replay. |
+| `user_id` | `varchar(255)` null, indexed | Authenticated user's key, without a user-table dependency. Uses the same comparison as `bucket`. |
+| `organisation_id` | `varchar(255)` null | Server-resolved scope for erasure, with the same comparison as `bucket`. Null marks an unscoped claim. |
 | `bucket_version` | `smallint`, default `1` | Versions the bucket scheme (anonymous HMAC components) |
-| `credential_public_id` | `uuid` null, indexed | From `IdempotencyContext::$credentialPublicId` |
+| `credential_public_id` | `uuid` null, indexed | Canonical lowercase principal or key UUID from `IdempotencyContext::$credentialPublicId`. |
 | `key_hash` | `varchar(64)` | SHA-256 of the client key |
 | `key_hash_algorithm` | `varchar(32)`, default `sha256` | |
 | `key_format` | `varchar(16)` | `uuid` or `sf-string`, from the claim context |

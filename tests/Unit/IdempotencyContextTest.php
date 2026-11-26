@@ -14,6 +14,8 @@ it('defaults to the current fingerprint version and no optional facts', function
         ->and($context->requestId)->toBeNull()
         ->and($context->traceId)->toBeNull()
         ->and($context->credentialPublicId)->toBeNull()
+        ->and($context->userId)->toBeNull()
+        ->and($context->organisationId)->toBeNull()
         ->and($context->metadata)->toBe([]);
 });
 
@@ -25,11 +27,15 @@ it('accepts values at the edge of what the columns hold', function (): void {
         traceId: '4bf92f3577b34da6a3ce929d0e0e4736',
         credentialPublicId: '019a5f6e-8c1b-7d2e-9f3a-4b5c6d7e8f90',
         metadata: ['request.content_digest' => 'sha-256=:abc=:'],
+        userId: str_repeat('ü', 255),
+        organisationId: '0',
     );
 
     expect($context->requestId)->toHaveLength(128)
         ->and($context->traceId)->toBe('4bf92f3577b34da6a3ce929d0e0e4736')
         ->and($context->credentialPublicId)->toBe('019a5f6e-8c1b-7d2e-9f3a-4b5c6d7e8f90')
+        ->and($context->userId)->toBe(str_repeat('ü', 255))
+        ->and($context->organisationId)->toBe('0')
         ->and($context->metadata)->toBe(['request.content_digest' => 'sha-256=:abc=:']);
 });
 
@@ -43,6 +49,8 @@ it('refuses context the record could not store faithfully', function (array $arg
     'trace id too short' => [['traceId' => '4bf92f3577b34da6a3ce929d0e0e473'], 'trace id'],
     'all-zero trace id' => [['traceId' => str_repeat('0', 32)], 'trace id'],
     'credential id that is not a UUID' => [['credentialPublicId' => 'key_123'], 'credential public id'],
+    'whitespace-only owner id' => [['userId' => '  '], 'ownership identifiers'],
+    'organisation id over 255 characters' => [['organisationId' => str_repeat('a', 256)], 'ownership identifiers'],
     'metadata JSON cannot encode' => [['metadata' => ['ratio' => INF]], 'metadata'],
 ]);
 

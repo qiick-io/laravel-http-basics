@@ -107,7 +107,9 @@ final class DatabaseIdempotencyStore implements IdempotencyStore
             'fingerprint_version' => $context->fingerprintVersion,
             'request_id' => $context->requestId,
             'trace_id' => $context->traceId,
-            'credential_public_id' => $context->credentialPublicId,
+            'credential_public_id' => $context->credentialPublicId === null ? null : strtolower($context->credentialPublicId),
+            'user_id' => $context->userId,
+            'organisation_id' => $context->organisationId,
             'metadata' => $context->metadata === [] ? null : json_encode($context->metadata, JSON_THROW_ON_ERROR),
             // A row describes one operation: a takeover (expired or stale row, possibly
             // from another route) gets its own public id, method, path and start time.

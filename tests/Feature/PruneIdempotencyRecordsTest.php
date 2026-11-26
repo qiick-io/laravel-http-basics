@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Qiick\HttpBasics\Idempotency\IdempotencyRecord;
+use Qiick\HttpBasics\Laravel\HttpBasicsServiceProvider;
 
 /*
  * Both prune entry points compare expires_at, which the store writes as UTC
@@ -16,6 +17,8 @@ use Qiick\HttpBasics\Idempotency\IdempotencyRecord;
  */
 
 beforeEach(function (): void {
+    // PostgreSQL keeps the original index names when the configured-table test renames the table.
+    Schema::dropIfExists('idempotency_custom');
     Schema::dropIfExists('idempotency_records');
     /** @var Migration $migration */
     $migration = require dirname(__DIR__, 2).'/database/migrations/2026_11_22_000001_create_idempotency_records_table.php';
@@ -31,6 +34,26 @@ afterEach(function (): void {
     Carbon::setTestNow();
     date_default_timezone_set($this->originalTimezone);
 });
+
+it('schedules idempotency pruning only for the database adapter when enabled', function (string $store, bool $shouldSchedule, int $expectedCount): void {
+    config()->set('http-basics.idempotency.store', $store);
+    config()->set('http-basics.idempotency.schedule', $shouldSchedule);
+    $this->app->getProvider(HttpBasicsServiceProvider::class)->boot();
+
+    $events = array_values(array_filter(app(Schedule::class)->events(), static fn ($event): bool => str_contains((string) $event->command, 'http-basics:prune-idempotency')));
+
+    expect($events)->toHaveCount($expectedCount);
+
+    if ($expectedCount === 1) {
+        expect($events[0]->onOneServer)->toBeTrue()
+            ->and($events[0]->withoutOverlapping)->toBeTrue()
+            ->and($events[0]->expression)->toBe('0 * * * *');
+    }
+})->with([
+    'database is scheduled' => ['database', true, 1],
+    'custom schedule' => ['database', false, 0],
+    'cache uses native expiry' => ['cache', true, 0],
+]);
 
 /**
  * Inserts one completed row whose expires_at is the given UTC wall-clock time.
@@ -74,6 +97,38 @@ it('keeps rows that expire later today in UTC when the prune command runs in a n
 
     expect(DB::table('idempotency_records')->pluck('key_hash')->all())
         ->toBe([hash('sha256', 'key-live')]);
+});
+
+it('prunes a backlog in bounded batches', function (): void {
+    insertIdempotencyRecordExpiringAt('2026-01-01 11:30:00', 'first');
+    $expiredRecord = (array) DB::table('idempotency_records')->first();
+    unset($expiredRecord['id']);
+
+    $expiredRecords = [];
+
+    foreach (range(2, 501) as $recordNumber) {
+        $expiredRecords[] = array_replace($expiredRecord, [
+            'public_id' => (string) Str::uuid7(),
+            'key_hash' => hash('sha256', 'expired-'.$recordNumber),
+        ]);
+    }
+
+    foreach (array_chunk($expiredRecords, 25) as $batch) {
+        DB::table('idempotency_records')->insert($batch);
+    }
+
+    $deleteBatchSizes = [];
+    DB::connection()->beforeExecuting(static function (string $query, array $bindings) use (&$deleteBatchSizes): void {
+        if (str_starts_with($query, 'delete from')) {
+            // The batch binds the expiry cutoff in addition to the IDs.
+            $deleteBatchSizes[] = count($bindings) - 1;
+        }
+    });
+
+    $this->artisan('http-basics:prune-idempotency')->expectsOutput('Deleted 501 expired idempotency record(s).')->assertSuccessful();
+
+    expect($deleteBatchSizes)->toBe([500, 1])
+        ->and(DB::table('idempotency_records')->count())->toBe(0);
 });
 
 it('prunes on the configured idempotency connection, not the default one', function (): void {
@@ -162,7 +217,7 @@ it('deletes a backlog in bounded batches and keeps live rows', function (): void
         ->and(DB::table('idempotency_records')->pluck('key_hash')->all())->toBe([hash('sha256', 'key-live')]);
 });
 
-it('schedules database pruning daily with both scheduler locks', function (): void {
+it('schedules database pruning hourly with both scheduler locks', function (): void {
     // An older published config may not contain the schedule switch.
     config(['http-basics.idempotency' => ['store' => 'database']]);
     bootProvider();
@@ -171,7 +226,7 @@ it('schedules database pruning daily with both scheduler locks', function (): vo
 
     expect($events)->toHaveCount(1)
         ->and($events[0]->command)->toContain('http-basics:prune-idempotency')
-        ->and($events[0]->expression)->toBe('0 0 * * *')
+        ->and($events[0]->expression)->toBe('0 * * * *')
         ->and($events[0]->onOneServer)->toBeTrue()
         ->and($events[0]->withoutOverlapping)->toBeTrue();
 });

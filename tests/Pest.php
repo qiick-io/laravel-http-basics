@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Process;
+use Illuminate\Support\Facades\Schema;
 use Qiick\HttpBasics\Tests\Support\PackageTestCase;
 
 require_once __DIR__.'/Support/idempotency-hrtime-shim.php';
@@ -19,4 +20,16 @@ pest()->extend(PackageTestCase::class)
     ->beforeEach(function (): void {
         Http::preventStrayRequests();
         Process::preventStrayProcesses();
-    })->in('Feature', 'Unit', 'Http');
+    })->in('Feature', 'Unit', 'Http', 'Erasure');
+
+pest()->in('Erasure')->beforeEach(function (): void {
+    config()->set('http-basics.idempotency.cache_store', 'array');
+
+    Schema::dropIfExists('idempotency_records');
+    $migration = require dirname(__DIR__).'/database/migrations/2026_11_22_000001_create_idempotency_records_table.php';
+    $migration->up();
+});
+
+pest()->in('Erasure/ErasureConformanceTest.php')->beforeEach(function (): void {
+    config()->set('http-basics.idempotency.store', 'database');
+});

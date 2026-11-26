@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Idempotency: the package now schedules database pruning hourly. Products that
+  keep their own schedule can set `http-basics.idempotency.schedule` to `false`.
+  Set `HTTP_BASICS_IDEMPOTENCY_TTL` and `HTTP_BASICS_IDEMPOTENCY_LOCK_TTL` to at most
+  86400 seconds before upgrading. Higher values fail boot.
+
 - Idempotency: replayed response headers keep their values but are named in lower case
   (they come from `HeaderBag::all()`); HTTP header names are case-insensitive.
 

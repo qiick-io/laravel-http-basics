@@ -20,9 +20,11 @@ return new class extends Migration
     {
         Schema::create('idempotency_records', function (Blueprint $table): void {
             $table->id();
-            // UUIDv7 written by the store: the id a product may expose, never `id`.
-            $table->uuid('public_id')->unique();
-            $bucket = $table->string('bucket', 128);
+            // UUIDv7 written by the store and cleared when the row is anonymised.
+            $table->uuid('public_id')->nullable()->unique();
+            $bucket = $table->string('bucket', 128)->nullable();
+            $userId = $table->string('user_id')->nullable()->index();
+            $organisationId = $table->string('organisation_id')->nullable();
 
             // Buckets are opaque identifiers: on PostgreSQL and SQLite they compare byte for
             // byte. MySQL and MariaDB default to a case- and accent-insensitive collation,
@@ -30,7 +32,10 @@ return new class extends Migration
             $connection = Schema::getConnection();
 
             if ($connection instanceof MySqlConnection) {
-                $bucket->collation($connection->isMaria() ? 'utf8mb4_nopad_bin' : 'utf8mb4_0900_bin');
+                $binaryCollation = $connection->isMaria() ? 'utf8mb4_nopad_bin' : 'utf8mb4_0900_bin';
+                $bucket->collation($binaryCollation);
+                $userId->collation($binaryCollation);
+                $organisationId->collation($binaryCollation);
             }
 
             // Versions the bucket scheme (the anonymous HMAC components).

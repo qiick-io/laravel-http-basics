@@ -31,6 +31,8 @@ final readonly class IdempotencyContext
         public ?string $traceId = null,
         public ?string $credentialPublicId = null,
         public array $metadata = [],
+        public ?string $userId = null,
+        public ?string $organisationId = null,
     ) {
         if ($fingerprintVersion < 1) {
             throw new \InvalidArgumentException('The fingerprint version starts at 1.');
@@ -47,6 +49,12 @@ final readonly class IdempotencyContext
 
         if ($credentialPublicId !== null && ! Str::isUuid($credentialPublicId)) {
             throw new \InvalidArgumentException('The credential public id must be a UUID.');
+        }
+
+        foreach ([$userId, $organisationId] as $ownerId) {
+            if ($ownerId !== null && (trim($ownerId) === '' || mb_strlen($ownerId) > 255)) {
+                throw new \InvalidArgumentException('Idempotency ownership identifiers must contain 1 to 255 characters.');
+            }
         }
 
         self::assertStorableMetadata($metadata);

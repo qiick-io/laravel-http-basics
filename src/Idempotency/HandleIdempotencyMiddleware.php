@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace Qiick\HttpBasics\Idempotency;
 
 use Closure;
+use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Http\Request;
+use Illuminate\Support\Str;
 use JsonException;
 use Qiick\HttpBasics\Contracts\CredentialBucketResolver;
 use Qiick\HttpBasics\Contracts\ErrorRenderer;
@@ -31,6 +33,10 @@ final class HandleIdempotencyMiddleware
     public const string HEADER = 'Idempotency-Key';
 
     public const string DEFAULT_REPLAY_HEADER = 'Idempotent-Replayed';
+
+    public const string CREDENTIAL_PUBLIC_ID_ATTRIBUTE = 'http_basics.credential_public_id';
+
+    public const string ORGANISATION_ID_ATTRIBUTE = 'http_basics.organisation_id';
 
     public function __construct(
         private IdempotencyStore $store,
@@ -121,11 +127,20 @@ final class HandleIdempotencyMiddleware
 
         $scope = new IdempotencyScope($bucket, $request->getMethod(), $request->getPathInfo());
         $now = new \DateTimeImmutable;
+        $credentialPublicId = $request->attributes->get(self::CREDENTIAL_PUBLIC_ID_ATTRIBUTE);
+        $organisationId = $request->attributes->getString(self::ORGANISATION_ID_ATTRIBUTE);
+
+        if ($credentialPublicId !== null && (! is_string($credentialPublicId) || ! Str::isUuid($credentialPublicId))) {
+            throw new \InvalidArgumentException('The trusted '.self::CREDENTIAL_PUBLIC_ID_ATTRIBUTE.' attribute must be a UUID.');
+        }
 
         try {
             $claim = $this->store->claim($scope, $key, $fingerprint, $now, new IdempotencyContext(
                 $this->keyValidator->format(),
                 requestId: $this->storableRequestId(),
+                credentialPublicId: $credentialPublicId,
+                userId: $this->authenticatedUserId($request),
+                organisationId: $organisationId === '' ? null : $organisationId,
             ));
         } catch (IdempotencyStoreException) {
             return $this->unavailable($request);
@@ -253,6 +268,15 @@ final class HandleIdempotencyMiddleware
         $requestId = $this->requestIds->current()?->value;
 
         return $requestId !== null && preg_match(RequestId::PATTERN, $requestId) === 1 ? $requestId : null;
+    }
+
+    /** Laravel's user resolver is server-side. Machine credentials may have no user. */
+    private function authenticatedUserId(Request $request): ?string
+    {
+        $user = $request->user();
+        $userId = $user instanceof Authenticatable ? $user->getAuthIdentifier() : null;
+
+        return is_int($userId) || is_string($userId) ? (string) $userId : null;
     }
 
     /**

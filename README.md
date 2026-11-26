@@ -217,7 +217,7 @@ app()->bind(CredentialBucketResolver::class, MyCredentialBucketResolver::class);
 | Config / env | Default | Meaning |
 | --- | --- | --- |
 | `HTTP_BASICS_IDEMPOTENCY_STORE` | `cache` | `cache` or `database` (see `docs/reference-schema.md`). |
-| `HTTP_BASICS_IDEMPOTENCY_TTL` | `86400` | Completed record TTL from completion time. |
+| `HTTP_BASICS_IDEMPOTENCY_TTL` | `86400` | Completed record TTL from completion time, up to 24 hours. |
 | `HTTP_BASICS_IDEMPOTENCY_LOCK_TTL` | `60` | Must be > `max_handler_seconds`. |
 | `HTTP_BASICS_IDEMPOTENCY_KEY_FORMAT` | `uuid` | `uuid` or `sf-string`. Both read the RFC 9651 String of draft-ietf-httpapi-idempotency-key-header-09 (`"8e03…"`, quotes and `\"` / `\\` escapes removed before storage) or the same key bare; `uuid` then requires a UUID. |
 | `HTTP_BASICS_IDEMPOTENCY_ANON_ENABLED` | `false` | Public writes via HMAC bucket (`ip`, `user_agent`, `route`). |
@@ -264,20 +264,75 @@ the effect itself idempotent: write it in one transaction keyed by the operation
 unique column the second run hits), or record it in an outbox table in that
 transaction and let a worker perform it once.
 
-With the database store, the package schedules `http-basics:prune-idempotency`
-daily at midnight. Run Laravel's scheduler and use a shared cache that supports
-scheduler locks when running it on multiple servers. Set
-`http-basics.idempotency.schedule` to `false` if the product already has a
-pruning schedule or needs a different cadence.
+The database adapter schedules `http-basics:prune-idempotency` hourly with
+`onOneServer()` and `withoutOverlapping()`. Run the Laravel scheduler and use a
+shared cache for the scheduler's locks. Expired rows stay in the database until
+pruning succeeds. If the product owns the schedule, set
+`http-basics.idempotency.schedule` to `false` and schedule the prune in the product.
 
 `--dry-run` counts what would be deleted. `--hours` keeps records that expired
-more recently than the specified number of hours.
+more recently than the specified number of hours. `model:prune` against
+`Qiick\HttpBasics\Idempotency\IdempotencyRecord` can also prune expired records.
 
 On machine doors the fingerprint includes the locale the response is served in, so
 a retry that negotiates to the same locale replays (`it-CH,it;q=0.9` and `it`; an
 unsupported `fr`, no header and `en` when `en` is the default). The database store
 treats an `expires_at` it cannot read as never expiring, so such a row keeps
 answering instead of letting the handler run again.
+
+### Personal data erasure
+
+Resolve `Qiick\HttpBasics\Erasure\HttpBasicsEraser` from Laravel's container in the
+product's [erasure orchestrator](https://github.com/qiick-io/app-ui/blob/v0.15.0/standards/rules/erasure.md).
+Revoke the subject's access and let in-flight requests finish before erasing their records.
+
+```php
+use Qiick\HttpBasics\Erasure\HttpBasicsEraser;
+
+$report = app(HttpBasicsEraser::class)->erase(
+    userId: (string) $user->getAuthIdentifier(),
+    userPublicId: $user->public_id,
+    mode: HttpBasicsEraser::DELETE,
+    publicIds: $principalAndApiKeyPublicIds,
+);
+```
+
+Run idempotency after authentication so the database adapter can record the user's
+key. For a principal or API key, set the trusted request attribute
+`HandleIdempotencyMiddleware::CREDENTIAL_PUBLIC_ID_ATTRIBUTE` to its UUID. An
+invalid value raises `InvalidArgumentException` before the store is called. Set
+`HandleIdempotencyMiddleware::ORGANISATION_ID_ATTRIBUTE` from trusted server state
+for organisation-scoped requests, and pass the same organisation key to
+`erase(organisationId: ...)`. Direct adapter callers supply these values through
+`IdempotencyContext`.
+
+`DELETE` removes matching records. `ANONYMISE` leaves detached rows without replay
+payloads or identifiers and preserves their expiration times. A `dryRun: true`
+predicts the counts. Real runs forget matching database fallback seals and dispatch
+`SubjectErasedEvent` after commit. The default cache adapter defers the event when
+the caller has a transaction on Laravel's default connection. The user's own row
+belongs to the product.
+
+Database records with neither a user key nor a credential UUID can contain
+personal data from requests such as sign-up or guest checkout. The database section
+of the erasure report counts only records linked to the subject by user key or
+credential UUID. Unlinked records stop replaying after the configured TTL of up to
+24 hours. The next successful hourly run of `http-basics:prune-idempotency` deletes
+them. Avoid replayable responses that contain personal data on routes that cannot
+record an owner.
+
+The cache-only adapter expires replay entries within 24 hours. It reports one
+retained cache store with `reason: cache_ttl` because it cannot count entries by
+subject, and throws `OrganisationScopeUnsupportedException` for an organisation-only
+request. Database-adapter locks and any seals whose rows have already been pruned
+also expire by TTL. After a persistent cache deletion failure, the event reports
+the affected seals as kept with `cache_ttl`, and expiry removes them. For immediate
+subject erasure, use the database adapter with recorded owners.
+
+Pre-1.0 installations using the database adapter must republish the updated create
+migration and rebuild the idempotency table. Its records are transient, and rebuilding
+the table removes replay protection for outstanding keys, so schedule that change
+after existing keys have expired.
 
 ## Threat model (short)
 

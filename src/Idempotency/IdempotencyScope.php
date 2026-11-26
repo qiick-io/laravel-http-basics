@@ -17,6 +17,12 @@ final readonly class IdempotencyScope
 
     public function cacheKey(string $key): string
     {
-        return 'http-basics:v1:'.$this->bucket.':'.hash('sha256', $key);
+        return self::cacheKeyFromHash($this->bucket, hash('sha256', $key));
+    }
+
+    /** @internal Reconstructs a cache key from the irreversible hash in a database row. */
+    public static function cacheKeyFromHash(string $bucket, string $keyHash): string
+    {
+        return 'http-basics:v1:'.$bucket.':'.$keyHash;
     }
 }
