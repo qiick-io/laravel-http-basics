@@ -85,7 +85,7 @@ function databaseIdempotencyStore(
     );
 }
 
-it('reports unowned rows pending expiry without confusing them with anonymised rows', function (string $mode): void {
+it('leaves unowned rows out of an erasure report even when they share the organisation scope', function (string $mode): void {
     config()->set('http-basics.idempotency.store', 'database');
     $store = databaseIdempotencyStore();
     $now = new DateTimeImmutable;
@@ -96,18 +96,25 @@ it('reports unowned rows pending expiry without confusing them with anonymised r
     $store->claim($scope, 'owned-key', 'fingerprint', $now, new IdempotencyContext(IdempotencyKeyFormat::SfString, userId: '123456'));
     $userPublicId = (string) Str::uuid();
     $eraser = app(HttpBasicsEraser::class);
+    $emptySubjectPublicId = (string) Str::uuid();
+
+    foreach ([null, $organisationId] as $erasureOrganisationId) {
+        $emptyReport = $eraser->erase('654321', $emptySubjectPublicId, $mode, organisationId: $erasureOrganisationId);
+
+        expect($emptyReport->changed())->toBe(0)
+            ->and($emptyReport->stores['idempotency_records'])->toBe(['deleted' => 0, 'anonymised' => 0, 'kept' => 0, 'reason' => null]);
+    }
 
     $dryRun = $eraser->erase('123456', $userPublicId, $mode, dryRun: true);
     $report = $eraser->erase('123456', $userPublicId, $mode);
     $retry = $eraser->erase('123456', $userPublicId, $mode);
-    $scoped = $eraser->erase('123456', $userPublicId, $mode, organisationId: (string) Str::uuid(), dryRun: true);
 
     expect($dryRun->stores)->toBe($report->stores)
-        ->and($report->stores['idempotency_records']['kept'])->toBe(1)
-        ->and($report->stores['idempotency_records']['reason'])->toBe('unlinked_until_expiry')
+        ->and($report->changed())->toBe(1)
+        ->and($report->stores['idempotency_records']['kept'])->toBe(0)
+        ->and($report->stores['idempotency_records']['reason'])->toBeNull()
         ->and($retry->changed())->toBe(0)
-        ->and($retry->stores['idempotency_records']['kept'])->toBe(1)
-        ->and($scoped->stores['idempotency_records']['kept'])->toBe(0)
+        ->and($retry->stores['idempotency_records']['kept'])->toBe(0)
         ->and(DB::table('idempotency_records')->where('key_hash', hash('sha256', 'signup-key'))->value('body'))->toBe('person@example.test');
 })->with([HttpBasicsEraser::DELETE, HttpBasicsEraser::ANONYMISE]);
 

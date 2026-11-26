@@ -85,14 +85,9 @@ final class HttpBasicsEraser
             $report = $connection->transaction(function () use ($connection, $userId, $credentialPublicIds, $organisationId, $mode, $dryRun, &$committedReport): ErasureReport {
                 $subjectRows = $connection->table($this->table)
                     ->where(static fn (Builder $query): Builder => $query->where('user_id', $userId)->orWhereIn('credential_public_id', $credentialPublicIds));
-                $unlinkedRows = $connection->table($this->table)
-                    ->whereNull('user_id')
-                    ->whereNull('credential_public_id')
-                    ->whereNotNull('bucket');
 
                 if ($organisationId !== null) {
                     $subjectRows->where('organisation_id', $organisationId);
-                    $unlinkedRows->where('organisation_id', $organisationId);
                 }
 
                 if (! $dryRun) {
@@ -146,12 +141,10 @@ final class HttpBasicsEraser
                         ]);
                 });
 
-                // A null bucket marks an anonymised row. A replay row stays counted until prune, even after expiry.
-                $keptRows = $unlinkedRows->count();
-                $report = $this->report($mode, $dryRun, $changedRows, count($sealedKeys), keptRows: $keptRows);
+                $report = $this->report($mode, $dryRun, $changedRows, count($sealedKeys));
 
                 if (! $dryRun) {
-                    $connection->afterCommit(function () use ($mode, $changedRows, $keptRows, $sealedKeys, &$committedReport): void {
+                    $connection->afterCommit(function () use ($mode, $changedRows, $sealedKeys, &$committedReport): void {
                         $deletedSeals = 0;
 
                         foreach ($sealedKeys as $sealedKey) {
@@ -160,7 +153,7 @@ final class HttpBasicsEraser
                             }
                         }
 
-                        $committedReport = $this->report($mode, false, $changedRows, $deletedSeals, count($sealedKeys) - $deletedSeals, $keptRows);
+                        $committedReport = $this->report($mode, false, $changedRows, $deletedSeals, count($sealedKeys) - $deletedSeals);
                         $this->dispatchErased($committedReport);
                     });
                 }
@@ -241,14 +234,14 @@ final class HttpBasicsEraser
         }
     }
 
-    private function report(string $mode, bool $dryRun, int $changedRows = 0, int $deletedSeals = 0, int $keptCache = 0, int $keptRows = 0): ErasureReport
+    private function report(string $mode, bool $dryRun, int $changedRows = 0, int $deletedSeals = 0, int $keptCache = 0): ErasureReport
     {
         return new ErasureReport('qiick/laravel-http-basics', $mode, $dryRun, [
             $this->table => [
                 'deleted' => $mode === self::DELETE ? $changedRows : 0,
                 'anonymised' => $mode === self::ANONYMISE ? $changedRows : 0,
-                'kept' => $keptRows,
-                'reason' => $keptRows > 0 ? 'unlinked_until_expiry' : null,
+                'kept' => 0,
+                'reason' => null,
             ],
             'cache:'.$this->cacheName => [
                 'deleted' => $deletedSeals,

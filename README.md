@@ -317,12 +317,12 @@ the caller has a transaction on Laravel's default connection. The user's own row
 belongs to the product.
 
 Database records with neither a user key nor a credential UUID can contain
-personal data from requests such as sign-up or guest checkout. The table report's
-`kept` count includes all such unlinked rows in scope, with the package-specific
-reason `unlinked_until_expiry`. It is an aggregate count of unattributed rows.
-These records stop replaying after the configured TTL of up to 24 hours and the
-prune deletes them at the next successful run. Avoid replayable responses that
-contain personal data on routes that cannot record an owner.
+personal data from requests such as sign-up or guest checkout. The database section
+of the erasure report counts only records linked to the subject by user key or
+credential UUID. Unlinked records stop replaying after the configured TTL of up to
+24 hours. The next successful hourly run of `http-basics:prune-idempotency` deletes
+them. Avoid replayable responses that contain personal data on routes that cannot
+record an owner.
 
 The cache-only adapter expires replay entries within 24 hours. It reports one
 retained cache store with `reason: cache_ttl` because it cannot count entries by
