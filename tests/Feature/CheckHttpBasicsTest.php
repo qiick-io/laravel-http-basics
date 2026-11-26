@@ -38,23 +38,26 @@ it('reports each invalid key even when Artisan boots with invalid config', funct
         ->assertExitCode(1);
 });
 
-it('still fails boot when the check name is passed as an option value', function (): void {
+it('still fails boot when the CLI arguments do not select a valid check invocation', function (array $commandArguments): void {
     config(['http-basics.errors.format' => 'unknown']);
 
     $originalArguments = $_SERVER['argv'];
-    $_SERVER['argv'] = ['artisan', '--env', 'http-basics:check', 'list'];
+    $_SERVER['argv'] = ['artisan', ...$commandArguments];
 
     try {
         expect(bootProvider(...))->toThrow(InvalidArgumentException::class, 'http-basics.errors.format must be fleet or problem_details.');
     } finally {
         $_SERVER['argv'] = $originalArguments;
     }
-});
+})->with([
+    'check name is an option value' => [['--env', 'http-basics:check', 'list']],
+    'unknown option prevents command selection' => [['--unknown', 'http-basics:check']],
+]);
 
 it('identifies a configured cache store that resolves but cannot be read', function (): void {
     $cache = new FaultyCacheRepository(new ArrayStore);
     $cache->isGetThrowing = true;
-    Cache::extend('check-offline', static fn (): FaultyCacheRepository => $cache);
+    Cache::extend('check-offline', fn (): FaultyCacheRepository => $cache);
     config([
         'cache.stores.check-offline' => ['driver' => 'check-offline'],
         'http-basics.idempotency.cache_store' => 'check-offline',
