@@ -58,6 +58,11 @@ afterAll(function () use ($httpState): void {
     }
 });
 
+beforeEach(function (): void {
+    // These integration tests deliberately reach the local php -S fixtures.
+    Http::allowStrayRequests();
+});
+
 it('echoes a generated X-Request-Id over real HTTP', function () use ($httpState): void {
     $result = realHttpRequest($httpState->primaryPort, '/ping');
 
