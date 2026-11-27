@@ -42,11 +42,19 @@ function startPhpBuiltInServer(
     string $trustProxies,
     array $extraEnvironment = [],
 ) {
-    $errorLog = sys_get_temp_dir()."/http-basics-{$port}.err";
+    // Each launch gets its own log because competing processes can choose the same
+    // port. PHP unlinks the temp file when this function releases its handle.
+    $startupLogFile = tmpfile();
+
+    if ($startupLogFile === false) {
+        throw new RuntimeException('Could not create the php -S startup log.');
+    }
+
+    $startupLogPath = stream_get_meta_data($startupLogFile)['uri'];
     $descriptors = [
         0 => ['pipe', 'r'],
-        1 => ['file', sys_get_temp_dir()."/http-basics-{$port}.log", 'w'],
-        2 => ['file', $errorLog, 'w'],
+        1 => ['file', $startupLogPath, 'a'],
+        2 => ['file', $startupLogPath, 'a'],
     ];
 
     $setsid = null;
@@ -94,7 +102,7 @@ function startPhpBuiltInServer(
 
     // php -S logs "Development Server (http://127.0.0.1:P) started" or "Failed to listen on …" to stderr.
     for ($attempt = 0; $attempt < 50; $attempt++) {
-        $startupLog = (string) @file_get_contents($errorLog);
+        $startupLog = (string) file_get_contents($startupLogPath);
 
         if (str_contains($startupLog, 'Failed to listen')) {
             stopPhpBuiltInServer($proc);
