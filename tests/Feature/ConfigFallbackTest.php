@@ -162,7 +162,7 @@ it('gives the store and the record model the same trimmed connection', function 
         ->and((new IdempotencyRecord)->getConnectionName())->toBe('records');
 });
 
-it('refuses a request-id accept pattern that is not anchored at both ends, at boot', function (string $pattern): void {
+it('refuses an invalid request-id accept pattern at boot', function (mixed $pattern): void {
     config(['http-basics.request_id.accept_pattern' => $pattern]);
 
     expect(fn () => bootProvider())->toThrow(
@@ -174,12 +174,17 @@ it('refuses a request-id accept pattern that is not anchored at both ends, at bo
     'start only' => ['/\A[A-Za-z0-9]{8,128}/'],
     'line anchors' => ['/^[A-Za-z0-9]{8,128}$/'],
     'not a pattern' => ['\A[A-Za-z0-9]{8,128}\z'],
+    'non-string' => [['invalid']],
+    'empty' => [''],
 ]);
 
-it('accepts an anchored request-id accept pattern at boot', function (): void {
-    config(['http-basics.request_id.accept_pattern' => '#\A[a-z0-9]{8,64}\z#i']);
+it('accepts a valid whole-value request-id pattern at boot', function (string $pattern): void {
+    config(['http-basics.request_id.accept_pattern' => $pattern]);
 
     bootProvider();
 
-    expect(wiredProperty(app(RequestIdResolver::class), 'acceptPattern'))->toBe('#\A[a-z0-9]{8,64}\z#i');
-});
+    expect(wiredProperty(app(RequestIdResolver::class), 'acceptPattern'))->toBe($pattern);
+})->with([
+    'single delimiter' => ['#\A[a-z0-9]{8,64}\z#i'],
+    'paired delimiters' => ['{\A[a-z0-9]{8,64}\z}i'],
+]);

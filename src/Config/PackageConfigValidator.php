@@ -36,7 +36,12 @@ final class PackageConfigValidator
             yield new InvalidArgumentException('http-basics.errors.format must be fleet or problem_details.');
         }
 
-        foreach ([$this->settings->requestIdAcceptFrom(...), $this->settings->cspMode(...), $this->validateCspHashes(...)] as $validate) {
+        foreach ([
+            $this->settings->requestIdAcceptFrom(...),
+            $this->validateRequestIdAcceptPattern(...),
+            $this->settings->cspMode(...),
+            $this->validateCspHashes(...),
+        ] as $validate) {
             try {
                 $validate();
             } catch (InvalidArgumentException $exception) {
@@ -112,6 +117,32 @@ final class PackageConfigValidator
             self::normalizeAnonymousComponents(is_array($components) ? $settings->stringList('idempotency.anonymous.components') : []);
         } catch (InvalidArgumentException $exception) {
             yield $exception;
+        }
+    }
+
+    /** @throws InvalidArgumentException when a configured pattern cannot validate the entire request ID. */
+    private function validateRequestIdAcceptPattern(): void
+    {
+        $pattern = $this->settings->value('request_id.accept_pattern');
+        $message = 'http-basics.request_id.accept_pattern must be a valid pattern anchored with \A and \z.';
+
+        if (! is_string($pattern) || @preg_match($pattern, '') === false) {
+            throw new InvalidArgumentException($message);
+        }
+
+        $pattern = ltrim($pattern);
+        $closingDelimiter = match ($pattern[0]) {
+            '(' => ')',
+            '[' => ']',
+            '{' => '}',
+            '<' => '>',
+            default => $pattern[0],
+        };
+        $closingDelimiterAt = strrpos($pattern, $closingDelimiter);
+        $body = substr($pattern, 1, (int) $closingDelimiterAt - 1);
+
+        if (! str_starts_with($body, '\A') || ! str_ends_with($body, '\z')) {
+            throw new InvalidArgumentException($message);
         }
     }
 
