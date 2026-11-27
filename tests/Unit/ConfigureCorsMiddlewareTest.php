@@ -27,35 +27,20 @@ function corsMiddlewareReturning(?array $resolvedOrigins): ConfigureCorsMiddlewa
 }
 
 /**
- * The CORS config HandleCors would read during the last request: the middleware puts
- * the configured lists back once the response is built.
+ * Captures the configuration HandleCors reads before the middleware restores it.
  *
- * @param  array<string, mixed>|null  $seenConfig
- * @return array<string, mixed>
- */
-function corsConfigDuringRequest(?array $seenConfig = null): array
-{
-    static $lastSeenConfig = [];
-
-    if ($seenConfig !== null) {
-        $lastSeenConfig = $seenConfig;
-    }
-
-    return $lastSeenConfig;
-}
-
-/**
  * @param  list<string|null>  $varyLines
+ * @param  array{origins: mixed, patterns: mixed}|null  $seenConfiguration
  */
-function corsMiddlewareResponse(ConfigureCorsMiddleware $middleware, array $varyLines = []): Response
+function corsMiddlewareResponse(ConfigureCorsMiddleware $middleware, array $varyLines = [], ?array &$seenConfiguration = null): Response
 {
     return $middleware->handle(
         Request::create('http://localhost/api/items'),
-        static function () use ($varyLines): Response {
-            corsConfigDuringRequest([
-                'cors.allowed_origins' => config('cors.allowed_origins'),
-                'cors.allowed_origins_patterns' => config('cors.allowed_origins_patterns'),
-            ]);
+        static function () use ($varyLines, &$seenConfiguration): Response {
+            $seenConfiguration = [
+                'origins' => config('cors.allowed_origins'),
+                'patterns' => config('cors.allowed_origins_patterns'),
+            ];
             $response = response('ok');
 
             foreach ($varyLines as $varyLine) {
@@ -76,9 +61,9 @@ it('drops non-string and duplicate resolver origins and keeps the list order', f
         'https://APP.example.com:443',
         'https://admin.example.com',
         'https://*.example.com',
-    ]));
+    ]), seenConfiguration: $seenConfiguration);
 
-    expect(corsConfigDuringRequest()['cors.allowed_origins'])->toBe([
+    expect($seenConfiguration['origins'])->toBe([
         'https://app.example.com',
         'https://admin.example.com',
         'https://*.example.com',
@@ -88,9 +73,9 @@ it('drops non-string and duplicate resolver origins and keeps the list order', f
 it('treats a truthy non-boolean supports_credentials as credentialed', function (): void {
     config()->set('cors.supports_credentials', 1);
 
-    corsMiddlewareResponse(corsMiddlewareReturning(['https://*', 'https://app.example.com']));
+    corsMiddlewareResponse(corsMiddlewareReturning(['https://*', 'https://app.example.com']), seenConfiguration: $seenConfiguration);
 
-    expect(corsConfigDuringRequest()['cors.allowed_origins'])->toBe(['https://app.example.com']);
+    expect($seenConfiguration['origins'])->toBe(['https://app.example.com']);
 });
 
 it('re-normalises configured origins on credentialed requests without a resolver override', function (): void {
@@ -98,10 +83,10 @@ it('re-normalises configured origins on credentialed requests without a resolver
     config()->set('cors.allowed_origins', ['*', 'https://APP.example.com', 'javascript:alert(1)']);
     config()->set('cors.allowed_origins_patterns', ['#.*#']);
 
-    $response = corsMiddlewareResponse(corsMiddlewareReturning(null), ['Accept']);
+    $response = corsMiddlewareResponse(corsMiddlewareReturning(null), ['Accept'], $seenConfiguration);
 
-    expect(corsConfigDuringRequest()['cors.allowed_origins'])->toBe(['https://app.example.com'])
-        ->and(corsConfigDuringRequest()['cors.allowed_origins_patterns'])->toBe([])
+    expect($seenConfiguration['origins'])->toBe(['https://app.example.com'])
+        ->and($seenConfiguration['patterns'])->toBe([])
         ->and($response->headers->all('vary'))->toBe(['Accept']);
 });
 
@@ -110,10 +95,10 @@ it('leaves non-credentialed config alone when the resolver does not override', f
     config()->set('cors.allowed_origins', ['*']);
     config()->set('cors.allowed_origins_patterns', ['#^https://app\.example\.com$#']);
 
-    corsMiddlewareResponse(corsMiddlewareReturning(null));
+    corsMiddlewareResponse(corsMiddlewareReturning(null), seenConfiguration: $seenConfiguration);
 
-    expect(corsConfigDuringRequest()['cors.allowed_origins'])->toBe(['*'])
-        ->and(corsConfigDuringRequest()['cors.allowed_origins_patterns'])->toBe(['#^https://app\.example\.com$#']);
+    expect($seenConfiguration['origins'])->toBe(['*'])
+        ->and($seenConfiguration['patterns'])->toBe(['#^https://app\.example\.com$#']);
 });
 
 it('merges Origin into every Vary line without losing or duplicating tokens', function (array $varyLines, string $expectedVary): void {
@@ -133,7 +118,7 @@ it('merges Origin into every Vary line without losing or duplicating tokens', fu
 ]);
 
 it('never carries one request\'s origins into the next request of the same process', function (): void {
-    // A long-running worker (Octane, RoadRunner, FrankenPHP) keeps the config between requests.
+    // Reuse the same configuration repository across requests to model a persistent worker.
     config([
         'cors.supports_credentials' => true,
         'cors.allowed_origins' => ['https://public.example'],

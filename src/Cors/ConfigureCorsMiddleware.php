@@ -32,8 +32,8 @@ final class ConfigureCorsMiddleware
      */
     public function handle(Request $request, Closure $next): Response
     {
-        // A long-running worker (Octane, RoadRunner, FrankenPHP) keeps the config between
-        // requests: without the restore, one request's origins would answer the next one.
+        // Workers with a shared configuration keep it between requests. Restore the
+        // configured lists so the next request starts with its own origins.
         $originalOrigins = config('cors.allowed_origins');
         $originalOriginPatterns = config('cors.allowed_origins_patterns');
 
