@@ -2,13 +2,17 @@
 
 declare(strict_types=1);
 
+use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Auth\AuthenticationException;
 use Illuminate\Contracts\Http\Kernel;
 use Illuminate\Foundation\Http\Middleware\PreventRequestsDuringMaintenance;
 use Illuminate\Http\Middleware\TrustProxies;
 use Illuminate\Http\Request;
+use Illuminate\Session\TokenMismatchException;
 use Illuminate\Support\Facades\Context;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Route;
+use Illuminate\Validation\ValidationException;
 use Qiick\HttpBasics\Contracts\IdGenerator;
 use Qiick\HttpBasics\Contracts\TrustedProxyDetector;
 use Qiick\HttpBasics\RequestId\AssignRequestIdMiddleware;
@@ -18,6 +22,7 @@ use Qiick\HttpBasics\RequestId\RequestIdResolver;
 use Qiick\HttpBasics\Testing\AlwaysTrustedProxyDetector;
 use Qiick\HttpBasics\Testing\FixedIdGenerator;
 use Qiick\HttpBasics\Testing\NeverTrustedProxyDetector;
+use Symfony\Component\HttpKernel\Exception\TooManyRequestsHttpException;
 
 use function Qiick\HttpBasics\Testing\assertRequestIdEchoed;
 
@@ -79,6 +84,22 @@ it('carries a generated id on unmatched routes when middleware is global prepend
     $response->assertNotFound();
     assertRequestIdEchoed($response->baseResponse, 'mw-generated-id');
 });
+
+it('H5 carries the id across authentication, authorization, session, validation and throttling errors', function (int $status, Closure $makeException): void {
+    $this->app->make(Kernel::class)->prependMiddleware(AssignRequestIdMiddleware::class);
+    Route::get('/http-error', static fn () => throw $makeException());
+
+    $response = $this->getJson('/http-error');
+
+    $response->assertStatus($status);
+    assertRequestIdEchoed($response->baseResponse, 'mw-generated-id');
+})->with([
+    'unauthenticated' => [401, static fn () => new AuthenticationException],
+    'forbidden' => [403, static fn () => new AuthorizationException],
+    'expired session' => [419, static fn () => new TokenMismatchException],
+    'validation' => [422, static fn () => ValidationException::withMessages(['name' => 'Name is required.'])],
+    'throttled' => [429, static fn () => new TooManyRequestsHttpException],
+]);
 
 it('carries the id on 405 Method Not Allowed when middleware is global prepend', function (): void {
     $this->app->make(Kernel::class)->prependMiddleware(AssignRequestIdMiddleware::class);
