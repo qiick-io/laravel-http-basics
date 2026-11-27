@@ -10,6 +10,15 @@ use Qiick\HttpBasics\Idempotency\ReplayableResponse;
 use Qiick\HttpBasics\Testing\FixedClock;
 use Qiick\HttpBasics\Testing\InMemoryIdempotencyStore;
 
+it('advances or rewinds the test clock by a signed second count', function (int $seconds): void {
+    $initialTime = new DateTimeImmutable('2026-01-01T00:00:00Z');
+    $clock = new FixedClock($initialTime);
+
+    $clock->advance($seconds);
+
+    expect($clock->now()->getTimestamp())->toBe($initialTime->getTimestamp() + $seconds);
+})->with([5, 0, -5]);
+
 it('replays completed records with the same fingerprint', function (): void {
     $store = new InMemoryIdempotencyStore(lockTtlSeconds: 30, staleAfterSeconds: 5);
     $scope = new IdempotencyScope('bucket-a', 'POST', '/items');

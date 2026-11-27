@@ -4,10 +4,15 @@ declare(strict_types=1);
 
 use Illuminate\Http\Request;
 use Qiick\HttpBasics\Locale\LocaleNegotiator;
+use Qiick\HttpBasics\Locale\LocaleResolution;
 use Qiick\HttpBasics\Locale\LocaleSource;
 use Qiick\HttpBasics\Locale\MachineDoorClassifier;
 use Qiick\HttpBasics\Testing\ArraySupportedLocales;
 use Qiick\HttpBasics\Testing\FixedDefaultLocaleResolver;
+
+it('defaults a locale resolution to having read no Accept-Language header', function (): void {
+    expect((new LocaleResolution('en', LocaleSource::Fallback))->didReadAcceptLanguage)->toBeFalse();
+});
 
 function makeNegotiator(
     array $supported = ['en', 'de', 'fr'],

@@ -18,10 +18,6 @@ final readonly class MachineDoorClassifier
 
     public function isMachineDoor(Request $request): bool
     {
-        if ($this->patterns === []) {
-            return false;
-        }
-
         return $request->is(...$this->patterns);
     }
 }

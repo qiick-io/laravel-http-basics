@@ -10,8 +10,11 @@ namespace Qiick\HttpBasics\Security;
  */
 final readonly class SecurityHeadersPolicy
 {
+    /** @var list<string> */
+    public array $machineDoorPatterns;
+
     /**
-     * @param  list<string>  $machineDoorPatterns
+     * @param  list<string>|null  $machineDoorPatterns  Null uses the default machine routes.
      */
     public function __construct(
         public bool $enabled = true,
@@ -26,8 +29,10 @@ final readonly class SecurityHeadersPolicy
         public bool $hstsIncludeSubdomains = false,
         public bool $hstsPreload = false,
         public bool $baselineOnMachineDoors = true,
-        public array $machineDoorPatterns = ['api/*', 'mcp', 'mcp/*'],
+        ?array $machineDoorPatterns = null,
         // A per-request CSP nonce, handed to Vite before the handler renders (S2).
         public bool $cspNonce = false,
-    ) {}
+    ) {
+        $this->machineDoorPatterns = $machineDoorPatterns ?? ['api/*', 'mcp', 'mcp/*'];
+    }
 }

@@ -29,6 +29,9 @@ abstract class PackageTestCase extends TestCase
     protected function defineEnvironment($app): void
     {
         $app['config']->set('app.key', 'base64:'.base64_encode(random_bytes(32)));
+        // Parallel workers share the fixture directory, so maintenance state must stay in memory.
+        $app['config']->set('app.maintenance.driver', 'cache');
+        $app['config']->set('app.maintenance.store', 'array');
 
         $connection = getenv('DB_CONNECTION');
 

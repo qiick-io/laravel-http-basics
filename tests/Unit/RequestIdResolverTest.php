@@ -150,6 +150,22 @@ it('falls back to hidden context keys in current() when visible is absent', func
         ->and($current?->value)->toBe('hidden-only-id');
 });
 
+it('prefers a non-empty visible request id and ignores empty context values', function (): void {
+    $resolver = makeResolver();
+    Context::addHidden('http_basics.request_id', 'legacy-request-id');
+    Context::add(RequestIdResolver::VISIBLE_CONTEXT_KEY, 'visible-request-id');
+
+    expect($resolver->current()?->value)->toBe('visible-request-id');
+
+    Context::add(RequestIdResolver::VISIBLE_CONTEXT_KEY, '');
+
+    expect($resolver->current()?->value)->toBe('legacy-request-id');
+
+    Context::addHidden('http_basics.request_id', '');
+
+    expect($resolver->current())->toBeNull();
+});
+
 it('uses the first matching hidden key when several are configured', function (): void {
     $resolver = new RequestIdResolver(
         new FixedIdGenerator('generated-fixed-id'),
