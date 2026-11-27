@@ -8,6 +8,10 @@
 
 # qiick/laravel-http-basics
 
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/qiick-io/laravel-http-basics/badge)](https://scorecard.dev/viewer/?uri=github.com/qiick-io/laravel-http-basics)
+
+PHPStan at `max` and the existing CI checks cover PHP. CodeQL covers GitHub Actions and JavaScript/TypeScript.
+
 > **The first beta is for product integration and testing.**
 
 Shared HTTP runtime for qiick Laravel products: trusted `X-Request-Id`,
