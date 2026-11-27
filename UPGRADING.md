@@ -4,6 +4,68 @@ This package is **pre-release** (`0.x`). Breaking changes are allowed between
 minor versions while the major is `0`, and each break is recorded here before a
 tagged release.
 
+## First beta
+
+Install the published beta from Packagist with its exact prerelease constraint.
+Commit the resulting Composer lock file and keep the product's minimum stability
+at stable. Publish `http-basics-config` to manage the package values in the product.
+Run `php artisan http-basics:check` as a preflight after config caching and any
+product-owned migrations.
+
+### Product wiring
+
+1. In `bootstrap/app.php`, prepend `AssignRequestIdMiddleware` outermost
+   and prepend `SetSecurityHeadersMiddleware`. Keep the product's trusted proxy
+   configuration and select which hops can supply request IDs. Set any hidden
+   Context aliases and opt in to outbound propagation only for approved hosts.
+2. Put `SetLocaleMiddleware` after cookies and session in the web group and
+   apply it to machine doors. Bind `SupportedLocales` and
+   `DefaultLocaleResolver` when the product derives them from its own settings.
+   Choose global registration for machine-door errors that occur before routing
+   and verify web cookie and session locale behavior in the resulting stack.
+3. Carry the existing CSP, framing, permissions, referrer and HSTS policy into
+   `config/http-basics.php`. Keep product CSP directives through `CspPolicyBuilder`
+   where needed. If enforcing a nonce policy, share the same request nonce with
+   Vite and inline scripts. For public API CORS, merge the header catalogs into
+   `config/cors.php`, list credentialed origins and headers explicitly, and
+   put `ConfigureCorsMiddleware` before Laravel's `HandleCors` for dynamic
+   origins. Preserve any product API key origin enforcement.
+4. Keep the product's error status and `error` codes. Extend machine-door JSON
+   rendering and add `ErrorCodeAugmentor` where the fleet envelope is the
+   contract. Preserve any product code resolver that maps additional exceptions.
+5. Add `HandleIdempotencyMiddleware` to selected write routes after auth,
+   permission, throttle and cost checks. Bind `CredentialBucketResolver` to
+   product-owned identity and tenant scope. Set trusted credential and
+   organisation UUID attributes for database claims. Keep secret-issuing routes
+   `replayable=false`. Use a shared lock-capable cache and choose a record TTL
+   greater than the lock TTL. Bound handler runtime below the lock TTL.
+6. Use the database adapter for subject-specific or organisation-scoped erasure.
+   Publish the initial migration to the product, apply it, and run the scheduler
+   with a shared cache. Register `HttpBasicsEraser` in the product's resumable
+   erasure orchestrator after access revocation and in-flight request drainage.
+   Pass the product's user ID, public ID and credential UUIDs, and the organisation
+   UUID for scoped erasure. Add the C17 conformance case and document retained
+   fields and TTL in the product privacy inventory. Cache-only claims expire
+   through TTL and support global retention reporting.
+7. Run product fixtures for CSP and assets, CORS preflight and sequential origin
+   isolation, error status and locale, and idempotency concurrency, replay and
+   secret responses. Where adopting uploads, exercise the product's accepted
+   types, archive policy and WebP MIME and signature checks. Record green CI
+   and the checklist observation window in Excubia and the second product.
+
+### Product entry points
+
+- **Excubia.** Replace the product's `SecurityHeadersMiddleware` and
+  `SetLocaleMiddleware` registrations in `bootstrap/app.php`. Transfer
+  `EXCUBIA_HSTS_MAX_AGE` to `HTTP_BASICS_HSTS_MAX_AGE` and use
+  `HTTP_BASICS_CSP_MODE=off` to match the existing web baseline. Verify the
+  branding route's own CSP, the Vite assets and the inline appearance script
+  before enabling a stronger policy.
+- **Instituta.** Replace the product's `SetSecurityHeadersMiddleware` and
+  `SetLocaleMiddleware` registrations in `bootstrap/app.php`. Preserve the
+  `AddContractErrorCodeMiddleware` contract for the public API and verify
+  JSON rendering for the MCP doors the product enables.
+
 ## From 0.x toward 1.0.0
 
 This section documents what changes for applications adopting the package or
@@ -42,8 +104,9 @@ Notable configuration changes and requirements:
     connection. If unset, it falls back to the application default connection.
   - The package now schedules database pruning daily. Set `idempotency.schedule`
     to `false` if you keep an existing application-level schedule.
-  - `max_handler_seconds` must be strictly less than `lock_ttl_seconds` to guarantee
-    locks do not expire while handlers execute normally.
+  - `max_handler_seconds` limits replay eligibility after the handler returns and
+    must be strictly less than `lock_ttl_seconds`. Set the product's runtime timeout
+    below the lock TTL and keep the write itself idempotent.
   - On machine doors, request fingerprinting now includes the negotiated response
     locale (rather than the raw `Accept-Language` header), ensuring equivalent language
     negotiations match the same idempotency claim.
