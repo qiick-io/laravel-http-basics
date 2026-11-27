@@ -200,19 +200,19 @@ jobs:
         database: ${{ fromJSON(needs.package-matrix.outputs.databases) }}
     services:
       database:
-        image: ${{ needs.package-matrix.outputs.run-databases == 'true' && matrix.database.image || '' }}
+        image: ${{ (needs.package-matrix.outputs.run-databases == 'true' || contains(needs.package-matrix.outputs.mutate-classes, 'src/Erasure/')) && matrix.database.image || '' }}
         env: ${{ matrix.database.environment }}
         ports:
           - ${{ matrix.database.port }}:${{ matrix.database.port }}
         options: ${{ matrix.database.options }}
     steps:
       - name: Checkout
-        if: needs.package-matrix.outputs.run-databases == 'true'
+        if: &run-server-database needs.package-matrix.outputs.run-databases == 'true' || contains(needs.package-matrix.outputs.mutate-classes, 'src/Erasure/')
         # actions/checkout@v4.2.2
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Setup PHP
-        if: needs.package-matrix.outputs.run-databases == 'true'
+        if: *run-server-database
         # shivammathur/setup-php@2.40.0
         uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
         with:
@@ -222,7 +222,7 @@ jobs:
           tools: composer:v2
 
       - name: Install dependencies
-        if: needs.package-matrix.outputs.run-databases == 'true'
+        if: *run-server-database
         run: |
           composer require --dev --no-interaction --no-update "orchestra/testbench:^10.0"
           composer require --no-interaction --no-update \
@@ -234,7 +234,7 @@ jobs:
           composer update --no-interaction --prefer-dist --with-all-dependencies
 
       - name: Pest (database store)
-        if: needs.package-matrix.outputs.run-databases == 'true'
+        if: *run-server-database
         env: &database-test-env
           DB_CONNECTION: ${{ matrix.database.connection }}
           DB_DATABASE: qiick_package
@@ -245,7 +245,7 @@ jobs:
         run: vendor/bin/pest --filter='DatabaseIdempotency|ForeignKeyIndexTest'
 
       - name: Pest (erasure on the server database)
-        if: needs.package-matrix.outputs.run-databases == 'true'
+        if: *run-server-database
         env: *database-test-env
         run: vendor/bin/pest tests/Erasure --fail-on-empty-test-suite
 
@@ -334,7 +334,7 @@ jobs:
           coverage: none
           tools: composer:v2
       - run: composer update --no-interaction --no-install --prefer-dist
-      - run: composer audit --no-interaction
+      - run: composer audit --locked --no-interaction
 
   php-quality:
     uses: qiick-io/app-ui/.github/workflows/php-quality.yml@0d97ae1429a856411c76e6de1ec258cae0eabab6 # v0.15.0

@@ -12,6 +12,10 @@ use Qiick\HttpBasics\Locale\MachineDoorClassifier;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 use Symfony\Component\HttpKernel\Exception\TooManyRequestsHttpException;
 
+it('classifies no request as a machine door when the pattern list is empty', function (): void {
+    expect((new MachineDoorClassifier([]))->isMachineDoor(Request::create('/api/items')))->toBeFalse();
+});
+
 it('adds error only on JSON responses with status at least 400', function (): void {
     $augmentor = new ErrorCodeAugmentor;
 

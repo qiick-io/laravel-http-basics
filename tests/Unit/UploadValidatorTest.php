@@ -11,6 +11,7 @@ use Qiick\HttpBasics\Uploads\HardFloor;
 use Qiick\HttpBasics\Uploads\MalwareScanner;
 use Qiick\HttpBasics\Uploads\MismatchMode;
 use Qiick\HttpBasics\Uploads\NullMalwareScanner;
+use Qiick\HttpBasics\Uploads\SafeUpload;
 use Qiick\HttpBasics\Uploads\ScanResult;
 use Qiick\HttpBasics\Uploads\UploadPolicy;
 use Qiick\HttpBasics\Uploads\UploadPolicyResolver;
@@ -100,6 +101,27 @@ it('validates a png path and marks the scan as not_scanned', function (): void {
         ->and($validated->mimeDetector)->toBe('finfo');
 
     @unlink($png);
+});
+
+it('validates uploaded files through the public Laravel rule', function (): void {
+    $rule = new SafeUpload(app(UploadValidator::class), 'files');
+    $messages = [];
+    $fail = static function (string $message) use (&$messages): void {
+        $messages[] = $message;
+    };
+    $image = UploadedFile::fake()->createWithContent(
+        'portrait.png',
+        (string) base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='),
+    );
+
+    $rule->validate('portrait', $image, $fail);
+    expect($messages)->toBe([]);
+
+    $rule->validate('portrait', 'portrait.png', $fail);
+    $rule->validate('portrait', UploadedFile::fake()->createWithContent('portrait.png', 'plain text'), $fail);
+
+    expect($messages)->toHaveCount(2)
+        ->and($messages[0])->toBe('The :attribute must be an uploaded file.');
 });
 
 it('rejects magic mismatches and oversize files', function (): void {

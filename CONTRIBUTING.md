@@ -12,7 +12,7 @@ Thanks for helping. A few rules keep the codebase consistent:
    touch Packagist.
 5. Before pushing run `composer test` (Pest), `composer lint` (Pint) and
    `composer analyse` (PHPStan level max). `bash scripts/mutate-per-class.sh`
-   measures each PHP source file and enforces 95% where Pest generates mutants.
+   measures each PHP class file and enforces 95% where Pest generates mutants.
    Pull requests measure changed production files. Full CI runs measure the entire
    source tree, including package test fakes.
 6. Red-first: add a failing test for the property, then the implementation.

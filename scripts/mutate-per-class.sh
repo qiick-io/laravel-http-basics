@@ -17,7 +17,8 @@ fi
 
 case "$scope" in
   all)
-    candidates="$(find src -name '*.php' -type f | LC_ALL=C sort)"
+    # The Composer-loaded testing helpers are free functions. This gate measures classes.
+    candidates="$(find src -name '*.php' -type f ! -path 'src/Testing/functions.php' | LC_ALL=C sort)"
     if [[ -z "$candidates" ]]; then
       echo 'No PHP source files found for the full mutation run.'
       exit 1
@@ -63,8 +64,8 @@ while IFS= read -r source_file; do
 
   echo "::group::Mutate ${source_file}"
   if ! vendor/bin/pest --exclude-group=http-server \
-    --mutate --path="$source_file" --min="$minimum_score" \
-    --ignore-min-score-on-zero-mutations --parallel --processes=2 \
+    --mutate --everything --path="$source_file" --min="$minimum_score" \
+    --ignore-min-score-on-zero-mutations \
     --no-progress --colors=never | tee "$result"; then
     failed=1
   fi

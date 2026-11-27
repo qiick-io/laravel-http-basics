@@ -9,6 +9,11 @@ use Qiick\HttpBasics\Security\SecurityHeaderBuilder;
 use Qiick\HttpBasics\Security\SecurityHeadersPolicy;
 use Symfony\Component\HttpFoundation\Response;
 
+it('preserves the default machine doors and honors an explicitly empty list', function (): void {
+    expect((new SecurityHeadersPolicy)->machineDoorPatterns)->toBe(['api/*', 'mcp', 'mcp/*'])
+        ->and((new SecurityHeadersPolicy(machineDoorPatterns: []))->machineDoorPatterns)->toBe([]);
+});
+
 function makeSecurityBuilder(?CspPolicyBuilder $csp = null): SecurityHeaderBuilder
 {
     $csp ??= new class implements CspPolicyBuilder
