@@ -31,6 +31,11 @@ return [
             'jpeg' => ['FFD8FF'],
             'png' => ['89504E470D0A1A0A'],
             'gif' => ['474946383761', '474946383961'],
+            /*
+             * RIFF: a prefix check only. The `WEBP` tag at offset 8 is left to the MIME
+             * sniff, which must still say image/webp.
+             */
+            'webp' => ['52494646'],
         ],
         /*
          * @var array<string, array<string, mixed>>

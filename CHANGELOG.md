@@ -88,6 +88,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the normalized media type. Retained replayable records from untagged builds fail
   closed with `idempotency_payload_mismatch` (422) until they expire.
 
+- Uploads: the shipped magic floor checks a `webp` upload for its `RIFF` signature, so a
+  file named `.webp` with other bytes is refused (`upload_content_mismatch`).
+
 - Idempotency: `require_json` accepts `application/<name>+json` only with a non-empty RFC
   6838 name before `+json` (`application/+json` is now 415), and the English and Italian
   415 messages name both accepted media types.

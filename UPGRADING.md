@@ -56,6 +56,9 @@ Notable configuration changes and requirements:
     options throw an exception at runtime.
 
 - **Uploads (`http-basics.uploads`):**
+  - If your published config predates the WebP signature, add
+    `'webp' => ['52494646']` to `uploads.magic_signatures`, retaining your other
+    entries. The validator also requires the detected MIME type to be `image/webp`.
   - `uploads.contexts` defines validation contexts. Archives (`.zip`, `.docx`, etc.)
     are refused by default unless `allows_archives: true` is explicitly enabled for
     that context.
