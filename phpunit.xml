@@ -11,6 +11,7 @@
             <directory>tests/Feature</directory>
             <directory>tests/Unit</directory>
             <directory>tests/Http</directory>
+            <directory>tests/Erasure</directory>
         </testsuite>
     </testsuites>
     <source>

@@ -118,6 +118,44 @@ it('leaves unowned rows out of an erasure report even when they share the organi
         ->and(DB::table('idempotency_records')->where('key_hash', hash('sha256', 'signup-key'))->value('body'))->toBe('person@example.test');
 })->with([HttpBasicsEraser::DELETE, HttpBasicsEraser::ANONYMISE]);
 
+it('anonymises completed and pending credential claims into detached rows with their original expiry', function (): void {
+    config()->set('http-basics.idempotency.store', 'database');
+    $store = databaseIdempotencyStore();
+    $now = new DateTimeImmutable;
+    $scope = new IdempotencyScope('service-account', 'POST', '/api/items');
+    $credentialPublicId = '019a5f6e-8c1b-7d2e-9f3a-4b5c6d7e8f90';
+    $context = new IdempotencyContext(IdempotencyKeyFormat::SfString, credentialPublicId: $credentialPublicId);
+    $completed = $store->claim($scope, 'completed', 'fingerprint', $now, $context);
+    $store->complete($completed, new ReplayableResponse(201, ['content-type' => 'text/plain'], 'recorded response'), $now);
+    $store->claim($scope, 'pending', 'fingerprint', $now, $context);
+    $expirationTimes = DB::table('idempotency_records')->orderBy('id')->pluck('expires_at')->all();
+
+    $report = app(HttpBasicsEraser::class)->erase(
+        '123456',
+        (string) Str::uuid(),
+        HttpBasicsEraser::ANONYMISE,
+        publicIds: ['current' => strtoupper($credentialPublicId)],
+    );
+
+    expect($report->changed())->toBe(2)
+        ->and(DB::table('idempotency_records')->orderBy('id')->pluck('expires_at')->all())->toBe($expirationTimes);
+
+    foreach (DB::table('idempotency_records')->get() as $row) {
+        expect((array) $row)->toMatchArray([
+            'bucket' => null,
+            'credential_public_id' => null,
+            'path' => '',
+            'key_hash' => '',
+            'fingerprint' => '',
+            'lease' => '',
+            'status' => 'completed',
+            'status_code' => null,
+            'headers_json' => null,
+            'body' => null,
+        ]);
+    }
+});
+
 it('fails clearly when trusted middleware supplies a malformed credential public ID', function (mixed $credentialValue): void {
     app()->instance(CredentialBucketResolver::class, new FakeCredentialBucketResolver('opaque-bucket'));
     $request = Request::create('/api/items', 'POST', server: [

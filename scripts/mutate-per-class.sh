@@ -1,224 +1,85 @@
 #!/usr/bin/env bash
-# Enforce pest --mutate --min=95 per design §8 class (no --covered-only).
-# One invocation per class so a weak class cannot hide behind a high overall score.
-# Pest's --class is a prefix match and --ignore takes comma-separated filesystem
-# paths (repeated --ignore flags keep only the last), so we ignore every other
-# target file when mutating one class.
-# Never `|| true`.
+# Keep one Pest score per source file so a high aggregate cannot hide a weak class.
+# Target exact paths because Pest matches --class by prefix.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-cd "$ROOT"
+cd "$(dirname "$0")/.."
 
-# Parallel arrays: class FQCN and its source file.
-CLASSES=(
-  'Qiick\HttpBasics\RequestId\RequestId'
-  'Qiick\HttpBasics\RequestId\RequestIdResolver'
-  'Qiick\HttpBasics\RequestId\RequestIdPropagator'
-  'Qiick\HttpBasics\RequestId\AssignRequestIdMiddleware'
-  'Qiick\HttpBasics\RequestId\ConfigTrustedProxyDetector'
-  'Qiick\HttpBasics\Locale\LocaleNegotiator'
-  'Qiick\HttpBasics\Security\SecurityHeaderBuilder'
-  'Qiick\HttpBasics\Idempotency\Fingerprinter'
-  'Qiick\HttpBasics\Idempotency\AnonymousBucketResolver'
-  'Qiick\HttpBasics\Idempotency\CacheIdempotencyStore'
-  'Qiick\HttpBasics\Idempotency\DatabaseIdempotencyStore'
-  'Qiick\HttpBasics\Idempotency\HandleIdempotencyMiddleware'
-  'Qiick\HttpBasics\Idempotency\IdempotencyRejection'
-  'Qiick\HttpBasics\Idempotency\ReplayHeaderSanitizer'
-  'Qiick\HttpBasics\Idempotency\IdempotencyContext'
-  'Qiick\HttpBasics\Idempotency\SealedKeyMarker'
-  'Qiick\HttpBasics\Uploads\HardFloor'
-  'Qiick\HttpBasics\Uploads\FileNameSanitizer'
-  'Qiick\HttpBasics\Uploads\UploadValidator'
-  'Qiick\HttpBasics\Uploads\ConfigUploadPolicyResolver'
-  'Qiick\HttpBasics\Uploads\DetectedMimeExtension'
-  'Qiick\HttpBasics\Uploads\ZipLayoutVerifier'
-  'Qiick\HttpBasics\Errors\ProblemDetailsErrorRenderer'
-  'Qiick\HttpBasics\Errors\ExceptionErrorCodeAugmenter'
-  'Qiick\HttpBasics\Cors\CorsConfigValidator'
-  'Qiick\HttpBasics\Cors\ConfigureCorsMiddleware'
-  'Qiick\HttpBasics\Cors\OriginNormalizer'
-  'Qiick\HttpBasics\Errors\ErrorCodeAugmentor'
-  'Qiick\HttpBasics\Errors\FrameworkErrorCodeResolver'
-  'Qiick\HttpBasics\Idempotency\FleetErrorRenderer'
-  'Qiick\HttpBasics\Locale\SetLocaleMiddleware'
-  'Qiick\HttpBasics\Idempotency\IdempotencyKeyValidator'
-  'Qiick\HttpBasics\Idempotency\IdempotencyRecord'
-  'Qiick\HttpBasics\Console\PruneIdempotencyRecordsCommand'
-  'Qiick\HttpBasics\Security\ViteFriendlyCspPolicyBuilder'
-  'Qiick\HttpBasics\Testing\InMemoryIdempotencyStore'
-  'Qiick\HttpBasics\Laravel\HttpBasicsServiceProvider'
-  'Qiick\HttpBasics\Config\PackageConfig'
-  'Qiick\HttpBasics\Security\SetSecurityHeadersMiddleware'
-  'Qiick\HttpBasics\Security\RequestCspNonceProvider'
-  'Qiick\HttpBasics\Http\VaryHeaderMerger'
-)
+scope="${MUTATE_SCOPE:-all}"
+shard="${MUTATE_SHARD:-1}"
+shard_count="${MUTATE_SHARDS:-1}"
+minimum_score="${MUTATE_MIN:-95}"
 
-CLASS_FILES=(
-  'src/RequestId/RequestId.php'
-  'src/RequestId/RequestIdResolver.php'
-  'src/RequestId/RequestIdPropagator.php'
-  'src/RequestId/AssignRequestIdMiddleware.php'
-  'src/RequestId/ConfigTrustedProxyDetector.php'
-  'src/Locale/LocaleNegotiator.php'
-  'src/Security/SecurityHeaderBuilder.php'
-  'src/Idempotency/Fingerprinter.php'
-  'src/Idempotency/AnonymousBucketResolver.php'
-  'src/Idempotency/CacheIdempotencyStore.php'
-  'src/Idempotency/DatabaseIdempotencyStore.php'
-  'src/Idempotency/HandleIdempotencyMiddleware.php'
-  'src/Idempotency/IdempotencyRejection.php'
-  'src/Idempotency/ReplayHeaderSanitizer.php'
-  'src/Idempotency/IdempotencyContext.php'
-  'src/Idempotency/SealedKeyMarker.php'
-  'src/Uploads/HardFloor.php'
-  'src/Uploads/FileNameSanitizer.php'
-  'src/Uploads/UploadValidator.php'
-  'src/Uploads/ConfigUploadPolicyResolver.php'
-  'src/Uploads/DetectedMimeExtension.php'
-  'src/Uploads/ZipLayoutVerifier.php'
-  'src/Errors/ProblemDetailsErrorRenderer.php'
-  'src/Errors/ExceptionErrorCodeAugmenter.php'
-  'src/Cors/CorsConfigValidator.php'
-  'src/Cors/ConfigureCorsMiddleware.php'
-  'src/Cors/OriginNormalizer.php'
-  'src/Errors/ErrorCodeAugmentor.php'
-  'src/Errors/FrameworkErrorCodeResolver.php'
-  'src/Idempotency/FleetErrorRenderer.php'
-  'src/Locale/SetLocaleMiddleware.php'
-  'src/Idempotency/IdempotencyKeyValidator.php'
-  'src/Idempotency/IdempotencyRecord.php'
-  'src/Console/PruneIdempotencyRecordsCommand.php'
-  'src/Security/ViteFriendlyCspPolicyBuilder.php'
-  'src/Testing/InMemoryIdempotencyStore.php'
-  'src/Laravel/HttpBasicsServiceProvider.php'
-  'src/Config/PackageConfig.php'
-  'src/Security/SetSecurityHeadersMiddleware.php'
-  'src/Security/RequestCspNonceProvider.php'
-  'src/Http/VaryHeaderMerger.php'
-)
-
-# Extra files under RequestId\ / Locale\ / Security\ / Idempotency\ / Cors\ / Uploads\ prefixes that are not mutation targets.
-SIBLING_FILES=(
-  'src/RequestId/RequestIdAcceptFrom.php'
-  'src/RequestId/RequestIdSource.php'
-  'src/RequestId/UuidIdGenerator.php'
-  'src/Locale/ConfigDefaultLocaleResolver.php'
-  'src/Locale/ConfigSupportedLocales.php'
-  'src/Locale/MachineDoorClassifier.php'
-  'src/Security/CspMode.php'
-  'src/Security/SecurityHeadersPolicy.php'
-  'src/Security/CspPolicyBuilder.php'
-  'src/Idempotency/ClaimOutcome.php'
-  'src/Idempotency/IdempotencyClaim.php'
-  'src/Idempotency/IdempotencyScope.php'
-  'src/Idempotency/ReplayableResponse.php'
-  'src/Errors/ErrorCode.php'
-  'src/Idempotency/IdempotencyKeyFormat.php'
-  'src/Idempotency/IdempotencyStoreException.php'
-  'src/Idempotency/PayloadTooLargeException.php'
-  'src/Idempotency/NullCredentialBucketResolver.php'
-  'src/Uploads/ArrayUploadPolicy.php'
-  'src/Uploads/MismatchMode.php'
-  'src/Uploads/MalwareScanner.php'
-  'src/Uploads/NullMalwareScanner.php'
-  'src/Uploads/SafeUpload.php'
-  'src/Uploads/ScanResult.php'
-  'src/Uploads/UploadPolicy.php'
-  'src/Uploads/UploadPolicyResolver.php'
-  'src/Uploads/UploadRejectedException.php'
-  'src/Uploads/ValidatedUpload.php'
-  'src/Cors/AllowedOriginsResolver.php'
-  'src/Cors/NullAllowedOriginsResolver.php'
-  'src/Cors/CorsHeaderCatalog.php'
-  'src/Contracts/CredentialBucketResolver.php'
-  'src/Contracts/IdempotencyStore.php'
-  'src/Contracts/ErrorRenderer.php'
-  'src/Errors/ErrorCodeResolver.php'
-  'src/Errors/ExceptionRespondBinder.php'
-  'src/Errors/MachineDoorJson.php'
-  'src/Testing/FixedClock.php'
-  'src/Testing/FakeCredentialBucketResolver.php'
-  'src/Security/CspNonceProvider.php'
-)
-
-MIN="${MUTATE_MIN:-95}"
-
-# Sharding: MUTATE_SHARD of MUTATE_SHARDS (1-based) takes every class whose index
-# modulo the shard count matches, so CI can split the run across jobs. Default: all.
-SHARD="${MUTATE_SHARD:-1}"
-SHARDS="${MUTATE_SHARDS:-1}"
-MEASURED=0
-
-if [[ "${#CLASSES[@]}" -eq 0 ]]; then
-  echo "No mutation target classes yet (scaffold). Skipping."
-  exit 0
-fi
-
-FAILED=0
-declare -a TABLE_ROWS=()
-
-for index in "${!CLASSES[@]}"; do
-  if (( index % SHARDS != SHARD - 1 )); then
-    continue
-  fi
-
-  MEASURED=$((MEASURED + 1))
-  class="${CLASSES[$index]}"
-  target_file="${CLASS_FILES[$index]}"
-
-  echo "::group::mutate ${class}"
-  echo "==> mutate --class=${class} (min=${MIN}, no covered-only)"
-
-  ignore_files=()
-  for other_index in "${!CLASS_FILES[@]}"; do
-    other_file="${CLASS_FILES[$other_index]}"
-    if [[ "$other_file" != "$target_file" ]]; then
-      ignore_files+=("${other_file}")
-    fi
-  done
-  for sibling in "${SIBLING_FILES[@]}"; do
-    ignore_files+=("${sibling}")
-  done
-  ignore_csv="$(IFS=','; echo "${ignore_files[*]}")"
-
-  output="$(mktemp)"
-  set +e
-  vendor/bin/pest --mutate --min="${MIN}" --class="${class}" --ignore="${ignore_csv}" | tee "${output}"
-  status=${PIPESTATUS[0]}
-  set -e
-
-  # Strip ANSI before parsing — pest colours the Score line.
-  # Prefer grep/sed (available on GitHub-hosted runners); rg is not installed there.
-  score="$(sed $'s/\x1b\\[[0-9;]*m//g' "${output}" \
-    | grep -Eo 'Score:[[:space:]]+[0-9.]+%' \
-    | tail -1 \
-    | grep -Eo '[0-9.]+' \
-    | head -1 || true)"
-  if [[ -z "${score}" ]]; then
-    score='?'
-  fi
-  TABLE_ROWS+=("| \`${class}\` | ${score}% |")
-
-  if [[ "${status}" -ne 0 ]]; then
-    echo "::error::Mutation score below ${MIN}% for ${class}"
-    FAILED=1
-  fi
-  rm -f "${output}"
-  echo "::endgroup::"
-done
-
-echo "## Per-class mutation scores"
-echo "| Class | Score |"
-echo "| --- | --- |"
-for row in "${TABLE_ROWS[@]}"; do
-  echo "${row}"
-done
-
-if [[ "${FAILED}" -ne 0 ]]; then
-  echo "One or more classes scored below ${MIN}%."
+if ! [[ "$shard" =~ ^[1-9][0-9]*$ && "$shard_count" =~ ^[1-9][0-9]*$ ]] || (( shard > shard_count )); then
+  echo 'Invalid mutation shard.'
   exit 1
 fi
 
-echo "All ${MEASURED} classes of shard ${SHARD}/${SHARDS} scored >= ${MIN}%."
+case "$scope" in
+  all)
+    candidates="$(find src -name '*.php' -type f | LC_ALL=C sort)"
+    if [[ -z "$candidates" ]]; then
+      echo 'No PHP source files found for the full mutation run.'
+      exit 1
+    fi
+    ;;
+  changed)
+    candidates="$(php -r '
+      $paths = json_decode($argv[1], true, flags: JSON_THROW_ON_ERROR);
+      if (! is_array($paths) || ! array_is_list($paths)) {
+          throw new InvalidArgumentException("Mutation targets must be a JSON list.");
+      }
+      foreach ($paths as $path) {
+          if (! is_string($path) || preg_match("~\Asrc/(?:[A-Za-z0-9_]+/)*[A-Za-z0-9_]+\.php\z~", $path) !== 1 || ! is_file($path)) {
+              throw new InvalidArgumentException("A mutation target is outside the current source tree.");
+          }
+          echo $path, PHP_EOL;
+      }
+    ' "${MUTATE_CLASSES:-[]}")"
+    ;;
+  *)
+    echo 'MUTATE_SCOPE must be all or changed.'
+    exit 1
+    ;;
+esac
+
+if [[ -z "$candidates" ]]; then
+  echo 'No changed PHP source files to mutate.'
+  exit 0
+fi
+
+report="$(mktemp)"
+result="$(mktemp)"
+trap 'rm -f "$report" "$result"' EXIT
+
+file_number=0
+failed=0
+
+while IFS= read -r source_file; do
+  file_number=$((file_number + 1))
+  if (( (file_number - 1) % shard_count != shard - 1 )); then
+    continue
+  fi
+
+  echo "::group::Mutate ${source_file}"
+  if ! vendor/bin/pest --exclude-group=http-server \
+    --mutate --path="$source_file" --min="$minimum_score" \
+    --ignore-min-score-on-zero-mutations --parallel --processes=2 \
+    --no-progress --colors=never | tee "$result"; then
+    failed=1
+  fi
+
+  # No-mutation files (such as interfaces) still appear in the inventory.
+  score="$(awk '/Score:/ { score = $2 } /No mutations created[.]/ { score = "0 mutants" } END { print score }' "$result")"
+  if [[ -z "$score" ]]; then
+    failed=1
+    score='missing result'
+  fi
+
+  printf '| %s | %s |\n' "$source_file" "$score" >> "$report"
+  echo '::endgroup::'
+done <<< "$candidates"
+
+printf '%s\n' '## Per-class mutation scores' '| Source | Score |' '| --- | --- |'
+cat "$report"
+exit "$failed"

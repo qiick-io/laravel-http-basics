@@ -11,8 +11,10 @@ Thanks for helping. A few rules keep the codebase consistent:
    `develop` or `main` directly; never tag from a contributor branch; never
    touch Packagist.
 5. Before pushing run `composer test` (Pest), `composer lint` (Pint) and
-   `composer analyse` (PHPStan level max). Security-critical classes also need
-   `pest --mutate` coverage (design §8 mutation targets; per-class MSI ≥ 95%).
+   `composer analyse` (PHPStan level max). `bash scripts/mutate-per-class.sh`
+   measures each PHP source file and enforces 95% where Pest generates mutants.
+   Pull requests measure changed production files. Full CI runs measure the entire
+   source tree, including package test fakes.
 6. Red-first: add a failing test for the property, then the implementation.
    Tests are deterministic (injectable clock, fake store; no flaky wall clock).
    At least one CI job runs the middleware stack through real HTTP against a
