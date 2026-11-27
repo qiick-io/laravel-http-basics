@@ -9,6 +9,8 @@ use Illuminate\Contracts\Cache\Store;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Database\ConnectionInterface;
 use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Query\Builder;
+use Illuminate\Database\Query\Grammars\SQLiteGrammar;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -85,6 +87,15 @@ function databaseIdempotencyStore(
     );
 }
 
+it('uses the versioned cache namespace when rebuilding a stored claim key', function (): void {
+    $scope = new IdempotencyScope('user:123456', 'POST', '/api/items');
+    $keyHash = hash('sha256', 'request-key');
+    $expectedKey = 'http-basics:v1:user:123456:'.$keyHash;
+
+    expect($scope->cacheKey('request-key'))->toBe($expectedKey)
+        ->and(IdempotencyScope::cacheKeyFromHash('user:123456', $keyHash))->toBe($expectedKey);
+});
+
 it('leaves unowned rows out of an erasure report even when they share the organisation scope', function (string $mode): void {
     config()->set('http-basics.idempotency.store', 'database');
     $store = databaseIdempotencyStore();
@@ -154,6 +165,37 @@ it('anonymises completed and pending credential claims into detached rows with t
             'body' => null,
         ]);
     }
+});
+
+it('locks erasure batches during writes and leaves dry runs unlocked', function (): void {
+    config()->set('http-basics.idempotency.store', 'database');
+    $store = databaseIdempotencyStore();
+    $scope = new IdempotencyScope('user:123456', 'POST', '/api/items');
+    $store->claim($scope, 'request-key', 'fingerprint', new DateTimeImmutable, new IdempotencyContext(IdempotencyKeyFormat::SfString, userId: '123456'));
+    $userPublicId = (string) Str::uuid();
+    $eraser = app(HttpBasicsEraser::class);
+    $connection = DB::connection();
+
+    if ($connection->getDriverName() === 'sqlite') {
+        // SQLite serializes writers. Mark any lock request so the test can observe it.
+        $connection->setQueryGrammar(new class($connection) extends SQLiteGrammar
+        {
+            protected function compileLock(Builder $query, $value): string
+            {
+                return $value === true ? '/* for update */' : '';
+            }
+        });
+    }
+
+    $connection->enableQueryLog();
+    $eraser->erase('123456', $userPublicId, HttpBasicsEraser::DELETE, dryRun: true);
+    $firstDryRunQuery = strtolower($connection->getQueryLog()[0]['query']);
+    $connection->flushQueryLog();
+    $eraser->erase('123456', $userPublicId, HttpBasicsEraser::DELETE);
+    $firstWriteQuery = strtolower($connection->getQueryLog()[0]['query']);
+
+    expect($firstDryRunQuery)->toContain('limit 250')->not->toContain('for update')
+        ->and($firstWriteQuery)->toContain('limit 250', 'for update');
 });
 
 it('fails clearly when trusted middleware supplies a malformed credential public ID', function (mixed $credentialValue): void {

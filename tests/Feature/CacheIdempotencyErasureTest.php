@@ -45,6 +45,17 @@ it('dispatches cache-only erasure when the product has no database connection', 
     Event::assertDispatchedOnce(SubjectErasedEvent::class);
 });
 
+it('dispatches cache-only erasure outside a transaction without requiring a transaction manager', function (): void {
+    Event::fake([SubjectErasedEvent::class]);
+    $connection = clone DB::connection();
+    $connection->unsetTransactionManager();
+    $eraser = new HttpBasicsEraser(app(Dispatcher::class), new ArrayStore, 'array', 'idempotency_records', null, $connection);
+
+    $eraser->erase('123456', (string) Str::uuid(), HttpBasicsEraser::ANONYMISE);
+
+    Event::assertDispatchedOnce(SubjectErasedEvent::class);
+});
+
 it('reports cache-only retention without forgetting unrelated keys or falling back from organisation scope', function (): void {
     config()->set('http-basics.idempotency.cache_store', 'array');
     Event::fake([SubjectErasedEvent::class]);

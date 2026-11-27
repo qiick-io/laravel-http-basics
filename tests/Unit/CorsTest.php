@@ -12,9 +12,29 @@ use Qiick\HttpBasics\Cors\OriginNormalizer;
 use Qiick\HttpBasics\Laravel\HttpBasicsServiceProvider;
 
 it('exposes the fleet CORS header catalogues without wildcards', function (): void {
-    expect(CorsHeaderCatalog::exposedHeaders())->toContain('X-Request-Id', 'Idempotent-Replayed', 'Vary')
-        ->and(CorsHeaderCatalog::allowedRequestHeaders())->toContain('Idempotency-Key', 'Authorization')
-        ->and(CorsHeaderCatalog::exposedHeaders())->not->toContain('*');
+    expect(CorsHeaderCatalog::exposedHeaders())->toBe([
+        'X-Request-Id',
+        'X-RateLimit-Limit',
+        'X-RateLimit-Remaining',
+        'X-RateLimit-Reset',
+        'Retry-After',
+        'Deprecation',
+        'Sunset',
+        'Content-Language',
+        'Vary',
+        'Link',
+        'Location',
+        'Idempotent-Replayed',
+    ])->and(CorsHeaderCatalog::allowedRequestHeaders())->toBe([
+        'Authorization',
+        'Content-Type',
+        'Accept',
+        'Accept-Language',
+        'Idempotency-Key',
+        'X-Request-Id',
+        'traceparent',
+        'tracestate',
+    ]);
 });
 
 it('normalises origins and rejects unsafe forms', function (): void {

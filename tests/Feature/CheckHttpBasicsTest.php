@@ -86,7 +86,7 @@ it('requires an Illuminate cache repository with a lock-capable store', function
         ->assertExitCode(1);
 })->with([true, false]);
 
-it('uses a unique namespaced key for the read-only cache probe', function (): void {
+it('uses a namespaced UUID for the read-only cache probe', function (): void {
     $cache = Mockery::mock(ArrayStore::class)->makePartial();
     $cache->expects('get')->with(Mockery::on(static fn (string $key): bool => Str::startsWith($key, 'http-basics:check:')
         && Str::isUuid(Str::after($key, 'http-basics:check:'))))->andReturnNull();
