@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The initial database migration uses portable JSON metadata and nullable UUID
+  organisation scopes. Claim and erasure inputs normalize organisation UUIDs to
+  lowercase.
+
 - Idempotency: the package now schedules database pruning hourly. Products that
   keep their own schedule can set `http-basics.idempotency.schedule` to `false`.
   Set `HTTP_BASICS_IDEMPOTENCY_TTL` and `HTTP_BASICS_IDEMPOTENCY_LOCK_TTL` to at most
