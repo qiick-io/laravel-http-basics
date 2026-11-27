@@ -1,0 +1,375 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  package-matrix:
+    uses: qiick-io/app-ui/.github/workflows/package-matrix.yml@0d97ae1429a856411c76e6de1ec258cae0eabab6 # v0.15.0
+    with:
+      app-ui-ref: 0d97ae1429a856411c76e6de1ec258cae0eabab6
+
+  tests:
+    name: PHP ${{ matrix.php }} Laravel ${{ matrix.laravel }} ${{ matrix.dependency-version }}
+    needs: package-matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.package-matrix.outputs.matrix) }}
+    steps:
+      - name: Checkout
+        if: ${{ !matrix.skip }}
+        # actions/checkout@v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Setup PHP
+        if: ${{ !matrix.skip }}
+        # shivammathur/setup-php@2.40.0
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        with:
+          php-version: ${{ matrix.php }}
+          coverage: none
+          tools: composer:v2
+
+      - name: Validate composer.json
+        if: ${{ !matrix.skip }}
+        run: composer validate --strict --no-check-lock
+
+      - name: Install dependencies
+        if: ${{ !matrix.skip }}
+        run: |
+          composer require --dev --no-interaction --no-update "orchestra/testbench:^${{ matrix.testbench }}.0"
+          composer require --no-interaction --no-update \
+            "illuminate/cache:^${{ matrix.laravel }}.0" \
+            "illuminate/contracts:^${{ matrix.laravel }}.0" \
+            "illuminate/http:^${{ matrix.laravel }}.0" \
+            "illuminate/support:^${{ matrix.laravel }}.0" \
+            "illuminate/database:^${{ matrix.laravel }}.0"
+          if [ "${{ matrix.dependency-version }}" = "lowest" ]; then
+            composer update --no-interaction --prefer-dist --prefer-lowest --with-all-dependencies
+          else
+            composer update --no-interaction --prefer-dist --with-all-dependencies
+          fi
+
+      - name: Pint
+        if: ${{ !matrix.skip && matrix.dependency-version == 'stable' }}
+        run: vendor/bin/pint --test
+
+      - name: Pest
+        if: ${{ !matrix.skip }}
+        run: vendor/bin/pest
+
+      - name: Mutation gate checks
+        if: ${{ !matrix.skip && matrix.dependency-version == 'stable' }}
+        run: node --test tests/Scripts/MutationGateTest.mjs
+
+  # The package matrix chooses the changed source files on a PR. Full runs
+  # measure every source file, including the deploy and erasure paths.
+  mutation-shards:
+    name: Mutation (shard ${{ matrix.shard }}/8)
+    needs: package-matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+    steps:
+      - name: Checkout
+        if: needs.package-matrix.outputs.mutate-scope == 'all' || needs.package-matrix.outputs.mutate-classes != '[]'
+        # actions/checkout@v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Setup PHP
+        if: needs.package-matrix.outputs.mutate-scope == 'all' || needs.package-matrix.outputs.mutate-classes != '[]'
+        # shivammathur/setup-php@2.40.0
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        with:
+          php-version: '8.4'
+          # pest --mutate needs a coverage driver.
+          coverage: pcov
+          tools: composer:v2
+
+      - name: Install dependencies
+        if: needs.package-matrix.outputs.mutate-scope == 'all' || needs.package-matrix.outputs.mutate-classes != '[]'
+        run: |
+          composer require --dev --no-interaction --no-update "orchestra/testbench:^10.0"
+          composer require --no-interaction --no-update \
+            "illuminate/cache:^12.0" \
+            "illuminate/contracts:^12.0" \
+            "illuminate/http:^12.0" \
+            "illuminate/support:^12.0" \
+            "illuminate/database:^12.0"
+          composer update --no-interaction --prefer-dist --with-all-dependencies
+
+      - name: Pest mutate (per-class min 95)
+        if: needs.package-matrix.outputs.mutate-scope == 'all' || needs.package-matrix.outputs.mutate-classes != '[]'
+        env:
+          MUTATE_SHARD: ${{ matrix.shard }}
+          MUTATE_SHARDS: 8
+          MUTATE_SCOPE: ${{ needs.package-matrix.outputs.mutate-scope }}
+          MUTATE_CLASSES: ${{ needs.package-matrix.outputs.mutate-classes }}
+        run: |
+          set -euo pipefail
+          output="$(mktemp)"
+          bash scripts/mutate-per-class.sh | tee "${output}"
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+            awk '/^## Per-class mutation scores$/{flag=1} flag{print}' "${output}" >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
+  # One stable check name over every shard, for branch protection: it fails
+  # unless every shard succeeded (a cancelled or skipped shard fails it too).
+  mutation:
+    name: Mutation (per-class ≥95%)
+    needs: mutation-shards
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every shard passed
+        run: test "${{ needs.mutation-shards.result }}" = "success"
+
+  # DatabaseIdempotencyStore on the four engines (checklist item 6 / M8).
+  database-store-sqlite:
+    name: DB store (sqlite)
+    needs: package-matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        # actions/checkout@v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Setup PHP
+        # shivammathur/setup-php@2.40.0
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        with:
+          php-version: '8.4'
+          extensions: pdo_sqlite
+          coverage: none
+          tools: composer:v2
+
+      - name: Install dependencies
+        run: |
+          composer require --dev --no-interaction --no-update "orchestra/testbench:^10.0"
+          composer require --no-interaction --no-update \
+            "illuminate/cache:^12.0" \
+            "illuminate/contracts:^12.0" \
+            "illuminate/http:^12.0" \
+            "illuminate/support:^12.0" \
+            "illuminate/database:^12.0"
+          composer update --no-interaction --prefer-dist --with-all-dependencies
+
+      - name: Pest (database store)
+        if: needs.package-matrix.outputs.docs-only != 'true'
+        env:
+          DB_CONNECTION: sqlite
+          DB_DATABASE: ':memory:'
+        run: vendor/bin/pest --filter='DatabaseIdempotency|ForeignKeyIndexTest'
+
+      # Keep the required erasure proof on every PR, including docs-only PRs.
+      - run: node tests/Erasure/run.mjs
+        env:
+          DB_CONNECTION: sqlite
+          DB_DATABASE: ':memory:'
+
+  database-store:
+    name: DB store (${{ matrix.database.connection }})
+    needs: package-matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        database: ${{ fromJSON(needs.package-matrix.outputs.databases) }}
+    services:
+      database:
+        image: ${{ (needs.package-matrix.outputs.run-databases == 'true' || contains(needs.package-matrix.outputs.mutate-classes, 'src/Erasure/')) && matrix.database.image || '' }}
+        env: ${{ matrix.database.environment }}
+        ports:
+          - ${{ matrix.database.port }}:${{ matrix.database.port }}
+        options: ${{ matrix.database.options }}
+    steps:
+      - name: Checkout
+        if: &run-server-database needs.package-matrix.outputs.run-databases == 'true' || contains(needs.package-matrix.outputs.mutate-classes, 'src/Erasure/')
+        # actions/checkout@v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Setup PHP
+        if: *run-server-database
+        # shivammathur/setup-php@2.40.0
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        with:
+          php-version: '8.4'
+          extensions: pdo_mysql, pdo_pgsql
+          coverage: none
+          tools: composer:v2
+
+      - name: Install dependencies
+        if: *run-server-database
+        run: |
+          composer require --dev --no-interaction --no-update "orchestra/testbench:^10.0"
+          composer require --no-interaction --no-update \
+            "illuminate/cache:^12.0" \
+            "illuminate/contracts:^12.0" \
+            "illuminate/http:^12.0" \
+            "illuminate/support:^12.0" \
+            "illuminate/database:^12.0"
+          composer update --no-interaction --prefer-dist --with-all-dependencies
+
+      - name: Pest (database store)
+        if: *run-server-database
+        env: &database-test-env
+          DB_CONNECTION: ${{ matrix.database.connection }}
+          DB_DATABASE: qiick_package
+          DB_HOST: 127.0.0.1
+          DB_PORT: ${{ matrix.database.port }}
+          DB_USERNAME: ${{ matrix.database.username }}
+          DB_PASSWORD: ${{ matrix.database.password }}
+        run: vendor/bin/pest --filter='DatabaseIdempotency|ForeignKeyIndexTest'
+
+      - name: Pest (erasure on the server database)
+        if: *run-server-database
+        env: *database-test-env
+        run: vendor/bin/pest tests/Erasure --fail-on-empty-test-suite
+
+  # Real HTTP against php -S (middleware stack). Feature PRs fill the Pest group;
+  # scaffold keeps the Laravel 12/13 cells so the matrix shape matches the fleet rule.
+  http-server:
+    name: Real HTTP (Laravel ${{ matrix.laravel }})
+    needs: package-matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - laravel: '12'
+            testbench: '10'
+          - laravel: '13'
+            testbench: '11'
+    steps:
+      - name: Checkout
+        if: needs.package-matrix.outputs.docs-only != 'true'
+        # actions/checkout@v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Setup PHP
+        if: needs.package-matrix.outputs.docs-only != 'true'
+        # shivammathur/setup-php@2.40.0
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        with:
+          php-version: '8.4'
+          coverage: none
+          tools: composer:v2
+
+      - name: Install dependencies
+        if: needs.package-matrix.outputs.docs-only != 'true'
+        run: |
+          composer require --dev --no-interaction --no-update "orchestra/testbench:^${{ matrix.testbench }}.0"
+          composer require --no-interaction --no-update \
+            "illuminate/cache:^${{ matrix.laravel }}.0" \
+            "illuminate/contracts:^${{ matrix.laravel }}.0" \
+            "illuminate/http:^${{ matrix.laravel }}.0" \
+            "illuminate/support:^${{ matrix.laravel }}.0" \
+            "illuminate/database:^${{ matrix.laravel }}.0"
+          composer update --no-interaction --prefer-dist --with-all-dependencies
+
+      - name: Pest (real HTTP group)
+        if: needs.package-matrix.outputs.docs-only != 'true'
+        run: vendor/bin/pest --group=http-server --fail-on-empty-test-suite
+
+  # no-dev cell: cache store must boot without illuminate/database (design §10).
+  no-dev-cache:
+    name: No-dev cache store boot
+    needs: package-matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        if: needs.package-matrix.outputs.docs-only != 'true'
+        # actions/checkout@v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Setup PHP
+        if: needs.package-matrix.outputs.docs-only != 'true'
+        # shivammathur/setup-php@2.40.0
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        with:
+          php-version: '8.4'
+          coverage: none
+          tools: composer:v2
+
+      - name: Install runtime dependencies only
+        if: needs.package-matrix.outputs.docs-only != 'true'
+        run: |
+          composer update --no-interaction --prefer-dist --no-dev
+          php -r 'require "vendor/autoload.php"; echo class_exists("Qiick\\HttpBasics\\Laravel\\HttpBasicsServiceProvider") ? "ok\n" : exit(1);'
+
+  composer-audit:
+    name: Composer audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        with:
+          php-version: '8.4'
+          coverage: none
+          tools: composer:v2
+      - run: composer update --no-interaction --no-install --prefer-dist
+      - run: composer audit --locked --no-interaction
+
+  php-quality:
+    uses: qiick-io/app-ui/.github/workflows/php-quality.yml@0d97ae1429a856411c76e6de1ec258cae0eabab6 # v0.15.0
+    with:
+      php-version: '8.5'
+      build-command: ''
+      phpstan-min-level: max
+      coverage-thresholds: src=90
+
+  migrations-frozen:
+    uses: qiick-io/app-ui/.github/workflows/migrations-frozen.yml@0d97ae1429a856411c76e6de1ec258cae0eabab6 # v0.15.0
+
+  app-ui-drift:
+    # qiick-io/app-ui@v0.15.0
+    uses: qiick-io/app-ui/.github/workflows/drift-check.yml@0d97ae1429a856411c76e6de1ec258cae0eabab6 # v0.15.0
+    with:
+      standards: true
+      registry: false
+
+  pr-title:
+    if: github.event_name == 'pull_request'
+    # qiick-io/app-ui@v0.15.0
+    uses: qiick-io/app-ui/.github/workflows/pr-title.yml@0d97ae1429a856411c76e6de1ec258cae0eabab6 # v0.15.0
+
+  nightly-failure:
+    needs: [package-matrix, tests, mutation, database-store-sqlite, database-store, http-server, no-dev-cache, composer-audit, php-quality, migrations-frozen, app-ui-drift]
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Open an issue for a failed full run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue create --repo "$GITHUB_REPOSITORY" --label bug \
+            --title "Nightly CI failed on $(date -u +%F)" \
+            --body "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"

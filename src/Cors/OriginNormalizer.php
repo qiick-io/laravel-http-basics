@@ -1,0 +1,52 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Qiick\HttpBasics\Cors;
+
+/**
+ * @api Normalises browser Origin values to scheme://host[:port].
+ *
+ * Rejects userinfo, path, query, fragment, the string `null`, trailing DNS
+ * dots, and non-positive ports.
+ */
+final class OriginNormalizer
+{
+    public function normalize(string $origin): ?string
+    {
+        // `''` and the opaque origin `null` parse to a bare path, and an unparseable
+        // origin to `false`; the scheme check below rejects all three.
+        $parts = parse_url(trim($origin));
+
+        $scheme = isset($parts['scheme']) && is_string($parts['scheme']) ? strtolower($parts['scheme']) : null;
+        $host = isset($parts['host']) && is_string($parts['host']) ? strtolower($parts['host']) : null;
+
+        if (! in_array($scheme, ['http', 'https'], true) || $host === null) {
+            return null;
+        }
+
+        if (isset($parts['user']) || isset($parts['pass']) || isset($parts['path']) || isset($parts['query']) || isset($parts['fragment'])) {
+            return null;
+        }
+
+        $host = rtrim($host, '.');
+
+        if ($host === '' || str_contains($host, '..')) {
+            return null;
+        }
+
+        $port = isset($parts['port']) && is_int($parts['port']) ? $parts['port'] : null;
+
+        if ($port !== null && $port <= 0) {
+            return null;
+        }
+
+        $defaultPort = $scheme === 'https' ? 443 : 80;
+
+        if ($port === null || $port === $defaultPort) {
+            return $scheme.'://'.$host;
+        }
+
+        return $scheme.'://'.$host.':'.$port;
+    }
+}

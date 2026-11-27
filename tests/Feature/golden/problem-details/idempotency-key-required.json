@@ -1,0 +1,11 @@
+{
+    "status": 400,
+    "headers": {"content-type": "application/problem+json"},
+    "body": {
+        "type": "about:blank",
+        "title": "Bad Request",
+        "status": 400,
+        "detail": "Idempotency-Key header is required.",
+        "error": "idempotency_key_required"
+    }
+}

@@ -1,0 +1,81 @@
+{
+    "$schema": "https://getcomposer.org/schema.json",
+    "name": "qiick/laravel-http-basics",
+    "description": "Shared HTTP runtime for qiick Laravel products: X-Request-Id, Accept-Language / Content-Language, security headers, and Idempotency-Key.",
+    "type": "library",
+    "keywords": [
+        "qiick",
+        "laravel",
+        "http",
+        "request-id",
+        "locale",
+        "security-headers",
+        "idempotency"
+    ],
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Qiick",
+            "homepage": "https://qiick.io"
+        }
+    ],
+    "homepage": "https://github.com/qiick-io/laravel-http-basics",
+    "support": {
+        "issues": "https://github.com/qiick-io/laravel-http-basics/issues",
+        "source": "https://github.com/qiick-io/laravel-http-basics"
+    },
+    "require": {
+        "php": "^8.3",
+        "ext-fileinfo": "*",
+        "illuminate/cache": "^12.0 || ^13.0",
+        "illuminate/contracts": "^12.0 || ^13.0",
+        "illuminate/http": "^12.0 || ^13.0",
+        "illuminate/support": "^12.0 || ^13.0"
+    },
+    "require-dev": {
+        "illuminate/database": "^12.0 || ^13.0",
+        "larastan/larastan": "^3.3",
+        "laravel/pint": "^1.30",
+        "nunomaduro/collision": "^8.5",
+        "orchestra/testbench": "^10.0 || ^11.0",
+        "pestphp/pest": "^4.0",
+        "pestphp/pest-plugin-mutate": "^4.0",
+        "phpstan/phpstan": "^2.1"
+    },
+    "suggest": {
+        "illuminate/database": "Required for the optional DatabaseIdempotencyStore adapter."
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Qiick\\HttpBasics\\Laravel\\HttpBasicsServiceProvider"
+            ]
+        }
+    },
+    "autoload": {
+        "psr-4": {
+            "Qiick\\HttpBasics\\": "src/"
+        },
+        "files": [
+            "src/Testing/functions.php"
+        ]
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Qiick\\HttpBasics\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "test": "pest",
+        "lint": "pint --test",
+        "analyse": "phpstan analyse --memory-limit=1G"
+    },
+    "config": {
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        },
+        "sort-packages": true
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}

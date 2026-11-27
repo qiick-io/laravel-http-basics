@@ -1,0 +1,12 @@
+{
+    "status": 422,
+    "headers": {"content-type": "application/problem+json"},
+    "body": {
+        "type": "about:blank",
+        "title": "Unprocessable Content",
+        "status": 422,
+        "detail": "The email field is required.",
+        "error": "validation_failed",
+        "errors": {"email": ["The email field is required."]}
+    }
+}

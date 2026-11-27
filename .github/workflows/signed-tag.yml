@@ -1,0 +1,16 @@
+name: Signed release tag
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  signed-tag:
+    uses: qiick-io/app-ui/.github/workflows/signed-tag.yml@0d97ae1429a856411c76e6de1ec258cae0eabab6 # v0.15.0

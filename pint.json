@@ -1,0 +1,7 @@
+{
+    "preset": "laravel",
+    "exclude": [
+        "tests/Conformance",
+        "tests/Erasure/Support"
+    ]
+}
