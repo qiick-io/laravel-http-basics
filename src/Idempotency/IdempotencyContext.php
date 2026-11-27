@@ -17,6 +17,9 @@ use Qiick\HttpBasics\RequestId\RequestId;
  */
 final readonly class IdempotencyContext
 {
+    /** Canonical UUID for an organisation-scoped claim. */
+    public ?string $organisationId;
+
     /**
      * @param  array<string, mixed>  $metadata  namespaced keys (`upload`, `request.content_digest`)
      *                                          holding plain values, at most 4 KiB of JSON;
@@ -32,7 +35,7 @@ final readonly class IdempotencyContext
         public ?string $credentialPublicId = null,
         public array $metadata = [],
         public ?string $userId = null,
-        public ?string $organisationId = null,
+        ?string $organisationId = null,
     ) {
         if ($fingerprintVersion < 1) {
             throw new \InvalidArgumentException('The fingerprint version starts at 1.');
@@ -51,11 +54,15 @@ final readonly class IdempotencyContext
             throw new \InvalidArgumentException('The credential public id must be a UUID.');
         }
 
-        foreach ([$userId, $organisationId] as $ownerId) {
-            if ($ownerId !== null && (trim($ownerId) === '' || mb_strlen($ownerId) > 255)) {
-                throw new \InvalidArgumentException('Idempotency ownership identifiers must contain 1 to 255 characters.');
-            }
+        if ($userId !== null && (trim($userId) === '' || mb_strlen($userId) > 255)) {
+            throw new \InvalidArgumentException('Idempotency ownership identifiers must contain 1 to 255 characters.');
         }
+
+        if ($organisationId !== null && ! Str::isUuid($organisationId)) {
+            throw new \InvalidArgumentException('The organisation id must be a UUID.');
+        }
+
+        $this->organisationId = $organisationId === null ? null : strtolower($organisationId);
 
         self::assertStorableMetadata($metadata);
     }

@@ -28,14 +28,14 @@ it('accepts values at the edge of what the columns hold', function (): void {
         credentialPublicId: '019a5f6e-8c1b-7d2e-9f3a-4b5c6d7e8f90',
         metadata: ['request.content_digest' => 'sha-256=:abc=:'],
         userId: str_repeat('ü', 255),
-        organisationId: '0',
+        organisationId: '019A5F6E-8C1B-7D2E-9F3A-4B5C6D7E8F90',
     );
 
     expect($context->requestId)->toHaveLength(128)
         ->and($context->traceId)->toBe('4bf92f3577b34da6a3ce929d0e0e4736')
         ->and($context->credentialPublicId)->toBe('019a5f6e-8c1b-7d2e-9f3a-4b5c6d7e8f90')
         ->and($context->userId)->toBe(str_repeat('ü', 255))
-        ->and($context->organisationId)->toBe('0')
+        ->and($context->organisationId)->toBe('019a5f6e-8c1b-7d2e-9f3a-4b5c6d7e8f90')
         ->and($context->metadata)->toBe(['request.content_digest' => 'sha-256=:abc=:']);
 });
 
@@ -50,7 +50,7 @@ it('refuses context the record could not store faithfully', function (array $arg
     'all-zero trace id' => [['traceId' => str_repeat('0', 32)], 'trace id'],
     'credential id that is not a UUID' => [['credentialPublicId' => 'key_123'], 'credential public id'],
     'whitespace-only owner id' => [['userId' => '  '], 'ownership identifiers'],
-    'organisation id over 255 characters' => [['organisationId' => str_repeat('a', 256)], 'ownership identifiers'],
+    'non-UUID organisation id' => [['organisationId' => '42'], 'organisation id must be a UUID'],
     'metadata JSON cannot encode' => [['metadata' => ['ratio' => INF]], 'metadata'],
 ]);
 

@@ -9,8 +9,31 @@ declare(strict_types=1);
  */
 
 /**
+ * A port the OS reports free right now, so tests never pick one another test's server
+ * still holds (random ports from overlapping ranges did).
+ */
+function freeLocalPort(): int
+{
+    $probe = stream_socket_server('tcp://127.0.0.1:0', $errorCode, $errorMessage);
+
+    if ($probe === false) {
+        throw new RuntimeException("No free local port: {$errorMessage}");
+    }
+
+    $address = (string) stream_socket_get_name($probe, false);
+    fclose($probe);
+
+    return (int) substr((string) strrchr($address, ':'), 1);
+}
+
+/**
+ * Starts php -S and waits until that very process reports it is listening: a probe
+ * that only connects would also succeed against another server on the same port.
+ *
  * @param  array<string, string>  $extraEnvironment
  * @return resource
+ *
+ * @throws RuntimeException when php -S cannot listen on the port or never starts
  */
 function startPhpBuiltInServer(
     int $port,
@@ -19,10 +42,19 @@ function startPhpBuiltInServer(
     string $trustProxies,
     array $extraEnvironment = [],
 ) {
+    // Each launch gets its own log because competing processes can choose the same
+    // port. PHP unlinks the temp file when this function releases its handle.
+    $startupLogFile = tmpfile();
+
+    if ($startupLogFile === false) {
+        throw new RuntimeException('Could not create the php -S startup log.');
+    }
+
+    $startupLogPath = stream_get_meta_data($startupLogFile)['uri'];
     $descriptors = [
         0 => ['pipe', 'r'],
-        1 => ['file', sys_get_temp_dir()."/http-basics-{$port}.log", 'w'],
-        2 => ['file', sys_get_temp_dir()."/http-basics-{$port}.err", 'w'],
+        1 => ['file', $startupLogPath, 'a'],
+        2 => ['file', $startupLogPath, 'a'],
     ];
 
     $setsid = null;
@@ -68,15 +100,20 @@ function startPhpBuiltInServer(
         throw new RuntimeException("Failed to start php -S on {$port}");
     }
 
+    // php -S logs "Development Server (http://127.0.0.1:P) started" or "Failed to listen on …" to stderr.
     for ($attempt = 0; $attempt < 50; $attempt++) {
-        $errno = 0;
-        $errstr = '';
-        $socket = @fsockopen('127.0.0.1', $port, $errno, $errstr, 0.2);
-        if (is_resource($socket)) {
-            fclose($socket);
+        $startupLog = (string) file_get_contents($startupLogPath);
 
+        if (str_contains($startupLog, 'Failed to listen')) {
+            stopPhpBuiltInServer($proc);
+
+            throw new RuntimeException("php -S could not listen on {$port}: ".trim($startupLog));
+        }
+
+        if (str_contains($startupLog, "(http://127.0.0.1:{$port}) started")) {
             return $proc;
         }
+
         usleep(100_000);
     }
 

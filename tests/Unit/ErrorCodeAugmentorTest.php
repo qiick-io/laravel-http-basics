@@ -72,9 +72,12 @@ it('augments only machine-door JSON through the exception callback', function ()
     expect($untouched->getData(true))->not->toHaveKey('error');
 });
 
-it('builds a machine-door JSON gate callback from path patterns', function (): void {
+it('E3 builds a machine-door JSON gate callback without an Accept header', function (): void {
     $when = MachineDoorJson::whenCallback(['api/*', 'mcp', 'mcp/*']);
+    $request = Request::create('/api/items', 'GET');
+    $request->headers->remove('Accept');
 
-    expect($when(Request::create('/api/items', 'GET')))->toBeTrue()
+    expect($request->headers->has('Accept'))->toBeFalse()
+        ->and($when($request))->toBeTrue()
         ->and($when(Request::create('/home', 'GET')))->toBeFalse();
 });

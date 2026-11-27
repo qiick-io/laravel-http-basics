@@ -33,8 +33,11 @@ $httpState = new class
 beforeAll(function () use ($httpState): void {
     $server = __DIR__.'/fixtures/server.php';
     $root = dirname(__DIR__, 1);
-    $httpState->primaryPort = 8765 + random_int(0, 200);
-    $httpState->redirectPort = $httpState->primaryPort + 1;
+    $httpState->primaryPort = freeLocalPort();
+
+    do {
+        $httpState->redirectPort = freeLocalPort();
+    } while ($httpState->redirectPort === $httpState->primaryPort);
 
     $httpState->primaryProc = startPhpBuiltInServer(
         $httpState->primaryPort,

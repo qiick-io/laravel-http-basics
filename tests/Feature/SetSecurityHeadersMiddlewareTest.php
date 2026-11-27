@@ -11,6 +11,7 @@ use Qiick\HttpBasics\Security\CspPolicyBuilder;
 use Qiick\HttpBasics\Security\SecurityHeaderBuilder;
 use Qiick\HttpBasics\Security\SecurityHeadersPolicy;
 use Qiick\HttpBasics\Security\SetSecurityHeadersMiddleware;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 use function Qiick\HttpBasics\Testing\assertSecurityHeaders;
@@ -127,8 +128,10 @@ it('applies headers to error responses without buffering a body', function (): v
 });
 
 it('applies headers to streamed responses without reading the body', function (): void {
-    Route::middleware(SetSecurityHeadersMiddleware::class)->get('/dashboard/stream', function () {
-        return new StreamedResponse(function (): void {
+    $hasStreamed = false;
+    Route::middleware(SetSecurityHeadersMiddleware::class)->get('/dashboard/stream', function () use (&$hasStreamed) {
+        return new StreamedResponse(function () use (&$hasStreamed): void {
+            $hasStreamed = true;
             echo 'chunk';
         });
     });
@@ -136,7 +139,25 @@ it('applies headers to streamed responses without reading the body', function ()
     $response = $this->get('/dashboard/stream');
 
     $response->assertOk();
+    expect($hasStreamed)->toBeFalse();
     assertSecurityHeaders($response->baseResponse);
+});
+
+it('S6 adds headers while preserving binary responses and redirects', function (): void {
+    Route::middleware(SetSecurityHeadersMiddleware::class)->group(function (): void {
+        Route::get('/dashboard/download', static fn () => new BinaryFileResponse(__FILE__));
+        Route::get('/dashboard/redirect', static fn () => redirect('/dashboard'));
+    });
+
+    $fileResponse = $this->get('/dashboard/download');
+    $redirectResponse = $this->get('/dashboard/redirect');
+
+    $fileResponse->assertOk();
+    expect($fileResponse->baseResponse)->toBeInstanceOf(BinaryFileResponse::class)
+        ->and($fileResponse->baseResponse->getContent())->toBeFalse();
+    assertSecurityHeaders($fileResponse->baseResponse);
+    $redirectResponse->assertRedirect('/dashboard');
+    assertSecurityHeaders($redirectResponse->baseResponse);
 });
 
 it('does nothing when security is disabled', function (): void {

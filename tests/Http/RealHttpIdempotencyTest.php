@@ -36,8 +36,11 @@ beforeAll(function () use ($idempotencyHttpState): void {
         throw new RuntimeException('Failed to create shared cache path');
     }
 
-    $idempotencyHttpState->portA = 9200 + random_int(0, 200);
-    $idempotencyHttpState->portB = $idempotencyHttpState->portA + 1;
+    $idempotencyHttpState->portA = freeLocalPort();
+
+    do {
+        $idempotencyHttpState->portB = freeLocalPort();
+    } while ($idempotencyHttpState->portB === $idempotencyHttpState->portA);
 
     $environment = [
         'HTTP_BASICS_CACHE_PATH' => $idempotencyHttpState->cachePath,
@@ -265,7 +268,7 @@ it('does not re-run the handler when an oversized response is sealed unreplayabl
     $root = dirname(__DIR__, 1);
     $cachePath = sys_get_temp_dir().'/http-basics-idempotency-large-'.getmypid().'-'.bin2hex(random_bytes(4));
     mkdir($cachePath, 0777, true);
-    $port = 9400 + random_int(0, 100);
+    $port = freeLocalPort();
     $environment = [
         'HTTP_BASICS_CACHE_PATH' => $cachePath,
         'HTTP_BASICS_IDEMPOTENCY_LOCK_TTL' => '5',

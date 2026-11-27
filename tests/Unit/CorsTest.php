@@ -109,11 +109,14 @@ it('writes allowed origins before HandleCors so Fruitcake reflects them', functi
         'HTTP_ACCESS_CONTROL_REQUEST_METHOD' => 'POST',
     ]);
 
-    $response = $configure->handle($request, static fn (Request $inner) => $handleCors->handle(
-        $inner,
-        static fn () => response('ok', 200),
-    ));
+    $originsSeenByHandleCors = null;
+    $response = $configure->handle($request, static function (Request $inner) use ($handleCors, &$originsSeenByHandleCors) {
+        $originsSeenByHandleCors = config('cors.allowed_origins');
 
-    expect(config('cors.allowed_origins'))->toBe(['https://app.example.com'])
-        ->and($response->headers->get('Access-Control-Allow-Origin'))->toBe('https://app.example.com');
+        return $handleCors->handle($inner, static fn () => response('ok', 200));
+    });
+
+    expect($originsSeenByHandleCors)->toBe(['https://app.example.com'])
+        ->and($response->headers->get('Access-Control-Allow-Origin'))->toBe('https://app.example.com')
+        ->and(config('cors.allowed_origins'))->toBe(['*']);
 });

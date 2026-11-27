@@ -30,37 +30,37 @@ final class UploadRejectedException extends HttpException
         return $this->errorCode;
     }
 
-    public static function forbiddenType(string $name): self
+    public static function forbiddenType(): self
     {
         return new self(ErrorCode::UploadForbiddenType, 'This file type is blocked by the security floor.');
     }
 
-    public static function typeNotAllowed(string $name): self
+    public static function typeNotAllowed(): self
     {
         return new self(ErrorCode::UploadTypeNotAllowed, 'This file type is not allowed for this upload context.');
     }
 
-    public static function contentMismatch(string $name): self
+    public static function contentMismatch(): self
     {
         return new self(ErrorCode::UploadContentMismatch, 'File content does not match the declared file type.');
     }
 
-    public static function tooLarge(string $name): self
+    public static function tooLarge(): self
     {
         return new self(ErrorCode::UploadTooLarge, 'The uploaded file is too large.');
     }
 
-    public static function nameInvalid(string $name): self
+    public static function nameInvalid(): self
     {
         return new self(ErrorCode::UploadNameInvalid, 'The uploaded file name is invalid.');
     }
 
-    public static function infected(string $name): self
+    public static function infected(): self
     {
         return new self(ErrorCode::UploadInfected, 'The uploaded file failed the malware scan.');
     }
 
-    public static function scanFailed(string $name): self
+    public static function scanFailed(): self
     {
         return new self(ErrorCode::UploadScanFailed, 'The malware scanner could not inspect this file.');
     }

@@ -5,6 +5,7 @@ declare(strict_types=1);
 use Illuminate\Contracts\Http\Kernel;
 use Illuminate\Cookie\Middleware\EncryptCookies;
 use Illuminate\Foundation\Http\Middleware\PreventRequestsDuringMaintenance;
+use Illuminate\Session\TokenMismatchException;
 use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\Route;
 use Qiick\HttpBasics\Contracts\DefaultLocaleResolver;
@@ -105,6 +106,22 @@ it('carries Content-Language on error responses', function (): void {
     assertContentLanguage($response->baseResponse, 'fr');
     assertVaryAcceptLanguage($response->baseResponse);
 });
+
+it('L7 negotiates locale on 404, 419 and 429 with global middleware', function (string $path, int $status): void {
+    $this->app->make(Kernel::class)->prependMiddleware(SetLocaleMiddleware::class);
+    Route::get('/api/expired', static fn () => throw new TokenMismatchException);
+    Route::get('/api/throttled', static fn () => abort(429));
+
+    $response = $this->get($path, ['Accept-Language' => 'fr']);
+
+    $response->assertStatus($status);
+    assertContentLanguage($response->baseResponse, 'fr');
+    assertVaryAcceptLanguage($response->baseResponse);
+})->with([
+    'unmatched route' => ['/api/missing', 404],
+    'expired session' => ['/api/expired', 419],
+    'throttled' => ['/api/throttled', 429],
+]);
 
 it('carries Content-Language on a maintenance 503 when prepended globally', function (): void {
     $kernel = $this->app->make(Kernel::class);

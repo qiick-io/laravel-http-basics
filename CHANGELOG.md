@@ -15,10 +15,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `IdempotencyClaim::$lease` is a nullable string. The upload rejection factories
+  now take no file name argument.
+
+- Boot requires a valid `request_id.accept_pattern` with absolute anchors. Request
+  ID acceptance requires a whole-header match.
+
 - Idempotency: the package now schedules database pruning hourly. Products that
   keep their own schedule can set `http-basics.idempotency.schedule` to `false`.
   Set `HTTP_BASICS_IDEMPOTENCY_TTL` and `HTTP_BASICS_IDEMPOTENCY_LOCK_TTL` to at most
   86400 seconds before upgrading. Higher values fail boot.
+
+- The initial database migration uses portable JSON metadata and nullable UUID
+  organisation scopes. Claim and erasure inputs normalize organisation UUIDs to
+  lowercase.
 
 - Idempotency: replayed response headers keep their values but are named in lower case
   (they come from `HeaderBag::all()`); HTTP header names are case-insensitive.
@@ -65,17 +75,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Idempotency boot validation now requires the record TTL to exceed the lock TTL so
+  pruning preserves claims while their lock is active.
+
 - Idempotency: the quoted RFC 9651 form the draft sends
   (`Idempotency-Key: "8e03…"`, draft-ietf-httpapi-idempotency-key-header-09) is accepted
   in both key formats, unquoted and unescaped; `"abc"` and `abc` are the same key, and a
   `uuid` key must still be a UUID once unquoted. `IdempotencyKeyValidator` gains
   `canonicalKey()`.
 
-- Idempotency: the query fingerprint reads `+` as a space and `%2B` as a plus, as PHP
-  and Symfony do, so `?q=a+b` and `?q=a%2Bb` no longer replay each other's response.
-  `Fingerprinter::VERSION` is now 2 (the `fingerprint_version` default too). A key
-  claimed before the deploy and retried after it with `+` or `%2B` in its query gets
-  `idempotency_payload_mismatch` (422) until its record expires (`ttl_seconds`).
+- Idempotency fingerprint version 2 reads the query with form semantics and includes
+  the normalized media type. Retained replayable records from untagged builds fail
+  closed with `idempotency_payload_mismatch` (422) until they expire.
+
+- Uploads: the shipped magic floor checks a `webp` upload for its `RIFF` signature, so a
+  file named `.webp` with other bytes is refused (`upload_content_mismatch`).
 
 - Idempotency: `require_json` accepts `application/<name>+json` only with a non-empty RFC
   6838 name before `+json` (`application/+json` is now 415), and the English and Italian
@@ -130,6 +144,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Idempotency: `IdempotencyRecord::on()` / `setConnection()` win over the configured
   idempotency connection.
+
+### Security
+
+- CORS: `ConfigureCorsMiddleware` restores both origin lists after each request.
+  Workers that share configuration across requests start each request with the
+  configured defaults.
 
 ### Added
 

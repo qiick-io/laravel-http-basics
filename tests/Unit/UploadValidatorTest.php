@@ -267,3 +267,22 @@ it('rejects svg suffixes unless allows_svg and rejects content-type mismatch', f
     @unlink($svg);
     @unlink($png);
 });
+
+it('checks the RIFF signature of a webp under the shipped policy', function (string $bytes, bool $isAccepted): void {
+    $path = tempnam(sys_get_temp_dir(), 'hb-webp-');
+    expect($path)->toBeString();
+    file_put_contents($path, $bytes);
+
+    try {
+        $validate = fn () => app(UploadValidator::class)->validatePath($path, 'photo.webp', 'files');
+
+        $isAccepted
+            ? expect($validate())->not->toBeNull()
+            : expect($validate)->toThrow(UploadRejectedException::class);
+    } finally {
+        @unlink($path);
+    }
+})->with([
+    'a webp' => ["RIFF\x1a\x00\x00\x00WEBPVP8L\x0d\x00\x00\x00\x2f\x00\x00\x00\x10\x07\x10\x11\x11\x88\x88\xfe\x07\x00", true],
+    'png bytes named webp' => [base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='), false],
+]);

@@ -49,22 +49,22 @@ final class UploadValidator
         ?string $declaredMime = null,
     ): ValidatedUpload {
         if (! is_file($absolutePath) || ! is_readable($absolutePath)) {
-            throw UploadRejectedException::nameInvalid($clientName);
+            throw UploadRejectedException::nameInvalid();
         }
 
         $safeName = $this->names->sanitize($clientName);
         $policy = $this->policies->forContext($context);
 
         if ($this->hardFloor->isBlocked($safeName)) {
-            throw UploadRejectedException::forbiddenType($safeName);
+            throw UploadRejectedException::forbiddenType();
         }
 
         if ($this->hardFloor->isSvg($safeName) && ! $policy->allowsSvg()) {
-            throw UploadRejectedException::forbiddenType($safeName);
+            throw UploadRejectedException::forbiddenType();
         }
 
         if ($this->hardFloor->isArchive($safeName) && ! $policy->allowsArchives()) {
-            throw UploadRejectedException::forbiddenType($safeName);
+            throw UploadRejectedException::forbiddenType();
         }
 
         $suffixes = $this->hardFloor->suffixes($safeName);
@@ -73,70 +73,70 @@ final class UploadValidator
         $allowedExtensions = $this->lowercased($policy->allowedExtensions());
 
         if ($allowedExtensions !== null && ! in_array($clientExtension, $allowedExtensions, true)) {
-            throw UploadRejectedException::typeNotAllowed($safeName);
+            throw UploadRejectedException::typeNotAllowed();
         }
 
         $sizeBytes = filesize($absolutePath);
         $maxBytes = $policy->maxBytes();
 
         if (! is_int($sizeBytes)) {
-            throw UploadRejectedException::nameInvalid($clientName);
+            throw UploadRejectedException::nameInvalid();
         }
 
         if ($maxBytes !== null && $sizeBytes > $maxBytes) {
-            throw UploadRejectedException::tooLarge($safeName);
+            throw UploadRejectedException::tooLarge();
         }
 
-        $this->assertMagic($absolutePath, $clientExtension === null ? [] : $policy->magicSignatures()[$clientExtension] ?? [], $safeName);
+        $this->assertMagic($absolutePath, $clientExtension === null ? [] : $policy->magicSignatures()[$clientExtension] ?? []);
 
         $detectedMime = (new \finfo(FILEINFO_MIME_TYPE))->file($absolutePath);
 
         if (! is_string($detectedMime)) {
-            throw UploadRejectedException::contentMismatch($safeName);
+            throw UploadRejectedException::contentMismatch();
         }
 
         if ($this->hardFloor->isBlockedMime($detectedMime, $policy->allowsSvg())) {
-            throw UploadRejectedException::forbiddenType($safeName);
+            throw UploadRejectedException::forbiddenType();
         }
 
         if ($this->hardFloor->isArchiveMime($detectedMime) && ! $policy->allowsArchives()) {
-            throw UploadRejectedException::forbiddenType($safeName);
+            throw UploadRejectedException::forbiddenType();
         }
 
         $allowedMimes = $this->lowercased($policy->allowedMimeTypes());
 
         if ($allowedMimes !== null && ! in_array($detectedMime, $allowedMimes, true)) {
-            throw UploadRejectedException::typeNotAllowed($safeName);
+            throw UploadRejectedException::typeNotAllowed();
         }
 
         $storageExtension = $this->mimeExtensions->extensionFor($detectedMime);
 
         if ($allowedExtensions !== null && ! in_array($storageExtension, $allowedExtensions, true)) {
-            throw UploadRejectedException::typeNotAllowed($safeName);
+            throw UploadRejectedException::typeNotAllowed();
         }
 
         if ($declaredMime !== null && $declaredMime !== '' && $policy->contentTypeMismatch() === MismatchMode::Reject) {
             if (strtolower(trim(explode(';', $declaredMime)[0])) !== $detectedMime) {
-                throw UploadRejectedException::contentMismatch($safeName);
+                throw UploadRejectedException::contentMismatch();
             }
         }
 
-        $this->assertArchiveWithinBudget($absolutePath, $sizeBytes, $policy, $safeName);
+        $this->assertArchiveWithinBudget($absolutePath, $sizeBytes, $policy);
 
         $scan = $this->scanner->scanPath($absolutePath);
 
         if ($scan === ScanResult::Infected) {
-            throw UploadRejectedException::infected($safeName);
+            throw UploadRejectedException::infected();
         }
 
         if ($scan === ScanResult::Failed) {
-            throw UploadRejectedException::scanFailed($safeName);
+            throw UploadRejectedException::scanFailed();
         }
 
         $sha256 = hash_file('sha256', $absolutePath);
 
         if (! is_string($sha256)) {
-            throw UploadRejectedException::nameInvalid($clientName);
+            throw UploadRejectedException::nameInvalid();
         }
 
         $publicId = $this->ids->generate();
@@ -173,7 +173,7 @@ final class UploadValidator
      *
      * @param  list<string>  $signatures
      */
-    private function assertMagic(string $absolutePath, array $signatures, string $safeName): void
+    private function assertMagic(string $absolutePath, array $signatures): void
     {
         if ($signatures === []) {
             return;
@@ -188,7 +188,7 @@ final class UploadValidator
             }
         }
 
-        throw UploadRejectedException::contentMismatch($safeName);
+        throw UploadRejectedException::contentMismatch();
     }
 
     /**
@@ -208,7 +208,7 @@ final class UploadValidator
      *                                 encrypted, hidden behind leading data), `upload_forbidden_type`
      *                                 for an unsafe entry name
      */
-    private function assertArchiveWithinBudget(string $absolutePath, int $sizeBytes, UploadPolicy $policy, string $safeName): void
+    private function assertArchiveWithinBudget(string $absolutePath, int $sizeBytes, UploadPolicy $policy): void
     {
         $ratio = $policy->maxUncompressedRatio();
         $ceiling = $policy->maxUncompressedBytes();
@@ -220,7 +220,7 @@ final class UploadValidator
         }
 
         if (! class_exists(\ZipArchive::class)) {
-            throw UploadRejectedException::forbiddenType($safeName);
+            throw UploadRejectedException::forbiddenType();
         }
 
         $archive = new \ZipArchive;
@@ -228,24 +228,24 @@ final class UploadValidator
         $openResult = $archive->open($absolutePath, \ZipArchive::RDONLY | \ZipArchive::CHECKCONS);
 
         if ($openResult === \ZipArchive::ER_NOZIP) {
-            $this->assertNoHiddenArchive($absolutePath, $sizeBytes, $safeName);
+            $this->assertNoHiddenArchive($absolutePath, $sizeBytes);
 
             return;
         }
 
         if ($openResult !== true) {
-            throw UploadRejectedException::contentMismatch($safeName);
+            throw UploadRejectedException::contentMismatch();
         }
 
         // Catches what the name and the sniffed MIME missed, a PDF+ZIP polyglot included.
         if (! $policy->allowsArchives()) {
-            throw UploadRejectedException::forbiddenType($safeName);
+            throw UploadRejectedException::forbiddenType();
         }
 
         // Refused before any entry is inflated, so a central directory of empty
         // entries cannot make the check itself slow.
         if ($archive->count() > 10_000) {
-            throw UploadRejectedException::tooLarge($safeName);
+            throw UploadRejectedException::tooLarge();
         }
 
         $budget = max(0, min($ratio === null ? PHP_INT_MAX : $sizeBytes * $ratio, $ceiling ?? PHP_INT_MAX));
@@ -254,8 +254,8 @@ final class UploadValidator
 
         // libzip reports a broken deflate stream or a CRC mismatch as a warning while
         // reading; it is a refusal, not a server error.
-        set_error_handler(static function () use ($safeName): never {
-            throw UploadRejectedException::contentMismatch($safeName);
+        set_error_handler(static function (): never {
+            throw UploadRejectedException::contentMismatch();
         });
 
         try {
@@ -265,19 +265,19 @@ final class UploadValidator
                 $entryName = $archive->getNameIndex($entryIndex, \ZipArchive::FL_ENC_RAW);
 
                 if (! is_string($entryName) || ! $this->isSafeEntryName($entryName) || $this->isSymbolicLink($archive, $entryIndex)) {
-                    throw UploadRejectedException::forbiddenType($safeName);
+                    throw UploadRejectedException::forbiddenType();
                 }
 
                 $entryStream = $archive->getStreamIndex($entryIndex);
 
                 if (! is_resource($entryStream)) {
-                    throw UploadRejectedException::contentMismatch($safeName);
+                    throw UploadRejectedException::contentMismatch();
                 }
 
                 $inflatedBytes += hash_update_stream($byteCounter, $entryStream, $budget - $inflatedBytes);
 
                 if (is_string(fgetc($entryStream))) {
-                    throw UploadRejectedException::tooLarge($safeName);
+                    throw UploadRejectedException::tooLarge();
                 }
             }
         } finally {
@@ -285,7 +285,7 @@ final class UploadValidator
         }
 
         if (! $this->zipLayouts->coversWholeFile($absolutePath, $sizeBytes, $archive)) {
-            throw UploadRejectedException::contentMismatch($safeName);
+            throw UploadRejectedException::contentMismatch();
         }
     }
 
@@ -313,10 +313,10 @@ final class UploadValidator
      * that libzip refuses, so a file whose tail holds a readable end-of-central-directory
      * record is refused rather than passed as "not an archive".
      */
-    private function assertNoHiddenArchive(string $absolutePath, int $sizeBytes, string $safeName): void
+    private function assertNoHiddenArchive(string $absolutePath, int $sizeBytes): void
     {
         if ($this->zipLayouts->hasReadableEndRecord($absolutePath, $sizeBytes)) {
-            throw UploadRejectedException::contentMismatch($safeName);
+            throw UploadRejectedException::contentMismatch();
         }
     }
 }
