@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Set `HTTP_BASICS_IDEMPOTENCY_TTL` and `HTTP_BASICS_IDEMPOTENCY_LOCK_TTL` to at most
   86400 seconds before upgrading. Higher values fail boot.
 
+- The initial database migration uses portable JSON metadata and nullable UUID
+  organisation scopes. Claim and erasure inputs normalize organisation UUIDs to
+  lowercase.
+
 - Idempotency: replayed response headers keep their values but are named in lower case
   (they come from `HeaderBag::all()`); HTTP header names are case-insensitive.
 

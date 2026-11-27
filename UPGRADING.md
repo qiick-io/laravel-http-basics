@@ -109,11 +109,22 @@ by default. If your application uses `HTTP_BASICS_IDEMPOTENCY_STORE=database`:
    ```
 
 > [!IMPORTANT]
-> In accordance with qiick standards, migrations are frozen at the first stable release
-> (`1.0.0`). Before `1.0.0`, schema modifications are made directly in the initial
-> `2026_11_22_000001_create_idempotency_records_table.php` migration. If you were
-> using an earlier pre-release schema, run `migrate:fresh` or recreate the table to match
-> the reference schema in `docs/reference-schema.md`.
+> The initial migration freezes at the first stable release. Existing installations
+> from untagged builds must reconcile their published migration and table with the
+> [reference schema](docs/reference-schema.md). On a disposable database, republish
+> the migration and use `migrate:fresh --seed`. To retain live records, drain writers,
+> back up the table, and have the product migrate it explicitly. Map any legacy
+> organisation keys to their product UUIDs and leave unscoped rows null. Normalize
+> existing organisation UUIDs to lowercase before converting the column; scoped
+> erasure compares the canonical UUID. PostgreSQL converts `metadata` from `jsonb`
+> to `json`. Preserve the claim keys, leases, response data and expiry times.
+> Compare the upgraded columns against the reference schema, verify lowercase
+> organisation values, and run `http-basics:check` to confirm the table is reachable
+> before resuming traffic.
+
+New claims and scoped erasure both require organisation UUIDs. Supply these from
+trusted product state through `ORGANISATION_ID_ATTRIBUTE` or `IdempotencyContext`,
+and pass the same UUID in the erasure call.
 
 Pruning completed records can be performed via:
 ```bash

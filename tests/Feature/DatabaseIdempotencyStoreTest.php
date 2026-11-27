@@ -38,6 +38,20 @@ beforeEach(function (): void {
     $migration->up();
 });
 
+it('creates a portable metadata column and a native organisation UUID where available', function (): void {
+    $metadataType = match (DB::connection()->getDriverName()) {
+        'sqlite' => 'text',
+        'mariadb' => 'longtext',
+        default => 'json',
+    };
+
+    expect(Schema::getColumnType('idempotency_records', 'metadata'))->toBe($metadataType);
+
+    if (in_array(DB::connection()->getDriverName(), ['pgsql', 'mariadb'], true)) {
+        expect(Schema::getColumnType('idempotency_records', 'organisation_id'))->toBe('uuid');
+    }
+});
+
 it('erases a middleware claim by its trusted user and organisation even when its bucket is opaque', function (): void {
     config()->set('http-basics.idempotency.store', 'database');
     config()->set('http-basics.idempotency.cache_store', 'array');
@@ -46,13 +60,15 @@ it('erases a middleware claim by its trusted user and organisation even when its
     $user = new GenericUser(['id' => 123456]);
     $userPublicId = (string) Str::uuid();
     $credentialPublicId = (string) Str::uuid();
+    $organisationId = (string) Str::uuid();
+    $otherOrganisationId = (string) Str::uuid();
     $request = Request::create('/api/items', 'POST', server: [
         'CONTENT_TYPE' => 'application/json',
         'HTTP_IDEMPOTENCY_KEY' => (string) Str::uuid(),
-    ], content: '{"organisation_id":"untrusted"}');
+    ], content: json_encode(['organisation_id' => $otherOrganisationId], JSON_THROW_ON_ERROR));
     $request->setUserResolver(static fn (): GenericUser => $user);
     $request->attributes->set('http_basics.credential_public_id', strtoupper($credentialPublicId));
-    $request->attributes->set('http_basics.organisation_id', '0');
+    $request->attributes->set('http_basics.organisation_id', strtoupper($organisationId));
 
     $response = app(HandleIdempotencyMiddleware::class)->handle($request, static fn () => response()->json(['created' => true], 201));
 
@@ -60,13 +76,15 @@ it('erases a middleware claim by its trusted user and organisation even when its
         ->and((array) DB::table('idempotency_records')->first())->toMatchArray([
             'bucket' => 'opaque-bucket',
             'user_id' => '123456',
-            'organisation_id' => '0',
+            'organisation_id' => $organisationId,
             'credential_public_id' => $credentialPublicId,
         ]);
 
     $eraser = app(HttpBasicsEraser::class);
-    expect($eraser->erase('123456', $userPublicId, HttpBasicsEraser::DELETE, organisationId: 'untrusted')->changed())->toBe(0)
-        ->and($eraser->erase('123456', $userPublicId, HttpBasicsEraser::DELETE, organisationId: '0')->changed())->toBe(1);
+    expect(fn () => $eraser->erase('123456', $userPublicId, HttpBasicsEraser::DELETE, organisationId: '42'))
+        ->toThrow(InvalidArgumentException::class, 'The organisation id must be a UUID.');
+    expect($eraser->erase('123456', $userPublicId, HttpBasicsEraser::DELETE, organisationId: $otherOrganisationId)->changed())->toBe(0)
+        ->and($eraser->erase('123456', $userPublicId, HttpBasicsEraser::DELETE, organisationId: strtoupper($organisationId))->changed())->toBe(1);
 });
 
 function databaseIdempotencyStore(

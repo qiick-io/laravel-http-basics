@@ -309,7 +309,8 @@ invalid value raises `InvalidArgumentException` before the store is called. Set
 `HandleIdempotencyMiddleware::ORGANISATION_ID_ATTRIBUTE` from trusted server state
 for organisation-scoped requests, and pass the same organisation key to
 `erase(organisationId: ...)`. Direct adapter callers supply these values through
-`IdempotencyContext`.
+`IdempotencyContext`. Supply an organisation UUID for both capture and scoped
+erasure. Both boundaries normalize it to lowercase.
 
 `DELETE` removes matching records. `ANONYMISE` leaves detached rows without replay
 payloads or identifiers and preserves their expiration times. A `dryRun: true`

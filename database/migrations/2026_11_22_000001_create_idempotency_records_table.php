@@ -24,7 +24,7 @@ return new class extends Migration
             $table->uuid('public_id')->nullable()->unique();
             $bucket = $table->string('bucket', 128)->nullable();
             $userId = $table->string('user_id')->nullable()->index();
-            $organisationId = $table->string('organisation_id')->nullable();
+            $table->uuid('organisation_id')->nullable();
 
             // Buckets are opaque identifiers: on PostgreSQL and SQLite they compare byte for
             // byte. MySQL and MariaDB default to a case- and accent-insensitive collation,
@@ -35,7 +35,6 @@ return new class extends Migration
                 $binaryCollation = $connection->isMaria() ? 'utf8mb4_nopad_bin' : 'utf8mb4_0900_bin';
                 $bucket->collation($binaryCollation);
                 $userId->collation($binaryCollation);
-                $organisationId->collation($binaryCollation);
             }
 
             // Versions the bucket scheme (the anonymous HMAC components).
@@ -67,8 +66,7 @@ return new class extends Migration
             // to a hot table after 1.0 would cost more than carrying it.
             $table->char('trace_id', 32)->nullable()->index();
             // Namespaced keys; never secrets, never tracestate.
-            // jsonb on PostgreSQL, so products can index or filter it later without a rewrite.
-            $table->jsonb('metadata')->nullable();
+            $table->json('metadata')->nullable();
             // Row format, including how headers_json is serialised.
             $table->unsignedSmallInteger('schema_version')->default(1);
             // A past event: Laravel's default type (C11).

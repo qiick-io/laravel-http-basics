@@ -46,7 +46,7 @@ it('reports cache-only retention without forgetting unrelated keys or falling ba
     $store->complete($claim, new ReplayableResponse(201, [], 'subject data'), $now);
 
     $eraser = app(HttpBasicsEraser::class);
-    expect(fn () => $eraser->erase('123456', $userPublicId, HttpBasicsEraser::DELETE, organisationId: '1234'))
+    expect(fn () => $eraser->erase('123456', $userPublicId, HttpBasicsEraser::DELETE, organisationId: (string) Str::uuid()))
         ->toThrow(OrganisationScopeUnsupportedException::class);
 
     $dryRun = $eraser->erase('123456', $userPublicId, HttpBasicsEraser::DELETE, dryRun: true);

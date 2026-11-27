@@ -56,6 +56,12 @@ final class HttpBasicsEraser
         bool $dryRun = false,
     ): ErasureReport {
         $credentialPublicIds = $this->validatedPublicIds($userPublicId, $mode, $publicIds, $identifiers);
+
+        if ($organisationId !== null && ! Str::isUuid($organisationId)) {
+            throw new InvalidArgumentException('The organisation id must be a UUID.');
+        }
+
+        $organisationId = $organisationId === null ? null : strtolower($organisationId);
         $connection = $this->connection;
 
         if ($connection === null) {
