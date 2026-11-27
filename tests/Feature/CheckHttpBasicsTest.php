@@ -21,6 +21,7 @@ it('reports each invalid key even when Artisan boots with invalid config', funct
         'cache.default' => 'array',
         'http-basics.idempotency.ttl_seconds' => 0,
         'http-basics.errors.format' => 'unknown',
+        'http-basics.request_id.accept_pattern' => '/[a-z0-9]+/',
     ]);
 
     $originalArguments = $_SERVER['argv'];
@@ -35,6 +36,7 @@ it('reports each invalid key even when Artisan boots with invalid config', funct
     $this->artisan('http-basics:check')
         ->expectsOutput('http-basics.idempotency.ttl_seconds must be greater than 0.')
         ->expectsOutput('http-basics.errors.format must be fleet or problem_details.')
+        ->expectsOutput('http-basics.request_id.accept_pattern must be a valid pattern anchored with \A and \z.')
         ->assertExitCode(1);
 });
 

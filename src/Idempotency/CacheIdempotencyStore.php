@@ -315,7 +315,7 @@ final class CacheIdempotencyStore implements IdempotencyStore
      */
     private function hasLease(IdempotencyClaim $claim): bool
     {
-        return is_string($claim->lease) && $claim->lease !== '';
+        return $claim->lease !== null && $claim->lease !== '';
     }
 
     /**

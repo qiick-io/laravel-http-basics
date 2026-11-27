@@ -15,6 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `IdempotencyClaim::$lease` is a nullable string. The upload rejection factories
+  now take no file name argument.
+
+- Boot requires a valid `request_id.accept_pattern` with absolute anchors. Request
+  ID acceptance requires a whole-header match.
+
 - Idempotency: the package now schedules database pruning hourly. Products that
   keep their own schedule can set `http-basics.idempotency.schedule` to `false`.
   Set `HTTP_BASICS_IDEMPOTENCY_TTL` and `HTTP_BASICS_IDEMPOTENCY_LOCK_TTL` to at most

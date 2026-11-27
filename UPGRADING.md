@@ -19,6 +19,10 @@ php artisan vendor:publish --tag=http-basics-config --force
 
 Notable configuration changes and requirements:
 
+- **Request ID (`http-basics.request_id`):** Use `\A` and `\z` around custom
+  acceptance patterns. `hidden_context_keys` lists aliases for existing readers of
+  the request ID in hidden Context.
+
 - **CORS (`http-basics.cors` / `config/cors.php`):**
   - The `http-basics.cors.validate_on_boot` switch (`HTTP_BASICS_CORS_VALIDATE_ON_BOOT`)
     has been removed. Boot-time validation of `config('cors')` now always runs.
@@ -93,6 +97,12 @@ Notable configuration changes and requirements:
 - **Replayed idempotent responses:** their headers keep their values but are now named
   in lower case (`content-type`, `location`). HTTP header names are case-insensitive;
   check any client or test that compares them as exact strings.
+
+### Custom integrations
+
+- Pass a string or `null` when constructing `IdempotencyClaim` with a lease.
+- Drop the file name argument from `UploadRejectedException` factory calls. The
+  error codes and HTTP statuses keep their existing values.
 
 ### Migrations
 

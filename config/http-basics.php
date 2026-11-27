@@ -73,8 +73,8 @@ return [
          */
         'hidden_context_keys' => ['http_basics.request_id'],
         /*
-         * Must require ≥1 alphanumeric (see RequestId::PATTERN). Override only
-         * with a pattern that keeps that floor.
+         * Boot requires a valid pattern with absolute anchors \A and \z.
+         * Keep the default's requirement for at least one alphanumeric on override.
          */
         'accept_pattern' => '/\A(?=[A-Za-z0-9\-_.:]{8,128}$)(?=.*[A-Za-z0-9])[A-Za-z0-9\-_.:]+\z/D',
         /*
