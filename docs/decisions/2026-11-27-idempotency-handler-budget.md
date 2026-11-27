@@ -1,4 +1,4 @@
-# 2026-11-27 Idempotency handler budget
+# 2026-11-27: Idempotency handler budget
 
 Retain `max_handler_seconds` for 1.0 as the replay budget required by M7. The
 middleware measures the handler with a monotonic clock. When a handler returns
