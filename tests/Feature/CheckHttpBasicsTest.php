@@ -3,9 +3,14 @@
 declare(strict_types=1);
 
 use Illuminate\Cache\ArrayStore;
+use Illuminate\Cache\Repository;
+use Illuminate\Contracts\Cache\Factory as CacheFactory;
+use Illuminate\Contracts\Cache\Repository as CacheRepositoryContract;
+use Illuminate\Contracts\Cache\Store;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
 use Qiick\HttpBasics\Tests\Support\FaultyCacheRepository;
 
 it('reports a healthy cache-backed configuration', function (): void {
@@ -21,6 +26,7 @@ it('reports each invalid key even when Artisan boots with invalid config', funct
         'cache.default' => 'array',
         'http-basics.idempotency.ttl_seconds' => 0,
         'http-basics.errors.format' => 'unknown',
+        'http-basics.request_id.accept_pattern' => '/[a-z0-9]+/',
     ]);
 
     $originalArguments = $_SERVER['argv'];
@@ -35,6 +41,7 @@ it('reports each invalid key even when Artisan boots with invalid config', funct
     $this->artisan('http-basics:check')
         ->expectsOutput('http-basics.idempotency.ttl_seconds must be greater than 0.')
         ->expectsOutput('http-basics.errors.format must be fleet or problem_details.')
+        ->expectsOutput('http-basics.request_id.accept_pattern must be a valid pattern anchored with \A and \z.')
         ->assertExitCode(1);
 });
 
@@ -65,6 +72,40 @@ it('identifies a configured cache store that resolves but cannot be read', funct
 
     $this->artisan('http-basics:check')
         ->expectsOutput('http-basics.idempotency.cache_store (check-offline) is unreachable.')
+        ->assertExitCode(1);
+});
+
+it('requires an Illuminate cache repository with a lock-capable store', function (bool $isIlluminateRepository): void {
+    $factory = Mockery::mock(CacheFactory::class);
+    $repository = $isIlluminateRepository
+        ? new Repository(Mockery::mock(Store::class))
+        : Mockery::mock(CacheRepositoryContract::class);
+    $factory->expects('store')->with(null)->andReturn($repository);
+    $this->app->instance(CacheFactory::class, $factory);
+
+    $this->artisan('http-basics:check')
+        ->expectsOutput('http-basics.idempotency.cache_store (default) must be an Illuminate cache repository with atomic locks.')
+        ->assertExitCode(1);
+})->with([true, false]);
+
+it('uses a namespaced UUID for the read-only cache probe', function (): void {
+    $cache = Mockery::mock(ArrayStore::class)->makePartial();
+    $cache->expects('get')->with(Mockery::on(static fn (string $key): bool => Str::startsWith($key, 'http-basics:check:')
+        && Str::isUuid(Str::after($key, 'http-basics:check:'))))->andReturnNull();
+    Cache::extend('probe-store', fn (): Repository => new Repository($cache));
+    config([
+        'cache.stores.probe-store' => ['driver' => 'probe-store'],
+        'http-basics.idempotency.cache_store' => 'probe-store',
+    ]);
+
+    $this->artisan('http-basics:check')->assertSuccessful();
+});
+
+it('keeps cache diagnostics on one line', function (): void {
+    config(['http-basics.idempotency.cache_store' => "missing\r\nstore"]);
+
+    $this->artisan('http-basics:check')
+        ->expectsOutput('http-basics.idempotency.cache_store (missing  store) is unreachable.')
         ->assertExitCode(1);
 });
 

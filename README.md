@@ -94,7 +94,8 @@ app(RequestIdPropagator::class)->applyTo($pending, $url);
 | `HTTP_BASICS_REQUEST_ID_ACCEPT_FROM` | `trusted_proxy` | Keep inbound id only from a trusted proxy hop (`any` / `never` also valid). |
 | `HTTP_BASICS_TRUST_WILDCARD_PROXIES` | `false` | When TrustProxies is `*` / `**` (Cloud/Forge/Vapor), still reject client ids unless true. |
 | `HTTP_BASICS_OUTBOUND_HOSTS` | empty | Comma-separated `host` or `host:port`; empty = never propagate; `*` = all hosts. |
-| `http-basics.request_id.accept_pattern` | `RequestId::PATTERN` | Must require ≥1 alphanumeric; punctuation-only tokens are rejected. |
+| `http-basics.request_id.accept_pattern` | `RequestId::PATTERN` | Boot checks compilation and absolute anchors `\A` and `\z`. Keep the alphanumeric requirement in custom patterns. |
+| `http-basics.request_id.hidden_context_keys` | `['http_basics.request_id']` | Hidden Context aliases for product code that reads the bound ID. |
 
 The id is stored in **visible** Context as `request_id` (Laravel logs it and queued jobs inherit it). Provenance (`generated` / `trusted_proxy` / `client`) stays in hidden Context.
 
@@ -279,6 +280,11 @@ unsupported `fr`, no header and `en` when `en` is the default). The database sto
 treats an `expires_at` it cannot read as never expiring, so such a row keeps
 answering instead of letting the handler run again.
 
+The fingerprint includes the media type in lower case with parameters removed.
+JSON and JSON Merge Patch represent distinct operations. A known limit of
+`JSON_BIGINT_AS_STRING` is that a JSON integer outside the native integer range
+and a JSON string containing the same digits have the same fingerprint.
+
 ### Personal data erasure
 
 Resolve `Qiick\HttpBasics\Erasure\HttpBasicsEraser` from Laravel's container in the
@@ -303,7 +309,8 @@ invalid value raises `InvalidArgumentException` before the store is called. Set
 `HandleIdempotencyMiddleware::ORGANISATION_ID_ATTRIBUTE` from trusted server state
 for organisation-scoped requests, and pass the same organisation key to
 `erase(organisationId: ...)`. Direct adapter callers supply these values through
-`IdempotencyContext`.
+`IdempotencyContext`. Supply an organisation UUID for both capture and scoped
+erasure. Both boundaries normalize it to lowercase.
 
 `DELETE` removes matching records. `ANONYMISE` leaves detached rows without replay
 payloads or identifiers and preserves their expiration times. A `dryRun: true`
@@ -363,6 +370,12 @@ switch to turn it off. The middleware applies the origin guard again on every
 credentialed request, to resolver output and to config alike. Resolver
 responses get `Vary: Origin`, merged into every existing `Vary` line; a shared
 cache in front must honour it.
+
+The middleware writes the request's origins into `config('cors.*')` and puts the
+configured lists back once the response is built, even when the handler throws, so a
+persistent worker with shared configuration restores the default origins before it handles
+the next request. Octane provides additional isolation through its per-request configuration
+sandbox. Concurrent requests in one process require an isolated configuration per request.
 
 Merge `CorsHeaderCatalog::exposedHeaders()` / `allowedRequestHeaders()` into
 `config/cors.php`. Catalog includes `X-Request-Id`, `X-RateLimit-*`,

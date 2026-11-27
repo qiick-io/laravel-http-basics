@@ -34,7 +34,8 @@ final readonly class RequestId
                 continue;
             }
 
-            if (preg_match($pattern, $value) !== 1) {
+            // Custom patterns may contain alternatives. Accept only a whole-header match.
+            if (preg_match($pattern, $value, $matches) !== 1 || $matches[0] !== $value) {
                 return null;
             }
 

@@ -86,6 +86,10 @@ product's configuration values.
 
 Notable configuration changes and requirements:
 
+- **Request ID (`http-basics.request_id`):** Use `\A` and `\z` around custom
+  acceptance patterns. `hidden_context_keys` lists aliases for existing readers of
+  the request ID in hidden Context.
+
 - **CORS (`http-basics.cors` / `config/cors.php`):**
   - The `http-basics.cors.validate_on_boot` switch (`HTTP_BASICS_CORS_VALIDATE_ON_BOOT`)
     has been removed. Boot-time validation of `config('cors')` now always runs.
@@ -120,6 +124,9 @@ Notable configuration changes and requirements:
     options throw an exception at runtime.
 
 - **Uploads (`http-basics.uploads`):**
+  - If your published config predates the WebP signature, add
+    `'webp' => ['52494646']` to `uploads.magic_signatures`, retaining your other
+    entries. The validator also requires the detected MIME type to be `image/webp`.
   - `uploads.contexts` defines validation contexts. Archives (`.zip`, `.docx`, etc.)
     are refused by default unless `allows_archives: true` is explicitly enabled for
     that context.
@@ -143,11 +150,13 @@ Notable configuration changes and requirements:
   - A missing `locale.machine_doors` gives the security headers the same doors as the
     locale classifier: `api`, `api/*`, `mcp`, `mcp/*`, so `/api` itself is a machine door.
 
-- **Idempotency fingerprint version 2:** the raw query is read as a form (`+` is a
-  space, `%2B` a plus) and `Fingerprinter::VERSION` is 2. Within `ttl_seconds` of the
-  deploy, a client retrying a key claimed before it, with `+` or `%2B` in the query, gets
-  `idempotency_payload_mismatch` (422) instead of the replay; other keys are unaffected.
-  Deploy outside peak traffic, or let clients retry with a new key.
+- **Idempotency fingerprint version 2:** the raw query uses form semantics (`+` is a
+  space, `%2B` a plus), and the fingerprint includes the media type in lower case,
+  without parameters. Version 2 first ships with both changes. For deployments that
+  ran an untagged build, retained replayable records keep their original fingerprints.
+  Retrying one with the updated build returns `idempotency_payload_mismatch` (422)
+  while the record is live. Drain old writers before rollout, retain existing records
+  through their TTL, and verify the original operation's outcome before issuing a new key.
 
 - **Quoted idempotency keys:** the draft's quoted form (`Idempotency-Key: "…"`) is
   accepted in both key formats and stored without its quotes, so `"abc"` and `abc` are
@@ -159,6 +168,12 @@ Notable configuration changes and requirements:
 - **Replayed idempotent responses:** their headers keep their values but are now named
   in lower case (`content-type`, `location`). HTTP header names are case-insensitive;
   check any client or test that compares them as exact strings.
+
+### Custom integrations
+
+- Pass a string or `null` when constructing `IdempotencyClaim` with a lease.
+- Drop the file name argument from `UploadRejectedException` factory calls. The
+  error codes and HTTP statuses keep their existing values.
 
 ### Migrations
 
@@ -175,11 +190,22 @@ by default. If your application uses `HTTP_BASICS_IDEMPOTENCY_STORE=database`:
    ```
 
 > [!IMPORTANT]
-> In accordance with qiick standards, migrations are frozen at the first stable release
-> (`1.0.0`). Before `1.0.0`, schema modifications are made directly in the initial
-> `2026_11_22_000001_create_idempotency_records_table.php` migration. If you were
-> using an earlier pre-release schema, run `migrate:fresh` or recreate the table to match
-> the reference schema in `docs/reference-schema.md`.
+> The initial migration freezes at the first stable release. Existing installations
+> from untagged builds must reconcile their published migration and table with the
+> [reference schema](docs/reference-schema.md). On a disposable database, republish
+> the migration and use `migrate:fresh --seed`. To retain live records, drain writers,
+> back up the table, and have the product migrate it explicitly. Map any legacy
+> organisation keys to their product UUIDs and leave unscoped rows null. Normalize
+> existing organisation UUIDs to lowercase before converting the column; scoped
+> erasure compares the canonical UUID. PostgreSQL converts `metadata` from `jsonb`
+> to `json`. Preserve the claim keys, leases, response data and expiry times.
+> Compare the upgraded columns against the reference schema, verify lowercase
+> organisation values, and run `http-basics:check` to confirm the table is reachable
+> before resuming traffic.
+
+New claims and scoped erasure both require organisation UUIDs. Supply these from
+trusted product state through `ORGANISATION_ID_ATTRIBUTE` or `IdempotencyContext`,
+and pass the same UUID in the erasure call.
 
 Pruning completed records can be performed via:
 ```bash

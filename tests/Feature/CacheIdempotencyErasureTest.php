@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use Illuminate\Cache\ArrayStore;
+use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
@@ -34,6 +36,26 @@ it('dispatches the cache-only event only after the caller commits', function ():
     Event::assertDispatchedOnce(SubjectErasedEvent::class);
 });
 
+it('dispatches cache-only erasure when the product has no database connection', function (): void {
+    Event::fake([SubjectErasedEvent::class]);
+    $eraser = new HttpBasicsEraser(app(Dispatcher::class), new ArrayStore, 'array', 'idempotency_records', null);
+
+    $eraser->erase('123456', (string) Str::uuid(), HttpBasicsEraser::ANONYMISE);
+
+    Event::assertDispatchedOnce(SubjectErasedEvent::class);
+});
+
+it('dispatches cache-only erasure outside a transaction without requiring a transaction manager', function (): void {
+    Event::fake([SubjectErasedEvent::class]);
+    $connection = clone DB::connection();
+    $connection->unsetTransactionManager();
+    $eraser = new HttpBasicsEraser(app(Dispatcher::class), new ArrayStore, 'array', 'idempotency_records', null, $connection);
+
+    $eraser->erase('123456', (string) Str::uuid(), HttpBasicsEraser::ANONYMISE);
+
+    Event::assertDispatchedOnce(SubjectErasedEvent::class);
+});
+
 it('reports cache-only retention without forgetting unrelated keys or falling back from organisation scope', function (): void {
     config()->set('http-basics.idempotency.cache_store', 'array');
     Event::fake([SubjectErasedEvent::class]);
@@ -46,7 +68,7 @@ it('reports cache-only retention without forgetting unrelated keys or falling ba
     $store->complete($claim, new ReplayableResponse(201, [], 'subject data'), $now);
 
     $eraser = app(HttpBasicsEraser::class);
-    expect(fn () => $eraser->erase('123456', $userPublicId, HttpBasicsEraser::DELETE, organisationId: '1234'))
+    expect(fn () => $eraser->erase('123456', $userPublicId, HttpBasicsEraser::DELETE, organisationId: (string) Str::uuid()))
         ->toThrow(OrganisationScopeUnsupportedException::class);
 
     $dryRun = $eraser->erase('123456', $userPublicId, HttpBasicsEraser::DELETE, dryRun: true);

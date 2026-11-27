@@ -11,6 +11,7 @@ use Qiick\HttpBasics\Uploads\HardFloor;
 use Qiick\HttpBasics\Uploads\MalwareScanner;
 use Qiick\HttpBasics\Uploads\MismatchMode;
 use Qiick\HttpBasics\Uploads\NullMalwareScanner;
+use Qiick\HttpBasics\Uploads\SafeUpload;
 use Qiick\HttpBasics\Uploads\ScanResult;
 use Qiick\HttpBasics\Uploads\UploadPolicy;
 use Qiick\HttpBasics\Uploads\UploadPolicyResolver;
@@ -100,6 +101,27 @@ it('validates a png path and marks the scan as not_scanned', function (): void {
         ->and($validated->mimeDetector)->toBe('finfo');
 
     @unlink($png);
+});
+
+it('validates uploaded files through the public Laravel rule', function (): void {
+    $rule = new SafeUpload(app(UploadValidator::class), 'files');
+    $messages = [];
+    $fail = static function (string $message) use (&$messages): void {
+        $messages[] = $message;
+    };
+    $image = UploadedFile::fake()->createWithContent(
+        'portrait.png',
+        (string) base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='),
+    );
+
+    $rule->validate('portrait', $image, $fail);
+    expect($messages)->toBe([]);
+
+    $rule->validate('portrait', 'portrait.png', $fail);
+    $rule->validate('portrait', UploadedFile::fake()->createWithContent('portrait.png', 'plain text'), $fail);
+
+    expect($messages)->toHaveCount(2)
+        ->and($messages[0])->toBe('The :attribute must be an uploaded file.');
 });
 
 it('rejects magic mismatches and oversize files', function (): void {
@@ -245,3 +267,22 @@ it('rejects svg suffixes unless allows_svg and rejects content-type mismatch', f
     @unlink($svg);
     @unlink($png);
 });
+
+it('checks the RIFF signature of a webp under the shipped policy', function (string $bytes, bool $isAccepted): void {
+    $path = tempnam(sys_get_temp_dir(), 'hb-webp-');
+    expect($path)->toBeString();
+    file_put_contents($path, $bytes);
+
+    try {
+        $validate = fn () => app(UploadValidator::class)->validatePath($path, 'photo.webp', 'files');
+
+        $isAccepted
+            ? expect($validate())->not->toBeNull()
+            : expect($validate)->toThrow(UploadRejectedException::class);
+    } finally {
+        @unlink($path);
+    }
+})->with([
+    'a webp' => ["RIFF\x1a\x00\x00\x00WEBPVP8L\x0d\x00\x00\x00\x2f\x00\x00\x00\x10\x07\x10\x11\x11\x88\x88\xfe\x07\x00", true],
+    'png bytes named webp' => [base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='), false],
+]);

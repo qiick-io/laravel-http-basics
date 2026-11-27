@@ -20,7 +20,7 @@ final class FixedClock
 
     public function advance(int $seconds): void
     {
-        $this->now = $this->now->modify('+'.$seconds.' seconds');
+        $this->now = $this->now->modify("{$seconds} seconds");
     }
 
     public function set(DateTimeImmutable $now): void

@@ -14,7 +14,7 @@ use Qiick\HttpBasics\Cors\CorsConfigValidator;
 use Qiick\HttpBasics\Cors\CorsHeaderCatalog;
 
 /**
- * @return array{status: int, headers: array<string, string>, body: string}
+ * @return array{status: int, headers: array<string, string>, body: string, corsConfigDuringRequest: array<string, mixed>}
  */
 function corsPreflight(array $corsConfig, string $origin, ?AllowedOriginsResolver $resolver = null): array
 {
@@ -45,10 +45,16 @@ function corsPreflight(array $corsConfig, string $origin, ?AllowedOriginsResolve
         'HTTP_ACCESS_CONTROL_REQUEST_METHOD' => 'POST',
     ]);
 
-    $response = $configure->handle($request, static fn (Request $inner) => $handleCors->handle(
-        $inner,
-        static fn () => response('ok', 200),
-    ));
+    // What HandleCors read: the middleware puts the configured lists back afterwards.
+    $corsConfigDuringRequest = [];
+    $response = $configure->handle($request, static function (Request $inner) use ($handleCors, &$corsConfigDuringRequest) {
+        $corsConfigDuringRequest = [
+            'allowed_origins' => config('cors.allowed_origins'),
+            'allowed_origins_patterns' => config('cors.allowed_origins_patterns'),
+        ];
+
+        return $handleCors->handle($inner, static fn () => response('ok', 200));
+    });
 
     /** @var array<string, string> $headers */
     $headers = [];
@@ -60,6 +66,7 @@ function corsPreflight(array $corsConfig, string $origin, ?AllowedOriginsResolve
         'status' => $response->getStatusCode(),
         'headers' => $headers,
         'body' => (string) $response->getContent(),
+        'corsConfigDuringRequest' => $corsConfigDuringRequest,
     ];
 }
 
@@ -108,7 +115,7 @@ it('normalises and drops unsafe resolver origins before HandleCors (review B2)',
         'supports_credentials' => true,
     ], 'https://app.example.com', $resolver);
 
-    expect(config('cors.allowed_origins'))->toBe(['https://app.example.com'])
+    expect($response['corsConfigDuringRequest']['allowed_origins'])->toBe(['https://app.example.com'])
         ->and($response['headers']['access-control-allow-origin'] ?? null)->toBe('https://app.example.com')
         ->and($response['headers']['vary'] ?? '')->toContain('Origin');
 
@@ -132,6 +139,6 @@ it('purges credentialed patterns when the resolver overrides the origins (re-rev
 
     $response = corsPreflight(['allowed_origins_patterns' => ['#.*#']], 'https://evil.com', $resolver);
 
-    expect(config('cors.allowed_origins_patterns'))->toBe([])
+    expect($response['corsConfigDuringRequest']['allowed_origins_patterns'])->toBe([])
         ->and($response['headers']['access-control-allow-origin'] ?? null)->toBe('https://app.example.com');
 });

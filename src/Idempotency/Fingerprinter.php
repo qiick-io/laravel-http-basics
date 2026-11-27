@@ -10,8 +10,8 @@ use JsonException;
 /**
  * @api Canonical request fingerprint for idempotency claims.
  *
- * SHA-256 over method, raw path + canonical query, credential/anonymous bucket,
- * canonical JSON body, and optional Accept-Language suffix when machine-door
+ * SHA-256 over method, raw path + canonical query, media type, credential/anonymous
+ * bucket, canonical JSON body, and optional Accept-Language suffix when machine-door
  * locale negotiation applies.
  *
  * Query strings are taken from the raw QUERY_STRING when present so repeated keys
@@ -24,7 +24,7 @@ final class Fingerprinter
      * Bump with every change to the material below; records keep the version they
      * were fingerprinted with. 1 = method, path, query, canonical JSON body, bucket
      * and the served locale; 2 = the same, with the raw query read as a form (`+` is a
-     * space, `%2B` a plus).
+     * space, `%2B` a plus), plus the media type (lower case, without parameters).
      */
     public const int VERSION = 2;
 
@@ -50,8 +50,11 @@ final class Fingerprinter
         }
 
         $canonicalBody = $this->canonicalJsonBody($rawBody);
+        // `application/json` and `application/merge-patch+json` read the same body differently;
+        // a charset parameter does not change the operation.
+        $mediaType = strtolower(trim(explode(';', (string) $request->headers->get('Content-Type'))[0]));
 
-        $material = $method."\n".$pathLine."\n".$bucket."\n".$canonicalBody."\n".$acceptLanguageSuffix;
+        $material = $method."\n".$pathLine."\n".$mediaType."\n".$bucket."\n".$canonicalBody."\n".$acceptLanguageSuffix;
 
         return hash('sha256', $material);
     }

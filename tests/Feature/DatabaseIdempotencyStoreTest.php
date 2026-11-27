@@ -9,6 +9,8 @@ use Illuminate\Contracts\Cache\Store;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Database\ConnectionInterface;
 use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Query\Builder;
+use Illuminate\Database\Query\Grammars\SQLiteGrammar;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -38,6 +40,20 @@ beforeEach(function (): void {
     $migration->up();
 });
 
+it('creates a portable metadata column and a native organisation UUID where available', function (): void {
+    $metadataType = match (DB::connection()->getDriverName()) {
+        'sqlite' => 'text',
+        'mariadb' => 'longtext',
+        default => 'json',
+    };
+
+    expect(Schema::getColumnType('idempotency_records', 'metadata'))->toBe($metadataType);
+
+    if (in_array(DB::connection()->getDriverName(), ['pgsql', 'mariadb'], true)) {
+        expect(Schema::getColumnType('idempotency_records', 'organisation_id'))->toBe('uuid');
+    }
+});
+
 it('erases a middleware claim by its trusted user and organisation even when its bucket is opaque', function (): void {
     config()->set('http-basics.idempotency.store', 'database');
     config()->set('http-basics.idempotency.cache_store', 'array');
@@ -46,13 +62,15 @@ it('erases a middleware claim by its trusted user and organisation even when its
     $user = new GenericUser(['id' => 123456]);
     $userPublicId = (string) Str::uuid();
     $credentialPublicId = (string) Str::uuid();
+    $organisationId = (string) Str::uuid();
+    $otherOrganisationId = (string) Str::uuid();
     $request = Request::create('/api/items', 'POST', server: [
         'CONTENT_TYPE' => 'application/json',
         'HTTP_IDEMPOTENCY_KEY' => (string) Str::uuid(),
-    ], content: '{"organisation_id":"untrusted"}');
+    ], content: json_encode(['organisation_id' => $otherOrganisationId], JSON_THROW_ON_ERROR));
     $request->setUserResolver(static fn (): GenericUser => $user);
     $request->attributes->set('http_basics.credential_public_id', strtoupper($credentialPublicId));
-    $request->attributes->set('http_basics.organisation_id', '0');
+    $request->attributes->set('http_basics.organisation_id', strtoupper($organisationId));
 
     $response = app(HandleIdempotencyMiddleware::class)->handle($request, static fn () => response()->json(['created' => true], 201));
 
@@ -60,13 +78,15 @@ it('erases a middleware claim by its trusted user and organisation even when its
         ->and((array) DB::table('idempotency_records')->first())->toMatchArray([
             'bucket' => 'opaque-bucket',
             'user_id' => '123456',
-            'organisation_id' => '0',
+            'organisation_id' => $organisationId,
             'credential_public_id' => $credentialPublicId,
         ]);
 
     $eraser = app(HttpBasicsEraser::class);
-    expect($eraser->erase('123456', $userPublicId, HttpBasicsEraser::DELETE, organisationId: 'untrusted')->changed())->toBe(0)
-        ->and($eraser->erase('123456', $userPublicId, HttpBasicsEraser::DELETE, organisationId: '0')->changed())->toBe(1);
+    expect(fn () => $eraser->erase('123456', $userPublicId, HttpBasicsEraser::DELETE, organisationId: '42'))
+        ->toThrow(InvalidArgumentException::class, 'The organisation id must be a UUID.');
+    expect($eraser->erase('123456', $userPublicId, HttpBasicsEraser::DELETE, organisationId: $otherOrganisationId)->changed())->toBe(0)
+        ->and($eraser->erase('123456', $userPublicId, HttpBasicsEraser::DELETE, organisationId: strtoupper($organisationId))->changed())->toBe(1);
 });
 
 function databaseIdempotencyStore(
@@ -84,6 +104,15 @@ function databaseIdempotencyStore(
         $staleAfterSeconds,
     );
 }
+
+it('uses the versioned cache namespace when rebuilding a stored claim key', function (): void {
+    $scope = new IdempotencyScope('user:123456', 'POST', '/api/items');
+    $keyHash = hash('sha256', 'request-key');
+    $expectedKey = 'http-basics:v1:user:123456:'.$keyHash;
+
+    expect($scope->cacheKey('request-key'))->toBe($expectedKey)
+        ->and(IdempotencyScope::cacheKeyFromHash('user:123456', $keyHash))->toBe($expectedKey);
+});
 
 it('leaves unowned rows out of an erasure report even when they share the organisation scope', function (string $mode): void {
     config()->set('http-basics.idempotency.store', 'database');
@@ -117,6 +146,75 @@ it('leaves unowned rows out of an erasure report even when they share the organi
         ->and($retry->stores['idempotency_records']['kept'])->toBe(0)
         ->and(DB::table('idempotency_records')->where('key_hash', hash('sha256', 'signup-key'))->value('body'))->toBe('person@example.test');
 })->with([HttpBasicsEraser::DELETE, HttpBasicsEraser::ANONYMISE]);
+
+it('anonymises completed and pending credential claims into detached rows with their original expiry', function (): void {
+    config()->set('http-basics.idempotency.store', 'database');
+    $store = databaseIdempotencyStore();
+    $now = new DateTimeImmutable;
+    $scope = new IdempotencyScope('service-account', 'POST', '/api/items');
+    $credentialPublicId = '019a5f6e-8c1b-7d2e-9f3a-4b5c6d7e8f90';
+    $context = new IdempotencyContext(IdempotencyKeyFormat::SfString, credentialPublicId: $credentialPublicId);
+    $completed = $store->claim($scope, 'completed', 'fingerprint', $now, $context);
+    $store->complete($completed, new ReplayableResponse(201, ['content-type' => 'text/plain'], 'recorded response'), $now);
+    $store->claim($scope, 'pending', 'fingerprint', $now, $context);
+    $expirationTimes = DB::table('idempotency_records')->orderBy('id')->pluck('expires_at')->all();
+
+    $report = app(HttpBasicsEraser::class)->erase(
+        '123456',
+        (string) Str::uuid(),
+        HttpBasicsEraser::ANONYMISE,
+        publicIds: ['current' => strtoupper($credentialPublicId)],
+    );
+
+    expect($report->changed())->toBe(2)
+        ->and(DB::table('idempotency_records')->orderBy('id')->pluck('expires_at')->all())->toBe($expirationTimes);
+
+    foreach (DB::table('idempotency_records')->get() as $row) {
+        expect((array) $row)->toMatchArray([
+            'bucket' => null,
+            'credential_public_id' => null,
+            'path' => '',
+            'key_hash' => '',
+            'fingerprint' => '',
+            'lease' => '',
+            'status' => 'completed',
+            'status_code' => null,
+            'headers_json' => null,
+            'body' => null,
+        ]);
+    }
+});
+
+it('locks erasure batches during writes and leaves dry runs unlocked', function (): void {
+    config()->set('http-basics.idempotency.store', 'database');
+    $store = databaseIdempotencyStore();
+    $scope = new IdempotencyScope('user:123456', 'POST', '/api/items');
+    $store->claim($scope, 'request-key', 'fingerprint', new DateTimeImmutable, new IdempotencyContext(IdempotencyKeyFormat::SfString, userId: '123456'));
+    $userPublicId = (string) Str::uuid();
+    $eraser = app(HttpBasicsEraser::class);
+    $connection = DB::connection();
+
+    if ($connection->getDriverName() === 'sqlite') {
+        // SQLite serializes writers. Mark any lock request so the test can observe it.
+        $connection->setQueryGrammar(new class($connection) extends SQLiteGrammar
+        {
+            protected function compileLock(Builder $query, $value): string
+            {
+                return $value === true ? '/* for update */' : '';
+            }
+        });
+    }
+
+    $connection->enableQueryLog();
+    $eraser->erase('123456', $userPublicId, HttpBasicsEraser::DELETE, dryRun: true);
+    $firstDryRunQuery = strtolower($connection->getQueryLog()[0]['query']);
+    $connection->flushQueryLog();
+    $eraser->erase('123456', $userPublicId, HttpBasicsEraser::DELETE);
+    $firstWriteQuery = strtolower($connection->getQueryLog()[0]['query']);
+
+    expect($firstDryRunQuery)->toContain('limit 250')->not->toContain('for update')
+        ->and($firstWriteQuery)->toContain('limit 250', 'for update');
+});
 
 it('fails clearly when trusted middleware supplies a malformed credential public ID', function (mixed $credentialValue): void {
     app()->instance(CredentialBucketResolver::class, new FakeCredentialBucketResolver('opaque-bucket'));

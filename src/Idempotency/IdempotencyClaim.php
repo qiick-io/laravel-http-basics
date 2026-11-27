@@ -13,7 +13,7 @@ final readonly class IdempotencyClaim
         public ClaimOutcome $outcome,
         public ?ReplayableResponse $replay,
         /** Opaque owner token bound to the lock/marker; required for New claims. */
-        public mixed $lease,
+        public ?string $lease,
         public IdempotencyScope $scope,
         public string $key,
     ) {}
