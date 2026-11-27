@@ -12,7 +12,7 @@ of it.
 | H2 | Untrusted hop or `never` → generate | `RequestIdResolverTest` › generates when trusted_proxy and the hop is untrusted; › always generates when accept_from is never | Covered |
 | H3 | Invalid or duplicate header → generate | `RequestIdResolverTest` › generates on invalid or duplicate inbound values; `RequestIdTest` › rejects duplicate header values even when each matches | Covered |
 | H4 | Provenance only in hidden Context | `RequestIdResolverTest` › stores the id in visible Context for logging and jobs (asserts `request_id_source` hidden) | Covered |
-| H5 | Error responses 401–503 carry the id | `AssignRequestIdMiddlewareTest` › carries the id on 404 / 405 / 500 / maintenance 503 / error responses | Partial: no 401, 403, 419, 422 or 429 case |
+| H5 | Error responses 401–503 carry the id | `AssignRequestIdMiddlewareTest` › H5 carries the id across authentication, authorization, session, validation and throttling errors (401, 403, 419, 422, 429); separate cases cover 404, 405, 500 and 503 | Covered |
 | H6 | Queued jobs inherit the id | `RequestIdJobInheritanceTest` › inherits the visible request_id into a database-queued job after serialisation | Covered |
 | H7 | Empty outbound allowlist → no header | `RequestIdPropagatorTest` › does not propagate when the allowlist is empty | Covered |
 | H8 | Allowlist, `*`, caller wins, no leak on redirect | `RequestIdPropagatorTest` › propagates to an allowlisted host; › propagates to every host when allowlist is *; › lets a caller-supplied X-Request-Id win and never duplicates; › strips the header when a redirect lands on a host outside the allowlist | Covered |
@@ -22,13 +22,13 @@ of it.
 | L4 | Header beats principal on machine doors; web ignores Accept-Language | `LocaleNegotiatorTest` › prefers Accept-Language over a later principal on machine doors; › ignores Accept-Language on web requests | Covered |
 | L5 | Content-Language and `Vary` when the header was read | `SetLocaleMiddlewareTest` › sets Content-Language and Vary from Accept-Language on machine doors; › adds Vary when Accept-Language was read even if it did not win | Covered |
 | L6 | Exact codes; `*` never outranks an explicit language | `LocaleNegotiatorTest` › prefers an exact available locale over an earlier prefix match; › does not let * outrank an explicit language | Covered |
-| L7 | Global middleware runs on 404/419/429 | `SetLocaleMiddlewareTest` › carries Content-Language on error responses (429); › carries Content-Language on a maintenance 503 when prepended globally | Partial: no 404 or 419 case |
+| L7 | Global middleware runs on 404/419/429 | `SetLocaleMiddlewareTest` › L7 negotiates locale on 404, 419 and 429 with global middleware | Covered |
 | S1 | CSP mode picks the header names; `both` explicit | `SecurityHeaderBuilderTest` › emits report-only CSP and not enforce when mode is report-only; › emits both CSP headers when mode is both | Covered |
 | S2 | `frame-ancestors` present | `SecurityHeaderBuilderTest` › sets the full web header set including CSP in enforce mode | Covered |
 | S3 | Never clobber an existing CSP or HSTS | `SecurityHeaderBuilderTest` › never clobbers an existing HSTS header; › adds no CSP of either kind when Content-Security-Policy is already present | Covered |
 | S4 | HSTS flags only when configured and secure | `SecurityHeaderBuilderTest` › sets HSTS only on secure requests when max_age is positive; › omits HSTS flag tokens when they are not configured | Covered |
 | S5 | Machine doors get the baseline only | `SecurityHeaderBuilderTest` › applies baseline only on machine doors when enabled; `SetSecurityHeadersMiddlewareTest` › sets baseline only on machine doors | Covered |
-| S6 | Streamed, binary and redirect responses get headers without buffering | `SetSecurityHeadersMiddlewareTest` › applies headers to streamed responses without reading the body; › applies headers to error responses without buffering a body | Partial: no BinaryFileResponse or redirect case |
+| S6 | Streamed, binary and redirect responses get headers without buffering | `SetSecurityHeadersMiddlewareTest` › applies headers to streamed responses without reading the body; › S6 adds headers while preserving binary responses and redirects | Covered |
 | I1 | Key format validation | `HandleIdempotencyMiddlewareTest` › requires a valid idempotency key; `IdempotencyKeyValidatorTest` | Covered |
 | I2 | Canonical JSON (flags, key order) | `FingerprinterTest` › canonicalizes json whitespace key order and zero fractions | Covered |
 | I3 | Duplicate query order; path slash; 415 on multipart | `FingerprinterTest` › preserves duplicate query values in encounter order; › treats paths with and without trailing segments as distinct; `HandleIdempotencyMiddlewareTest` › rejects non json content type with 415 | Covered |
@@ -48,6 +48,6 @@ of it.
 | I16 | Throttle runs outside; stale rate-limit headers stripped on replay | `SecurityChecklistIdempotencyTest` › lets the throttle refuse before the handler and the store when it runs outside (I16); › replays with the throttle's current rate-limit headers, not the stored ones (I16); `ReplayHeaderSanitizerTest` › never replays rate-limit counters, even allowlisted ones (design I16) | Covered |
 | E1 | Augmentor touches only machine-door JSON ≥400, never overwrites | `ErrorCodeAugmentorTest` › adds error only on JSON responses with status at least 400; › never overwrites an existing error member | Covered |
 | E2 | No Foundation imports in `src` | `PackageArchitectureTest` › src never imports Illuminate Foundation types | Covered |
-| E3 | `MachineDoorJson` without an `Accept` header | `ErrorCodeAugmentorTest` › builds a machine-door JSON gate callback from path patterns | Partial: the request in that test has no explicit "no Accept" assertion |
+| E3 | `MachineDoorJson` without an `Accept` header | `ErrorCodeAugmentorTest` › E3 builds a machine-door JSON gate callback without an Accept header | Covered |
 
-Summary: 37 covered, 4 partial (H5, L7, S6, E3), 0 gap.
+Summary: 41 covered.
