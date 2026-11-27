@@ -1,12 +1,12 @@
 # Upgrading
 
-This package is **pre-release** (`0.x`). Breaking changes are allowed between
-minor versions while the major is `0`, and each break is recorded here before a
-tagged release.
+The public API and schema remain provisional through the `1.0.0` prereleases.
+Check these notes before upgrading between betas.
 
 ## First beta
 
-Install the published beta from Packagist with its exact prerelease constraint.
+After the first tag appears on Packagist, run
+`composer require qiick/laravel-http-basics:1.0.0-beta.1`.
 Commit the resulting Composer lock file and keep the product's minimum stability
 at stable. Publish `http-basics-config` to manage the package values in the product.
 Run `php artisan http-basics:check` as a preflight after config caching and any
@@ -31,7 +31,7 @@ product-owned migrations.
    put `ConfigureCorsMiddleware` before Laravel's `HandleCors` for dynamic
    origins. Preserve any product API key origin enforcement.
 4. Keep the product's error status and `error` codes. Extend machine-door JSON
-   rendering and add `ErrorCodeAugmentor` where the fleet envelope is the
+   rendering and register `ExceptionErrorCodeAugmenter` where the fleet envelope is the
    contract. Preserve any product code resolver that maps additional exceptions.
 5. Add `HandleIdempotencyMiddleware` to selected write routes after auth,
    permission, throttle and cost checks. Bind `CredentialBucketResolver` to
@@ -66,18 +66,20 @@ product-owned migrations.
   `AddContractErrorCodeMiddleware` contract for the public API and verify
   JSON rendering for the MCP doors the product enables.
 
-## From 0.x toward 1.0.0
+## Upgrading from an untagged build
 
-This section documents what changes for applications adopting the package or
-upgrading from pre-release `0.x` milestones to the stable `1.0.0` release.
+These changes apply to products that tested an untagged build before the first beta.
 
 ### Configuration
 
-Publish or re-publish the package configuration file to pick up new sections:
+Publish the configuration if the product does not have a copy:
 
 ```bash
-php artisan vendor:publish --tag=http-basics-config --force
+php artisan vendor:publish --tag=http-basics-config
 ```
+
+For an existing published copy, merge the changes below while preserving the
+product's configuration values.
 
 Notable configuration changes and requirements:
 
@@ -102,7 +104,7 @@ Notable configuration changes and requirements:
   - `idempotency.store` selects the backing engine (`cache` or `database`).
   - When using the database store, `idempotency.database.connection` specifies the
     connection. If unset, it falls back to the application default connection.
-  - The package now schedules database pruning daily. Set `idempotency.schedule`
+  - The package schedules database pruning hourly. Set `idempotency.schedule`
     to `false` if you keep an existing application-level schedule.
   - `max_handler_seconds` limits replay eligibility after the handler returns and
     must be strictly less than `lock_ttl_seconds`. Set the product's runtime timeout

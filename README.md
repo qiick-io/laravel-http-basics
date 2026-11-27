@@ -8,7 +8,7 @@
 
 # qiick/laravel-http-basics
 
-> **In development. Not released and not on Packagist yet: do not depend on it.**
+> **The first beta is for product integration and testing.**
 
 Shared HTTP runtime for qiick Laravel products: trusted `X-Request-Id`,
 Accept-Language / `Content-Language` negotiation, configurable security headers,
@@ -23,9 +23,8 @@ Part of the qiick fleet. Binding design:
 
 ## Status
 
-Pre-`0.1.0`. Public APIs may change in any 0.x release; see [UPGRADING.md](./UPGRADING.md).
-Do not require this package from production apps until a tagged release lands on
-Packagist (Packagist publish only after Luca’s go).
+The API and database schema remain provisional until `1.0.0`. Follow the
+installation and upgrade instructions for the first beta in [UPGRADING.md](./UPGRADING.md).
 
 ## Requirements
 
@@ -33,10 +32,10 @@ Packagist (Packagist publish only after Luca’s go).
 - Illuminate cache / contracts / http / support `^12.0 \|\| ^13.0` (never
   `laravel/framework`)
 
-## Install (when published)
+## Install after the beta tag appears on Packagist
 
 ```bash
-composer require qiick/laravel-http-basics
+composer require qiick/laravel-http-basics:1.0.0-beta.1
 php artisan vendor:publish --tag=http-basics-config
 ```
 
