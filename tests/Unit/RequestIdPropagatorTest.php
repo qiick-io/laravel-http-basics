@@ -54,6 +54,15 @@ it('matches host and port on the allowlist', function (): void {
         ->and($propagator->headersForHost('api.internal.test', 443))->toBe([]);
 });
 
+it('checks later host and port entries when an earlier entry does not match', function (): void {
+    $propagator = makePropagator(['api.internal.test:8443', 'workers.internal.test:9443']);
+
+    expect($propagator->headersForHost('workers.internal.test', 9443))
+        ->toBe([RequestId::HEADER => 'mesh-request-id'])
+        ->and($propagator->headersForHost('workers.internal.test', 8443))->toBe([])
+        ->and($propagator->headersForHost('workers.internal.test'))->toBe([]);
+});
+
 it('does not leak to a host outside the allowlist', function (): void {
     $propagator = makePropagator(['api.internal.test']);
 
