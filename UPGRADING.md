@@ -31,17 +31,20 @@ product-owned migrations.
    put `ConfigureCorsMiddleware` before Laravel's `HandleCors` for dynamic
    origins. Preserve any product API key origin enforcement.
 4. Keep the product's error status and `error` codes. Extend machine-door JSON
-   rendering and register `ExceptionErrorCodeAugmenter` where the fleet envelope is the
-   contract. Preserve any product code resolver that maps additional exceptions.
+   rendering and register `ExceptionErrorCodeAugmenter` where the fleet envelope
+   is the contract. Preserve any product code resolver that maps additional exceptions.
 5. Add `HandleIdempotencyMiddleware` to selected write routes after auth,
    permission, throttle and cost checks. Bind `CredentialBucketResolver` to
-   product-owned identity and tenant scope. Set trusted credential and
-   organisation UUID attributes for database claims. Keep secret-issuing routes
-   `replayable=false`. Use a shared lock-capable cache and choose a record TTL
-   greater than the lock TTL. Bound handler runtime below the lock TTL.
-6. Use the database adapter for subject-specific or organisation-scoped erasure.
-   Publish the initial migration to the product, apply it, and run the scheduler
-   with a shared cache. Register `HttpBasicsEraser` in the product's resumable
+   product-owned identity and tenant scope. Set trusted UUIDs through
+   `HandleIdempotencyMiddleware::CREDENTIAL_PUBLIC_ID_ATTRIBUTE` and
+   `HandleIdempotencyMiddleware::ORGANISATION_ID_ATTRIBUTE` for database claims.
+   Keep secret-issuing routes `replayable=false`. Use a shared lock-capable cache
+   and choose a record TTL greater than the lock TTL. Bound handler runtime below
+   the lock TTL.
+6. Set `HTTP_BASICS_IDEMPOTENCY_STORE=database` for subject-specific or
+   organisation-scoped erasure. Publish with `php artisan vendor:publish --tag=http-basics-migrations`,
+   apply the migration, and run the scheduler with a shared cache.
+   Register `HttpBasicsEraser` in the product's resumable
    erasure orchestrator after access revocation and in-flight request drainage.
    Pass the product's user ID, public ID and credential UUIDs, and the organisation
    UUID for scoped erasure. Add the C17 conformance case and document retained

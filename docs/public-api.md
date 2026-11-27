@@ -276,7 +276,7 @@ response. See the [handler budget decision](decisions/2026-11-27-idempotency-han
 
 ## Events
 
-`QiickHttpBasicsEventsSubjectErasedEvent` carries an `ErasureReport` with
+`Qiick\HttpBasics\Events\SubjectErasedEvent` carries an `ErasureReport` with
 counts and retention reasons. The eraser dispatches it after a successful real
 run and after the transaction commits when a transaction is active. Dry runs
 only return the report.
