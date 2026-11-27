@@ -109,10 +109,13 @@ by default. If your application uses `HTTP_BASICS_IDEMPOTENCY_STORE=database`:
 > [reference schema](docs/reference-schema.md). On a disposable database, republish
 > the migration and use `migrate:fresh --seed`. To retain live records, drain writers,
 > back up the table, and have the product migrate it explicitly. Map any legacy
-> organisation keys to their product UUIDs and leave unscoped rows null. PostgreSQL
-> converts `metadata` from `jsonb` to `json`. Preserve the claim keys, leases,
-> response data and expiry times during the migration. Verify the upgraded table
-> with `http-basics:check` before resuming traffic.
+> organisation keys to their product UUIDs and leave unscoped rows null. Normalize
+> existing organisation UUIDs to lowercase before converting the column; scoped
+> erasure compares the canonical UUID. PostgreSQL converts `metadata` from `jsonb`
+> to `json`. Preserve the claim keys, leases, response data and expiry times.
+> Compare the upgraded columns against the reference schema, verify lowercase
+> organisation values, and run `http-basics:check` to confirm the table is reachable
+> before resuming traffic.
 
 New claims and scoped erasure both require organisation UUIDs. Supply these from
 trusted product state through `ORGANISATION_ID_ATTRIBUTE` or `IdempotencyContext`,
