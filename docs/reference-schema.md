@@ -24,9 +24,9 @@ the create migration is edited in place. Tests load the same migration.
 | `key_format` | `varchar(16)` | `uuid` or `sf-string`, from the claim context |
 | `method` | `varchar(16)` | HTTP method |
 | `path` | `varchar(2048)` | Raw `getPathInfo()` |
-| `fingerprint` | `varchar(64)` | Request fingerprint (method, path+query, bucket, body, served locale on machine doors) |
+| `fingerprint` | `varchar(64)` | Request fingerprint (method, path+query, normalized media type, bucket, body, served locale on machine doors) |
 | `fingerprint_algorithm` | `varchar(32)`, default `sha256` | |
-| `fingerprint_version` | `smallint`, default `2` | `IdempotencyContext::$fingerprintVersion` (`Fingerprinter::VERSION`); 2 = today's fingerprint material, with the raw query read as a form |
+| `fingerprint_version` | `smallint`, default `2` | `IdempotencyContext::$fingerprintVersion` (`Fingerprinter::VERSION`); version 2 uses form query semantics and includes the media type in lower case, without parameters |
 | `lease` | `varchar(64)` | Opaque owner token (NOT NULL) |
 | `status` | `varchar(32)`, default `in_progress` | `in_progress` / `completed` |
 | `status_code` | `smallint` null | Completed replayable responses only |

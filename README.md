@@ -280,6 +280,11 @@ unsupported `fr`, no header and `en` when `en` is the default). The database sto
 treats an `expires_at` it cannot read as never expiring, so such a row keeps
 answering instead of letting the handler run again.
 
+The fingerprint includes the media type in lower case with parameters removed.
+JSON and JSON Merge Patch represent distinct operations. A known limit of
+`JSON_BIGINT_AS_STRING` is that a JSON integer outside the native integer range
+and a JSON string containing the same digits have the same fingerprint.
+
 ### Personal data erasure
 
 Resolve `Qiick\HttpBasics\Erasure\HttpBasicsEraser` from Laravel's container in the
