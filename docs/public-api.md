@@ -203,6 +203,9 @@ file documents each one.
 The package also reads `app.locale` and `app.fallback_locale`, and validates Laravel's
 own `cors.*` config at boot.
 
+`idempotency.max_handler_seconds` sets the elapsed budget for saving a replayable
+response. See the [handler budget decision](decisions/2026-11-27-idempotency-handler-budget.md).
+
 ## Environment variables
 
 - `APP_FALLBACK_LOCALE`
@@ -273,7 +276,10 @@ own `cors.*` config at boot.
 
 ## Events
 
-The package dispatches no events.
+`Qiick\HttpBasics\Events\SubjectErasedEvent` carries an `ErasureReport` with
+counts and retention reasons. The eraser dispatches it after a successful real
+run and after the transaction commits when a transaction is active. Dry runs
+only return the report.
 
 ## Deprecation policy
 
