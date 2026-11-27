@@ -145,6 +145,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Idempotency: `IdempotencyRecord::on()` / `setConnection()` win over the configured
   idempotency connection.
 
+### Security
+
+- CORS: `ConfigureCorsMiddleware` restores both origin lists after each request.
+  Workers that share configuration across requests start each request with the
+  configured defaults.
+
 ### Added
 
 - Security headers: strict CSP with a per-request nonce (`HTTP_BASICS_CSP_NONCE`). The

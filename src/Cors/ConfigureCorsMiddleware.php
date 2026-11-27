@@ -10,7 +10,8 @@ use Qiick\HttpBasics\Http\VaryHeaderMerger;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
- * @api Writes normalised `cors.allowed_origins` for the current request before HandleCors.
+ * @api Writes normalised `cors.allowed_origins` for the current request before HandleCors,
+ * and puts the configured lists back once the response is built.
  *
  * Resolver output is passed through {@see OriginNormalizer}. Boot validation always
  * runs, but config can still change after boot and resolver data is runtime input, so
@@ -30,6 +31,26 @@ final class ConfigureCorsMiddleware
      * @param  Closure(Request): Response  $next
      */
     public function handle(Request $request, Closure $next): Response
+    {
+        // Workers with a shared configuration keep it between requests. Restore the
+        // configured lists so the next request starts with its own origins.
+        $originalOrigins = config('cors.allowed_origins');
+        $originalOriginPatterns = config('cors.allowed_origins_patterns');
+
+        try {
+            return $this->handleWithRequestOrigins($request, $next);
+        } finally {
+            config([
+                'cors.allowed_origins' => $originalOrigins,
+                'cors.allowed_origins_patterns' => $originalOriginPatterns,
+            ]);
+        }
+    }
+
+    /**
+     * @param  Closure(Request): Response  $next
+     */
+    private function handleWithRequestOrigins(Request $request, Closure $next): Response
     {
         $supportsCredentials = (bool) config('cors.supports_credentials');
         $resolvedOrigins = $this->origins->origins($request);
