@@ -36,7 +36,7 @@ jobs:
       - name: Checkout
         if: ${{ !matrix.skip }}
         # actions/checkout@v4.2.2
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup PHP
         if: ${{ !matrix.skip }}
@@ -94,7 +94,7 @@ jobs:
       - name: Checkout
         if: needs.package-matrix.outputs.mutate-scope == 'all' || needs.package-matrix.outputs.mutate-classes != '[]'
         # actions/checkout@v4.2.2
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup PHP
         if: needs.package-matrix.outputs.mutate-scope == 'all' || needs.package-matrix.outputs.mutate-classes != '[]'
@@ -154,7 +154,7 @@ jobs:
     steps:
       - name: Checkout
         # actions/checkout@v4.2.2
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup PHP
         # shivammathur/setup-php@2.40.0
@@ -209,7 +209,7 @@ jobs:
       - name: Checkout
         if: &run-server-database needs.package-matrix.outputs.run-databases == 'true' || contains(needs.package-matrix.outputs.mutate-classes, 'src/Erasure/')
         # actions/checkout@v4.2.2
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup PHP
         if: *run-server-database
@@ -268,7 +268,7 @@ jobs:
       - name: Checkout
         if: needs.package-matrix.outputs.docs-only != 'true'
         # actions/checkout@v4.2.2
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup PHP
         if: needs.package-matrix.outputs.docs-only != 'true'
@@ -305,7 +305,7 @@ jobs:
       - name: Checkout
         if: needs.package-matrix.outputs.docs-only != 'true'
         # actions/checkout@v4.2.2
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup PHP
         if: needs.package-matrix.outputs.docs-only != 'true'
@@ -327,7 +327,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
         with:
           php-version: '8.4'
