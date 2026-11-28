@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0-beta.1] - 2026-11-27
+
+### Upgrade notes
+
+- After the tag appears on Packagist, run
+  `composer require qiick/laravel-http-basics:1.0.0-beta.1` and follow
+  [UPGRADING.md](./UPGRADING.md) for product middleware, configuration and deploy checks.
+- The idempotency schema is provisional until the first stable tag. For an
+  existing beta migration on a disposable database, republish it with
+  `php artisan vendor:publish --tag=http-basics-migrations --force` before
+  refreshing the database. To retain data from an untagged build, reconcile the
+  published migration and table with the [reference schema](./docs/reference-schema.md)
+  and retain live idempotency records through their TTL.
+
 ### Removed
 
 - CORS: the `http-basics.cors.validate_on_boot` switch (`HTTP_BASICS_CORS_VALIDATE_ON_BOOT`).
@@ -223,4 +237,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `composer.json` `require` entry with constraint rationale, usage,
   maintainer, license, known risk and an in-package exit plan.
 
-[Unreleased]: https://github.com/qiick-io/laravel-http-basics/compare/55a3690750baca3d6468a7465d606d8fe8a4e6c0...HEAD
+[Unreleased]: https://github.com/qiick-io/laravel-http-basics/compare/v1.0.0-beta.1...HEAD
+[1.0.0-beta.1]: https://github.com/qiick-io/laravel-http-basics/compare/55a3690750baca3d6468a7465d606d8fe8a4e6c0...v1.0.0-beta.1
